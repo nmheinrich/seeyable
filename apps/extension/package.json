@@ -1,0 +1,12 @@
+{
+  "name": "seeyable-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Seeyable MV3 extension. Tests use Node's built-in runner with jsdom.",
+  "scripts": {
+    "test": "node --test tests/snapshot-engine.test.mjs lib/snapshot-cdp.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  }
+}

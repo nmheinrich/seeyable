@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Rating form fixture</title></head>
+<body>
+<main>
+  <h1>Service feedback</h1>
+  <!-- Standards-based groups: identical option names, different questions -->
+  <fieldset>
+    <legend>How was support?</legend>
+    <label><input type="radio" name="support" value="1"> 1</label>
+    <label><input type="radio" name="support" value="2"> 2</label>
+    <label><input type="radio" name="support" value="3"> 3</label>
+  </fieldset>
+
+  <div role="radiogroup" aria-labelledby="docs-q">
+    <p id="docs-q">How was documentation?</p>
+    <label><input type="radio" name="docs" value="1"> 1</label>
+    <label><input type="radio" name="docs" value="2"> 2</label>
+    <label><input type="radio" name="docs" value="3"> 3</label>
+  </div>
+
+  <!-- Forms-style layout: question as heading inside a list-item container,
+       options as a radiogroup without its own label (proximity inference) -->
+  <div role="listitem">
+    <div role="heading" aria-level="3">How likely are you to recommend us?</div>
+    <div role="radiogroup">
+      <label><input type="radio" name="nps" value="1"> 1</label>
+      <label><input type="radio" name="nps" value="2"> 2</label>
+    </div>
+  </div>
+</main>
+</body>
+</html>

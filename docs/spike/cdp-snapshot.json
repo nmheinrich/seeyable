@@ -1,12 +1,12 @@
 {
   "kind": "cdp-axtree",
   "tab": {
-    "id": 311806869,
+    "id": 151468023,
     "url": "http://127.0.0.1:8765/index.html",
     "title": "Demo Survey — Seeyable test target"
   },
-  "capturedAt": "2026-10-27T00:33:33.382Z",
-  "durationMs": 11,
+  "capturedAt": "2026-10-27T22:53:13.957Z",
+  "durationMs": 18,
   "nodeCount": 120,
   "interactiveCount": 35,
   "includeIgnored": false,
@@ -658,7 +658,7 @@
           "type": "internalRole",
           "value": 144
         },
-        "frameId": "B395EC97C2C2644DC91AEA49035A48FE",
+        "frameId": "E7AD59BC87BBDFC3768927637DCBCB81",
         "ignored": false,
         "name": {
           "sources": [
@@ -985,12 +985,12 @@
               "type": "contents",
               "value": {
                 "type": "computedString",
-                "value": "Pre-existing test fixture for the Seeyable snapshot spike. Not product UI. It deliberately mixes labelling strategies so DOM/ARIA vs CDP coverage can be compared."
+                "value": "Technical test fixture for snapshot evaluation. Not product UI. It deliberately mixes labelling strategies so DOM/ARIA vs CDP coverage can be compared."
               }
             }
           ],
           "type": "computedString",
-          "value": "Pre-existing test fixture for the Seeyable snapshot spike. Not product UI. It deliberately mixes labelling strategies so DOM/ARIA vs CDP coverage can be compared."
+          "value": "Technical test fixture for snapshot evaluation. Not product UI. It deliberately mixes labelling strategies so DOM/ARIA vs CDP coverage can be compared."
         },
         "nodeId": "50",
         "parentId": "49",
@@ -1266,7 +1266,7 @@
         "ignored": false,
         "name": {
           "type": "computedString",
-          "value": "Pre-existing test fixture for the Seeyable snapshot spike. Not product UI. It deliberately mixes "
+          "value": "Technical test fixture for snapshot evaluation. Not product UI. It deliberately mixes labelling "
         },
         "nodeId": "-1000000003",
         "parentId": "50",
@@ -1285,7 +1285,7 @@
         "ignored": false,
         "name": {
           "type": "computedString",
-          "value": "labelling strategies so DOM/ARIA vs CDP coverage can be compared."
+          "value": "strategies so DOM/ARIA vs CDP coverage can be compared."
         },
         "nodeId": "-1000000004",
         "parentId": "50",

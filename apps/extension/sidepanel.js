@@ -98,8 +98,10 @@ $("btnDom").addEventListener("click", async () => {
   try {
     const snap = await snapshotViaDom();
     lastKind = "dom-aria";
-    showJson(snap, `${snap.elementCount} elements · ${snap.durationMs}ms · ${snap.url || ""}`);
-    setStatus(`DOM/ARIA snapshot done: ${snap.elementCount} interactive elements.`);
+    // Minimal freshness display (schema v2); layout and viewer are unchanged.
+    const fresh = snap.fresh === false ? " · STALE" : "";
+    showJson(snap, `${snap.elementCount} elements · rev ${snap.revision} · ${(snap.semanticHash || "").slice(0, 8)}${fresh} · ${snap.durationMs}ms · ${snap.url || ""}`);
+    setStatus(`DOM/ARIA snapshot done: ${snap.elementCount} interactive elements (revision ${snap.revision}).`);
   } catch (err) {
     console.error(err);
     setStatus(`DOM snapshot failed: ${err.message || err}`, true);

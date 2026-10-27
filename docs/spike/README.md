@@ -10,7 +10,8 @@ extension's side panel loaded in headless Chrome 156; `sidepanel.png` is
 that run):
 
 - `dom-snapshot.json` — DOM/ARIA payload exactly as the panel produced it
-  (20 elements, real layout `rect`s, PIN value `"[REDACTED]"`).
+  (schema v2, 20 elements, real layout `rect`s, PIN state
+  `{"redacted": true, "filled": true}` — raw value never emitted).
 - `cdp-snapshot.json` — CDP payload exactly as the panel produced it:
   simplified interactive nodes under `nodes` (35), full raw
   `Accessibility.getFullAXTree` tree under `raw` (120 nodes).

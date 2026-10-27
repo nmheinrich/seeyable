@@ -47,14 +47,22 @@ executor, voice UI, or MCP server.
 
 ## Snapshot shapes
 
-DOM/ARIA entry:
+DOM/ARIA snapshots use schema v2 — full contract, identity rules, and
+change-detection semantics: `docs/snapshot-schema.md`. Element entry:
 
 ```json
 { "id": "el-1", "role": "textbox", "name": "Full name", "nameSource": "label",
-  "state": { "required": true }, "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+  "question": "About you", "questionSource": "section-heading", "questionCertain": false,
+  "context": "question: \"About you\" · form: \"Demo survey form\" · landmark: main",
+  "state": { "required": true }, "actionable": true, "actionableReason": null, "inViewport": true,
   "tag": "input", "domId": "full-name", "testId": null, "cssPath": "input#full-name",
   "rect": { "x": 0, "y": 0, "width": 0, "height": 0 } }
 ```
+
+IDs are stable within a document session; removed/replaced controls
+resolve as stale via the content-script `SEEYABLE_RESOLVE_ID` message.
+The snapshot header carries `documentSessionId`, `revision`,
+`semanticHash`, and `fresh` so consumers can detect stale data.
 
 CDP simplified node:
 
@@ -63,5 +71,7 @@ CDP simplified node:
   "name": "Full name", "backendDOMNodeId": 123, "childIds": [], "state": { "required": true } }
 ```
 
-Password / payment-like values are redacted (`"[REDACTED]"`) in DOM
-snapshots. Sample outputs + comparison notes: `docs/spike/`.
+Protected values (password, payment, government-ID fields) are never
+emitted; DOM snapshots carry `state.redacted: true` with a `filled`
+indicator instead. Run tests with `npm test` in this folder.
+Sample outputs + comparison notes: `docs/spike/`.
