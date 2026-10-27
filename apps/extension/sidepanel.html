@@ -30,10 +30,15 @@
   <span id="meta" class="meta"></span>
 </section>
 
+<section class="controls">
+  <button id="btnShowTags" type="button">Show tags</button>
+  <button id="btnHideTags" type="button">Hide tags</button>
+</section>
+
 <label class="highlight">
-  Highlight cssPath (DOM snapshot → page):
+  Highlight target number (from latest DOM snapshot):
   <span class="highlight-row">
-    <input id="highlightInput" type="text" placeholder="e.g. main > form#survey > …">
+    <input id="highlightInput" type="text" inputmode="numeric" placeholder="e.g. 22">
     <button id="btnHighlight" type="button">Highlight</button>
   </span>
 </label>

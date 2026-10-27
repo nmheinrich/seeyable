@@ -330,6 +330,8 @@ function collectElements(docRef, win, assignId, includeRect) {
   let candidates = 0;
   let excludedHidden = 0;
   for (const el of all) {
+    // Overlay UI (badges/ring) must never snapshot itself.
+    if (el.closest && el.closest("[data-seeyable-overlay]")) continue;
     if (!isInteractive(el)) continue;
     candidates += 1;
     if (!isVisible(el, win)) { excludedHidden += 1; continue; }
@@ -500,6 +502,21 @@ function createSnapshotEngine(doc, view, options = {}) {
     return { id, status: "ok", revision, documentSessionId: sessionId, cssPath: cssPath(el), tag: el.tagName.toLowerCase() };
   }
 
+  // Internal only (content-script context): same validation as resolve(),
+  // but returns the validated live node so callers can measure/highlight the
+  // original element. Never expose the node across messaging boundaries,
+  // and never substitute a cssPath lookup for this identity check.
+  function resolveNode(id, expectedRevision) {
+    const result = resolve(id, expectedRevision);
+    if (result.status !== "ok") return { ...result, node: null };
+    const record = byId.get(id);
+    const el = record.ref ? record.ref.deref() : record.el;
+    if (!el || !el.isConnected) {
+      return { id, status: "stale", reason: "detached-or-replaced", revision, documentSessionId: sessionId, node: null };
+    }
+    return { ...result, node: el };
+  }
+
   function checkForChanges() {
     if (lastNormalized === null) return { changed: false, reason: "no-baseline" };
     const { normalized } = buildNormalized();
@@ -558,7 +575,7 @@ function createSnapshotEngine(doc, view, options = {}) {
   }
   function getLastDelta() { return lastDelta; }
 
-  return { snapshot, resolve, checkForChanges, startObserving, stopObserving, invalidate, getStatus, getLastDelta, sessionId };
+  return { snapshot, resolve, resolveNode, checkForChanges, startObserving, stopObserving, invalidate, getStatus, getLastDelta, sessionId };
 }
 
 /* Default per-document engine so repeated panel calls keep stable IDs. */

@@ -93,10 +93,13 @@ async function hasDebuggerPermission() {
   }
 }
 
+let lastSnapshotMeta = null; // { documentSessionId, revision } from the latest DOM snapshot
+
 $("btnDom").addEventListener("click", async () => {
   setStatus("Running DOM/ARIA snapshot…");
   try {
     const snap = await snapshotViaDom();
+    lastSnapshotMeta = { documentSessionId: snap.documentSessionId, revision: snap.revision };
     lastKind = "dom-aria";
     // Minimal freshness display (schema v2); layout and viewer are unchanged.
     const fresh = snap.fresh === false ? " · STALE" : "";
@@ -156,13 +159,43 @@ $("btnDownload").addEventListener("click", () => {
 });
 $("btnClear").addEventListener("click", () => { showJson({}, ""); setStatus("Cleared."); });
 
-$("btnHighlight").addEventListener("click", async () => {
-  const cssPath = $("highlightInput").value.trim();
-  if (!cssPath) { setStatus("Paste a cssPath from a DOM snapshot entry first.", true); return; }
+async function sendToTab(payload) {
+  const tab = await activeTab();
+  if (!tab || tab.id === undefined) throw new Error("No active tab.");
+  return chrome.tabs.sendMessage(tab.id, payload);
+}
+
+$("btnShowTags").addEventListener("click", async () => {
   try {
-    const tab = await activeTab();
-    const res = await chrome.tabs.sendMessage(tab.id, { type: "SEEYABLE_HIGHLIGHT", cssPath });
-    if (res && res.ok) setStatus(`Highlighted: ${res.matched}`);
+    const res = await sendToTab({ type: "SEEYABLE_SHOW_TAGS" });
+    if (res && res.ok) {
+      lastSnapshotMeta = { documentSessionId: res.documentSessionId, revision: res.revision };
+      setStatus(`Tags shown: ${res.shown} in viewport (${res.total} controls, revision ${res.revision}).`);
+    } else setStatus(`Show tags failed: ${(res && res.error) || "no response"}`, true);
+  } catch (err) { setStatus(`Show tags failed: ${err.message || err}`, true); }
+});
+
+$("btnHideTags").addEventListener("click", async () => {
+  try {
+    const res = await sendToTab({ type: "SEEYABLE_HIDE_TAGS" });
+    if (res && res.ok) setStatus("Tags hidden. Highlighting by number still works.");
+    else setStatus(`Hide tags failed: ${(res && res.error) || "no response"}`, true);
+  } catch (err) { setStatus(`Hide tags failed: ${err.message || err}`, true); }
+});
+
+$("btnHighlight").addEventListener("click", async () => {
+  const raw = $("highlightInput").value.trim();
+  const num = raw.replace(/^el-/i, "");
+  if (!/^\d+$/.test(num)) { setStatus("Enter a target number from a DOM snapshot (e.g. 22).", true); return; }
+  if (!lastSnapshotMeta) { setStatus("Run a DOM/ARIA snapshot (or Show tags) first so the target session is known.", true); return; }
+  try {
+    const res = await sendToTab({
+      type: "SEEYABLE_HIGHLIGHT_ID",
+      elementId: `el-${num}`,
+      documentSessionId: lastSnapshotMeta.documentSessionId,
+      revision: lastSnapshotMeta.revision,
+    });
+    if (res && res.ok) setStatus(`Highlighted target ${num}.`);
     else setStatus(`Highlight failed: ${(res && res.error) || "no response"}`, true);
   } catch (err) {
     setStatus(`Highlight failed: ${err.message || err}`, true);
