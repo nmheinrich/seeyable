@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Demo Survey — Seeyable test target</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 32px auto; padding: 0 16px; color: #1a1a1a; }
+  fieldset { margin: 16px 0; }
+  label { display: block; margin: 10px 0 4px; font-weight: 600; }
+  label.inline { display: inline; font-weight: 400; }
+  input[type="text"], input[type="email"], input[type="search"], input[type="password"], select, textarea { width: 100%; padding: 7px; box-sizing: border-box; }
+  button { padding: 8px 14px; margin: 6px 6px 6px 0; cursor: pointer; }
+  .hint { color: #555; font-size: 13px; font-weight: 400; }
+  [hidden], .visually-hidden-test { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Demo survey</h1>
+  <p>Technical test fixture for snapshot evaluation. Not product UI.
+     It deliberately mixes labelling strategies so DOM/ARIA vs CDP coverage can be compared.</p>
+
+  <form id="survey" name="demo-survey" aria-label="Demo survey form">
+    <section aria-labelledby="about-you-heading">
+      <h2 id="about-you-heading">About you</h2>
+
+      <!-- label[for] -->
+      <label for="full-name">Full name</label>
+      <input id="full-name" name="full-name" type="text" autocomplete="name" required>
+
+      <!-- wrapping label -->
+      <label>
+        Work email
+        <input name="work-email" type="email" autocomplete="email">
+      </label>
+
+      <!-- placeholder-only (no label: label-quality probe) -->
+      <input name="nickname" type="text" placeholder="Nickname (placeholder only)">
+
+      <!-- title-only (weakest name source) -->
+      <input name="referral" type="text" title="How did you hear about us?">
+
+      <!-- password: value must be redacted in snapshots -->
+      <label for="account-pin">Account PIN</label>
+      <input id="account-pin" name="account-pin" type="password" autocomplete="current-password" value="1234">
+
+      <label for="role-select">Your role</label>
+      <select id="role-select" name="role">
+        <option value="">Choose…</option>
+        <option value="designer">Designer</option>
+        <option value="engineer" selected>Engineer</option>
+        <option value="pm">Product manager</option>
+      </select>
+
+      <label for="bio">Short bio</label>
+      <textarea id="bio" name="bio" rows="3" placeholder="Tell us a little about yourself"></textarea>
+    </section>
+
+    <fieldset>
+      <legend>Contact preferences</legend>
+      <label class="inline"><input type="checkbox" name="pref-email" checked> Email updates</label><br>
+      <label class="inline"><input type="checkbox" name="pref-sms"> SMS updates</label><br>
+      <label class="inline"><input type="radio" name="freq" value="weekly" checked> Weekly digest</label><br>
+      <label class="inline"><input type="radio" name="freq" value="monthly"> Monthly digest</label>
+    </fieldset>
+
+    <section aria-labelledby="extras-heading">
+      <h2 id="extras-heading">Extras</h2>
+
+      <!-- aria-labelledby name -->
+      <span id="rating-label">Rate this demo</span>
+      <span id="rating-hint" class="hint">1 (poor) to 5 (great)</span>
+      <input name="rating" type="number" min="1" max="5" value="4" aria-labelledby="rating-label rating-hint">
+
+      <!-- searchbox role -->
+      <label for="site-search">Search the help centre</label>
+      <input id="site-search" name="q" type="search">
+
+      <!-- switch via role + aria-checked -->
+      <button type="button" role="switch" aria-checked="true" id="notif-switch">Notifications</button>
+
+      <!-- aria-label icon button (no visible text) -->
+      <button type="button" aria-label="Close dialog">✕</button>
+
+      <!-- disabled + expanded probes -->
+      <button type="button" disabled>Unavailable action</button>
+      <button type="button" aria-expanded="false" aria-haspopup="true">More options</button>
+
+      <!-- link + submit-like actions (executor must gate these later; snapshot only here) -->
+      <a href="#help">Read the help article</a>
+      <div>
+        <button type="button">Save draft</button>
+        <button type="submit">Submit survey</button>
+      </div>
+    </section>
+  </form>
+
+  <!-- hidden control: must NOT appear in either snapshot -->
+  <button type="button" hidden>Hidden button</button>
+  <div class="visually-hidden-test"><button type="button">Display-none button</button></div>
+</main>
+</body>
+</html>

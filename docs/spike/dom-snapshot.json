@@ -1,0 +1,392 @@
+{
+  "kind": "dom-aria",
+  "url": "http://127.0.0.1:8765/index.html",
+  "title": "Demo Survey — Seeyable test target",
+  "capturedAt": "2026-10-27T00:33:33.066Z",
+  "durationMs": 5,
+  "elementCount": 20,
+  "elements": [
+    {
+      "id": "el-1",
+      "role": "textbox",
+      "name": "Full name",
+      "nameSource": "label",
+      "state": {
+        "required": true
+      },
+      "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": "full-name",
+      "testId": null,
+      "cssPath": "input#full-name",
+      "rect": {
+        "x": 320,
+        "y": 240,
+        "width": 640,
+        "height": 33
+      }
+    },
+    {
+      "id": "el-2",
+      "role": "textbox",
+      "name": "Work email",
+      "nameSource": "label",
+      "state": {},
+      "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(1) > label:nth-of-type(2) > input",
+      "rect": {
+        "x": 320,
+        "y": 305,
+        "width": 640,
+        "height": 33
+      }
+    },
+    {
+      "id": "el-3",
+      "role": "textbox",
+      "name": "Nickname (placeholder only)",
+      "nameSource": "placeholder",
+      "state": {},
+      "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(1) > input:nth-of-type(2)",
+      "rect": {
+        "x": 320,
+        "y": 342,
+        "width": 640,
+        "height": 33
+      }
+    },
+    {
+      "id": "el-4",
+      "role": "textbox",
+      "name": "How did you hear about us?",
+      "nameSource": "title",
+      "state": {},
+      "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(1) > input:nth-of-type(3)",
+      "rect": {
+        "x": 320,
+        "y": 375,
+        "width": 640,
+        "height": 33
+      }
+    },
+    {
+      "id": "el-5",
+      "role": "textbox",
+      "name": "Account PIN",
+      "nameSource": "label",
+      "state": {
+        "value": "[REDACTED]"
+      },
+      "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": "account-pin",
+      "testId": null,
+      "cssPath": "input#account-pin",
+      "rect": {
+        "x": 320,
+        "y": 445,
+        "width": 640,
+        "height": 33
+      }
+    },
+    {
+      "id": "el-6",
+      "role": "combobox",
+      "name": "Your role",
+      "nameSource": "label",
+      "state": {
+        "value": "Engineer"
+      },
+      "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "select",
+      "domId": "role-select",
+      "testId": null,
+      "cssPath": "select#role-select",
+      "rect": {
+        "x": 320,
+        "y": 514,
+        "width": 640,
+        "height": 33
+      }
+    },
+    {
+      "id": "el-7",
+      "role": "textbox",
+      "name": "Short bio",
+      "nameSource": "label",
+      "state": {},
+      "context": "h2: \"About you\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "textarea",
+      "domId": "bio",
+      "testId": null,
+      "cssPath": "textarea#bio",
+      "rect": {
+        "x": 320,
+        "y": 584,
+        "width": 640,
+        "height": 61
+      }
+    },
+    {
+      "id": "el-8",
+      "role": "checkbox",
+      "name": "Email updates",
+      "nameSource": "label",
+      "state": {
+        "checked": true
+      },
+      "context": "legend: \"Contact preferences\" · group: \"Contact preferences\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > fieldset > label:nth-of-type(1) > input",
+      "rect": {
+        "x": 337,
+        "y": 698,
+        "width": 13,
+        "height": 13
+      }
+    },
+    {
+      "id": "el-9",
+      "role": "checkbox",
+      "name": "SMS updates",
+      "nameSource": "label",
+      "state": {
+        "checked": false
+      },
+      "context": "legend: \"Contact preferences\" · group: \"Contact preferences\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > fieldset > label:nth-of-type(2) > input",
+      "rect": {
+        "x": 337,
+        "y": 720,
+        "width": 13,
+        "height": 13
+      }
+    },
+    {
+      "id": "el-10",
+      "role": "radio",
+      "name": "Weekly digest",
+      "nameSource": "label",
+      "state": {
+        "checked": true
+      },
+      "context": "legend: \"Contact preferences\" · group: \"Contact preferences\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > fieldset > label:nth-of-type(3) > input",
+      "rect": {
+        "x": 338,
+        "y": 743,
+        "width": 13,
+        "height": 13
+      }
+    },
+    {
+      "id": "el-11",
+      "role": "radio",
+      "name": "Monthly digest",
+      "nameSource": "label",
+      "state": {
+        "checked": false
+      },
+      "context": "legend: \"Contact preferences\" · group: \"Contact preferences\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > fieldset > label:nth-of-type(4) > input",
+      "rect": {
+        "x": 338,
+        "y": 765,
+        "width": 13,
+        "height": 13
+      }
+    },
+    {
+      "id": "el-12",
+      "role": "spinbutton",
+      "name": "Rate this demo 1 (poor) to 5 (great)",
+      "nameSource": "aria-labelledby",
+      "state": {
+        "value": "4"
+      },
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(2) > input:nth-of-type(1)",
+      "rect": {
+        "x": 550,
+        "y": 868,
+        "width": 31,
+        "height": 21
+      }
+    },
+    {
+      "id": "el-13",
+      "role": "searchbox",
+      "name": "Search the help centre",
+      "nameSource": "label",
+      "state": {},
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "input",
+      "domId": "site-search",
+      "testId": null,
+      "cssPath": "input#site-search",
+      "rect": {
+        "x": 320,
+        "y": 926,
+        "width": 640,
+        "height": 33
+      }
+    },
+    {
+      "id": "el-14",
+      "role": "switch",
+      "name": "Notifications",
+      "nameSource": "text",
+      "state": {
+        "checked": true
+      },
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "button",
+      "domId": "notif-switch",
+      "testId": null,
+      "cssPath": "button#notif-switch",
+      "rect": {
+        "x": 320,
+        "y": 965,
+        "width": 105,
+        "height": 35
+      }
+    },
+    {
+      "id": "el-15",
+      "role": "button",
+      "name": "Close dialog",
+      "nameSource": "aria-label",
+      "state": {},
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "button",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(2) > button:nth-of-type(2)",
+      "rect": {
+        "x": 435,
+        "y": 965,
+        "width": 42,
+        "height": 35
+      }
+    },
+    {
+      "id": "el-16",
+      "role": "button",
+      "name": "Unavailable action",
+      "nameSource": "text",
+      "state": {
+        "disabled": true
+      },
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "button",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(2) > button:nth-of-type(3)",
+      "rect": {
+        "x": 487,
+        "y": 965,
+        "width": 141,
+        "height": 35
+      }
+    },
+    {
+      "id": "el-17",
+      "role": "button",
+      "name": "More options",
+      "nameSource": "text",
+      "state": {
+        "expanded": false
+      },
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "button",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(2) > button:nth-of-type(4)",
+      "rect": {
+        "x": 638,
+        "y": 965,
+        "width": 109,
+        "height": 35
+      }
+    },
+    {
+      "id": "el-18",
+      "role": "link",
+      "name": "Read the help article",
+      "nameSource": "text",
+      "state": {},
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "a",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(2) > a",
+      "rect": {
+        "x": 757,
+        "y": 972,
+        "width": 141,
+        "height": 18
+      }
+    },
+    {
+      "id": "el-19",
+      "role": "button",
+      "name": "Save draft",
+      "nameSource": "text",
+      "state": {},
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "button",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(2) > div > button:nth-of-type(1)",
+      "rect": {
+        "x": 320,
+        "y": 1012,
+        "width": 93,
+        "height": 35
+      }
+    },
+    {
+      "id": "el-20",
+      "role": "button",
+      "name": "Submit survey",
+      "nameSource": "text",
+      "state": {},
+      "context": "h2: \"Extras\" · form: \"Demo survey form\" · landmark: main",
+      "tag": "button",
+      "domId": null,
+      "testId": null,
+      "cssPath": "form#survey > section:nth-of-type(2) > div > button:nth-of-type(2)",
+      "rect": {
+        "x": 423,
+        "y": 1012,
+        "width": 116,
+        "height": 35
+      }
+    }
+  ]
+}

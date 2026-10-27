@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seeyable — Snapshot Spike</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<header>
+  <h1>Seeyable · Snapshot spike</h1>
+  <p class="sub">Issue #4 · DOM/ARIA vs CDP AXTree · no planner / executor</p>
+  <p id="tabInfo" class="tab-info">Active tab: —</p>
+</header>
+
+<section class="controls">
+  <button id="btnDom" type="button">Snapshot via DOM/ARIA</button>
+  <button id="btnCdp" type="button">Snapshot via CDP AXTree</button>
+  <label class="check">
+    <input id="chkIgnored" type="checkbox">
+    CDP: include ignored nodes
+  </label>
+</section>
+
+<p id="status" class="status" role="status">Load the demo survey, then run a snapshot.</p>
+
+<section class="toolbar">
+  <button id="btnCopy" type="button">Copy JSON</button>
+  <button id="btnDownload" type="button">Download JSON</button>
+  <button id="btnClear" type="button">Clear</button>
+  <span id="meta" class="meta"></span>
+</section>
+
+<label class="highlight">
+  Highlight cssPath (DOM snapshot → page):
+  <span class="highlight-row">
+    <input id="highlightInput" type="text" placeholder="e.g. main > form#survey > …">
+    <button id="btnHighlight" type="button">Highlight</button>
+  </span>
+</label>
+
+<pre id="output" class="output">{}</pre>
+
+<p class="note">
+  CDP path needs the <code>debugger</code> permission. The standard manifest
+  declares it in no form (Chrome forbids it as an optional permission), so
+  the CDP button reports this instead of failing; <code>manifest.debug.json</code>
+  grants it up front for spike testing. While attached, Chrome shows a
+  “started debugging this browser” banner — expected.
+</p>
+
+<script src="lib/snapshot-cdp.js"></script>
+<script src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "// ⚠ DEBUG VARIANT — NOT the product manifest ⚠": "Identical to manifest.json except `debugger` is a required permission so chrome.debugger / CDP can be tested without a runtime permission prompt. Chrome shows a 'Seeyable started debugging this browser' banner while attached. Do NOT ship this variant; the product path must stay on DOM/ARIA with no debugger permission in any form (Chrome does not allow `debugger` in `optional_permissions`). To use: copy/symlink this file over manifest.json in a throwaway load, or load via chrome --load-extension with a manifest override. See README.md.",
+  "manifest_version": 3,
+  "name": "Seeyable — Snapshot Spike (DEBUG: debugger)",
+  "version": "0.1.0",
+  "description": "Debug variant with debugger permission for CDP snapshot testing. Not for distribution.",
+  "permissions": ["activeTab", "scripting", "sidePanel", "storage", "debugger"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Seeyable snapshot spike (DEBUG)"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["lib/snapshot-dom.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
