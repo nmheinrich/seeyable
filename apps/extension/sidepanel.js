@@ -22,6 +22,7 @@ const state = {
   generation: 0,        // bumped on tab/document invalidation
   opSeq: 0,             // latest snapshot-acquisition operation
   opTabId: null,        // tab owning the in-flight acquisition, even pre-bind
+  confirmation: null,   // held confirmation challenge (Feature #11), if any
 };
 
 function setStatus(text, isError) {
@@ -140,10 +141,14 @@ function updateValueEnabled() {
   $("valueInput").disabled = !(action === "fill" || action === "select") || state.pending;
 }
 function updateExecuteEnabled() {
-  const ready = Boolean(state.snapshot && state.executorReady && !state.pending && !state.acquiring && !commandPending && selectedTargetId());
+  const ready = Boolean(state.snapshot && state.executorReady && !state.pending && !state.acquiring && !commandPending && !state.confirmation && selectedTargetId());
   $("btnExecute").disabled = !ready;
-  $("targetSelect").disabled = state.pending || commandPending || !state.snapshot;
-  $("actionSelect").disabled = state.pending || commandPending;
+  $("targetSelect").disabled = state.pending || commandPending || Boolean(state.confirmation) || !state.snapshot;
+  $("actionSelect").disabled = state.pending || commandPending || Boolean(state.confirmation);
+  const approveBtn = $("btnApproveOnce");
+  if (approveBtn) approveBtn.disabled = !state.confirmation || state.pending;
+  const cancelBtn = $("btnCancelChallenge");
+  if (cancelBtn) cancelBtn.disabled = !state.confirmation || state.pending;
   // Conflicting snapshot/binding operations stay locked through the
   // post-action refresh, not just until the executor responds.
   for (const id of ["btnDom", "btnRefresh", "btnShowTags", "btnHideTags", "btnHighlight", "btnCdp"]) {
@@ -168,6 +173,16 @@ function bindSnapshot(tabId, snapshot, viaContentScript) {
 function invalidateExecution(reason) {
   state.generation += 1;
   cancelVoiceInteraction();
+  if (state.confirmation) {
+    const held = state.confirmation;
+    state.confirmation = null;
+    $("confirmBox").hidden = true;
+    try {
+      const sent = chrome.tabs.sendMessage(held.tabId, { type: "SEEYABLE_CANCEL_CHALLENGE", challengeId: held.challengeId });
+      if (sent && typeof sent.catch === "function") sent.catch(() => {});
+    } catch { /* the document is gone; its challenges died with it */ }
+    setConfirmStatus("The pending confirmation was discarded because the tab or document changed. If its action had already been dispatched to the page, it may still have taken effect; verify page state before continuing.");
+  }
   state.opTabId = null;
   state.snapshot = null;
   state.executorReady = false;
@@ -720,6 +735,7 @@ $("btnExecute").addEventListener("click", async () => {
     documentSessionId: state.snapshot.documentSessionId,
     revision: state.snapshot.revision,
     value,
+    source: "manual",
   };
 
   state.pending = true;
@@ -763,6 +779,22 @@ $("btnExecute").addEventListener("click", async () => {
     return;
   }
 
+  if (!response.ok && response.error && response.error.code === "CONFIRMATION_REQUIRED" && response.confirmation) {
+    // A held action, not an ordinary failure: nothing ran, the reviewed
+    // request stays fixed, and no snapshot refresh (or replay) follows.
+    // The human decides in the Safety gate section.
+    renderExecution([
+      "Confirmation required — nothing was executed. Review the pending action in the Safety gate section, then Approve once or Cancel.",
+      `Diff unavailable: ${response.diffUnavailableReason || "awaiting human confirmation"}.`,
+    ], response);
+    setExecStatus("Confirmation required. Nothing was executed.", false);
+    showConfirmation(response.confirmation, tabId);
+    state.pending = false;
+    updateExecuteEnabled();
+    void fetchActionLog(tabId);
+    return;
+  }
+
   const diffLine = response.newSnapshotDiff
     ? `Diff: +${response.newSnapshotDiff.added.length} added, -${response.newSnapshotDiff.removed.length} removed, ${response.newSnapshotDiff.updated.length} updated.`
     : `Diff unavailable: ${response.diffUnavailableReason || "not provided"}.`;
@@ -779,6 +811,7 @@ $("btnExecute").addEventListener("click", async () => {
     state.pending = false;
     updateExecuteEnabled();
   }
+  void fetchActionLog(tabId);
 });
 
 $("targetSelect").addEventListener("change", () => {
@@ -786,6 +819,204 @@ $("targetSelect").addEventListener("change", () => {
   updateExecuteEnabled();
 });
 $("actionSelect").addEventListener("change", updateValueEnabled);
+
+/* --- Safety gate: confirmation, Stop/Pause, action log (Feature #11) -----
+ * The panel never mints approval. Approve sends only a challenge ID
+ * over the sender-verified route; the executor (content script) holds
+ * the capability, revalidates, and consumes it atomically. The
+ * reviewed request is never reconstructed from current controls. */
+let gateClosed = false; // paused or stopped, for the Pause/Resume label
+
+function setGateStatus(text, isError) {
+  const el = $("gateStatus");
+  el.textContent = text;
+  el.classList.toggle("error", Boolean(isError));
+}
+function setConfirmStatus(text, isError) {
+  const el = $("confirmStatus");
+  el.textContent = text || "";
+  el.classList.toggle("error", Boolean(isError));
+}
+
+function showConfirmation(confirmation, tabId) {
+  state.confirmation = { challengeId: confirmation.challengeId, tabId, expiresAt: confirmation.expiresAt };
+  const lines = [
+    `Page: ${confirmation.pageUrl || "(current page)"}`,
+    `Action: ${confirmation.action} on “${confirmation.targetName || confirmation.elementId}” (${confirmation.elementId})`,
+  ];
+  if (confirmation.targetQuestion) lines.push(`Question context: ${confirmation.targetQuestion}`);
+  lines.push(confirmation.consequence || "This action is consequential.");
+  lines.push(`Approval expires: ${confirmation.expiresAt}. Approving runs exactly this action once; it cannot be replayed.`);
+  $("confirmText").textContent = lines.join("\n");
+  $("confirmBox").hidden = false;
+  setConfirmStatus("Waiting for your decision. Nothing has been executed.");
+  updateExecuteEnabled();
+}
+
+function clearConfirmation(statusText, isError) {
+  state.confirmation = null;
+  $("confirmBox").hidden = true;
+  if (statusText !== undefined) setConfirmStatus(statusText, isError);
+  updateExecuteEnabled();
+}
+
+const APPROVAL_STAGE_CODES = new Set([
+  "APPROVAL_NOT_FOUND", "APPROVAL_EXPIRED", "APPROVAL_CONSUMED", "APPROVAL_INVALIDATED",
+  "APPROVAL_CANCELLED", "EXECUTION_CANCELLED",
+  "UNTRUSTED_APPROVAL", "EXECUTION_PAUSED", "EXECUTION_STOPPED", "EXECUTION_BUSY",
+]);
+
+$("btnApproveOnce").addEventListener("click", async () => {
+  if (!state.confirmation || state.pending) return;
+  const { challengeId, tabId } = state.confirmation;
+  const gen = state.generation;
+  const previousSession = state.snapshot ? state.snapshot.documentSessionId : null;
+  state.pending = true;
+  updateExecuteEnabled();
+  setConfirmStatus("Approving once…");
+  let response = null;
+  let transportError = null;
+  try {
+    response = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_APPROVE_CHALLENGE", challengeId });
+  } catch (err) {
+    transportError = err;
+  }
+  if (gen !== state.generation) {
+    state.pending = false;
+    setExecStatus("The tab or document changed while approval was running. Its response was discarded; verify page state before acting again.", true);
+    updateExecuteEnabled();
+    return;
+  }
+  clearConfirmation(undefined);
+  if (transportError) {
+    renderExecution([
+      `Approval transport failure: ${transportError.message || transportError}`,
+      "The approval may or may not have been consumed; the action may have run. Verify page state, then take a fresh snapshot before acting again.",
+    ], null);
+    setExecStatus("Approval transport failure — outcome unknown. Execution paused until you refresh the snapshot.", true);
+    state.pending = false;
+    state.executorReady = false;
+    updateExecuteEnabled();
+    return;
+  }
+  if (!response || typeof response.ok !== "boolean") {
+    renderExecution(["Malformed approval response. Outcome unknown; refresh the snapshot before any further action."], null);
+    setExecStatus("Malformed approval response. Execution paused.", true);
+    state.pending = false;
+    state.executorReady = false;
+    updateExecuteEnabled();
+    return;
+  }
+  const diffLine = response.newSnapshotDiff
+    ? `Diff: +${response.newSnapshotDiff.added.length} added, -${response.newSnapshotDiff.removed.length} removed, ${response.newSnapshotDiff.updated.length} updated.`
+    : `Diff unavailable: ${response.diffUnavailableReason || "not provided"}.`;
+  renderExecution([describeOutcome(response), diffLine], response);
+  setExecStatus(describeOutcome(response), !response.ok);
+  if (!response.ok && response.error && APPROVAL_STAGE_CODES.has(response.error.code)) {
+    // The approval itself failed; nothing was dispatched.
+    setConfirmStatus(`Approval did not run: ${response.error.code} — ${response.error.message}`, true);
+    state.pending = false;
+    updateExecuteEnabled();
+    void fetchActionLog(tabId);
+    return;
+  }
+  setConfirmStatus(response.ok ? "Approved action finished. See the execution result above." : "Approved action finished with a failure. See the execution result above.", !response.ok);
+  try {
+    await refreshAfterExecution(tabId, gen, previousSession);
+  } finally {
+    state.pending = false;
+    updateExecuteEnabled();
+  }
+  void fetchActionLog(tabId);
+});
+
+$("btnCancelChallenge").addEventListener("click", async () => {
+  if (!state.confirmation || state.pending) return;
+  const { challengeId, tabId } = state.confirmation;
+  clearConfirmation("Cancelling…");
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_CANCEL_CHALLENGE", challengeId });
+    if (res && res.cancelled === false && res.dispatched) {
+      setConfirmStatus("Too late to cancel: the action was already dispatched to the page and cannot be recalled. Verify the page state before continuing.", true);
+    } else {
+      setConfirmStatus("Cancelled. The pending approval was revoked; nothing was executed by it.");
+    }
+  } catch {
+    setConfirmStatus("Cancelled in the panel. The challenge also expires on its own within a minute; nothing was approved here.");
+  }
+  void fetchActionLog(tabId);
+});
+
+async function gateTabId() {
+  if (state.boundTabId !== null) return state.boundTabId;
+  if (state.opTabId !== null) return state.opTabId;
+  const tab = await activeTab();
+  return tab && tab.id !== undefined ? tab.id : null;
+}
+
+async function sendGateCommand(command) {
+  const tabId = await gateTabId();
+  if (tabId === null) { setGateStatus("No tab is available for gate control. Open a normal page tab first.", true); return; }
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_GATE_CONTROL", command });
+    if (!res || !res.ok) {
+      setGateStatus(`Gate ${command} failed: ${(res && res.error && res.error.message) || "no response"}. Reload the tab if the extension was just reloaded.`, true);
+      return;
+    }
+    gateClosed = Boolean(res.gate.paused || res.gate.stopped);
+    $("btnPauseExec").textContent = gateClosed ? "Resume" : "Pause";
+    setGateStatus(res.gate.stopped
+      ? "Gate: stopped. Execution and approvals are blocked until Resume."
+      : res.gate.paused
+        ? "Gate: paused. New execution is blocked and pending approvals were revoked; Resume replays nothing."
+        : "Gate: open.");
+    if ((command === "stop" || command === "pause") && state.confirmation) {
+      clearConfirmation(command === "stop"
+        ? "Stopped: the pending approval was revoked. Nothing further will run from it."
+        : "Paused: the pending approval was revoked. Resume replays nothing; request confirmation again.", true);
+    }
+  } catch (err) {
+    setGateStatus(`Gate ${command} failed: ${err.message || err}. Reload the tab if the extension was just reloaded.`, true);
+  }
+  void fetchActionLog(tabId);
+}
+
+$("btnStopExec").addEventListener("click", async () => {
+  // Executor Stop also silences voice: no late transcript may start
+  // another command after stopping. "Stop listening" is separate.
+  cancelVoiceInteraction("execution was stopped; listening and any pending voice interaction were discarded.");
+  await sendGateCommand("stop");
+});
+$("btnPauseExec").addEventListener("click", async () => {
+  await sendGateCommand(gateClosed ? "resume" : "pause");
+});
+
+function renderActionLog(entries) {
+  $("actionLog").textContent = entries && entries.length
+    ? entries.map((e) => `${e.timestamp} · ${e.source} · ${e.action} · ${e.elementId || "—"}${e.targetName ? ` “${e.targetName}”` : ""} · ${e.decision}${e.approved ? " · approved" : ""}`).join("\n")
+    : "No log entries yet.";
+}
+
+async function fetchActionLog(tabIdHint) {
+  try {
+    const tabId = tabIdHint !== undefined && tabIdHint !== null ? tabIdHint : await gateTabId();
+    if (tabId === null || tabId === undefined) return;
+    const res = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_GET_ACTION_LOG" });
+    if (res && res.ok) renderActionLog(res.entries);
+  } catch { /* log becomes available once the content script connects */ }
+}
+
+$("btnRefreshLog").addEventListener("click", () => void fetchActionLog());
+$("btnClearLog").addEventListener("click", async () => {
+  const tabId = await gateTabId();
+  if (tabId === null) { setGateStatus("No tab is available to clear the log.", true); return; }
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_CLEAR_ACTION_LOG" });
+    renderActionLog([]);
+  } catch (err) {
+    setGateStatus(`Clear log failed: ${err.message || err}`, true);
+  }
+});
 
 /* --- Tab/document ownership --- */
 refreshTabInfo();

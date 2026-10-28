@@ -145,11 +145,12 @@ test("validation: wrong/missing session+revision, unknown ID, changed page, repl
   assert.equal(repl.value, "", "replacement must not be written through the old ID");
 });
 
-test("safety: consequential controls blocked for every caller; handlers never run", async () => {
+test("safety: consequential controls are held for confirmation for every caller; handlers never run", async () => {
   const ctx = loadFixture();
   for (const name of ["Submit feedback", "Delete draft", "Pay now"]) {
     const res = await act(ctx, name, "click");
-    assert.equal(code(res), "CONSEQUENTIAL_BLOCKED", `${name} must be blocked`);
+    assert.equal(code(res), "CONFIRMATION_REQUIRED", `${name} must be held for human confirmation`);
+    assert.ok(res.confirmation && res.confirmation.challengeId, `${name} must return a confirmation challenge`);
   }
   assert.deepEqual(
     { submit: ctx.win.__flags.submitRan, del: ctx.win.__flags.deleteRan, pay: ctx.win.__flags.payRan },
@@ -201,7 +202,7 @@ test("revalidation: rename to a consequential label during the scroll wait block
   ctx.doc.getElementById("b").textContent = "Delete draft"; // during the wait, before observer debounce (250ms) elapses
   const res = await promise;
   assert.equal(res.ok, false);
-  assert.ok(["STALE_SNAPSHOT", "CONSEQUENTIAL_BLOCKED"].includes(code(res)), `got ${code(res)}`);
+  assert.ok(["STALE_SNAPSHOT", "CONFIRMATION_REQUIRED"].includes(code(res)), `got ${code(res)}`);
   assert.equal(clicks, 0, "renamed consequential control must never be clicked");
   ctx.engine.stopObserving();
 });
@@ -216,7 +217,7 @@ test("revalidation: input made readonly during the scroll wait is not written", 
   ctx.engine.stopObserving();
 });
 
-test("form association: default/explicit submit buttons block regardless of label or placement", async () => {
+test("form association: default/explicit submit buttons require confirmation regardless of label or placement", async () => {
   const cases = [
     `<form id="f"></form><button form="f" id="b">Continue</button>`,
     `<form id="f"></form><button form="f" id="b" type="submit">Continue</button>`,
@@ -228,7 +229,7 @@ test("form association: default/explicit submit buttons block regardless of labe
     ctx.doc.getElementById("b").addEventListener("click", () => { clicks += 1; });
     const { promise } = await actCtx(ctx, "Continue", "click");
     const res = await promise;
-    assert.equal(code(res), "CONSEQUENTIAL_BLOCKED", html);
+    assert.equal(code(res), "CONFIRMATION_REQUIRED", html);
     assert.equal(clicks, 0, html);
     ctx.engine.stopObserving();
   }

@@ -43,6 +43,22 @@ origins vs `<all_urls>`) before it lands. Current least-privilege
 behavior: declared content script (works after tab load/reload) plus an
 actionable error if the fallback is refused.
 
+## Safety gate (Feature #11)
+
+Consequential activation (submit/pay/delete/send/publish patterns and
+native submit semantics) is held by the executor for single-use human
+approval. Approval authority lives only in the content-script
+executor; the panel sends a challenge ID over a route the content
+script accepts solely from the browser-identified side-panel sender
+(extension ID, no sender tab, exact panel URL). No token crosses a
+messaging boundary, no caller field can mint approval, and approvals
+expire after 60 seconds bound to the target, action, value, document
+session, revision, and a SHA-256 digest of the effective submission. Panel Stop/Pause
+revoke pending approvals; Resume replays nothing. The bounded,
+in-memory action log records only timestamp, caller-reported source
+(audit only, never authorization), action, target ID/name, decision,
+and an approved flag — never values, transcripts, or challenge IDs.
+
 ## Privacy & data use (spike behavior, from the code)
 
 - **Website content:** snapshots read interactive-element roles, names,

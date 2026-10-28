@@ -30,8 +30,9 @@ broader visual style, color palette, or layout system.
 Issues #6 (production snapshot engine), #7 (visual overlays), #8 (executor
 actions), and #9 (manual execution test panel) are complete and accepted.
 Issue #10 (voice front end and typed fallback — show/hide tag commands
-only) is complete and accepted. Next issue: #11 (shared executor
-safety gate). Issue #29 (Plain Words product design) starts after #11.
+only) is complete and accepted. Issue #11 (shared executor safety
+gate: human confirmation, action log, Stop/Pause) is complete and accepted.
+Next issue: #29 (Plain Words product design), following #11.
 See docs/status.md for verification evidence.
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

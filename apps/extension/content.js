@@ -67,6 +67,34 @@ function fail(sendResponse, err) {
   sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
 }
 
+/* Approval authority (Feature #11) is accepted only from the trusted
+ * side-panel page, verified from browser-provided sender information:
+ * the sender must be this extension, must not be a tab (content
+ * scripts and pages have sender.tab / page URLs), and its URL must be
+ * exactly the side-panel document. Page scripts cannot send runtime
+ * messages to a content script at all, and no execute() request field
+ * can substitute for this check. Speech transcripts never reach here:
+ * only the panel's Approve control sends these message types. */
+function isTrustedPanelSender(sender) {
+  try {
+    if (!sender || sender.tab) return false;
+    if (!sender.id || sender.id !== chrome.runtime.id) return false;
+    return sender.url === chrome.runtime.getURL("sidepanel.html");
+  } catch {
+    return false;
+  }
+}
+function rejectUntrusted(sendResponse, what) {
+  sendResponse({
+    ok: false,
+    error: { code: "UNTRUSTED_APPROVAL", message: `${what} is only accepted from the Seeyable side panel. Nothing was approved or changed.` },
+    newSnapshotDiff: null,
+    diffUnavailableReason: "untrusted approval source rejected",
+    documentSessionId: engine().sessionId,
+    revision: engine().getStatus().revision,
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
 
@@ -115,13 +143,60 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // and raw request objects are never logged (values may be user data).
     (async () => {
       try {
-        const { action, elementId, documentSessionId, revision, value } = message.request || {};
-        const response = await getExecutor().execute({ action, elementId, documentSessionId, revision, value });
+        const { action, elementId, documentSessionId, revision, value, source } = message.request || {};
+        // Only these fields cross into the executor. Approval-shaped
+        // fields (confirmed, tokens, challenge ids) are deliberately
+        // dropped here: approval travels the verified route below.
+        const response = await getExecutor().execute({ action, elementId, documentSessionId, revision, value, source });
         if (!response.ok) console.warn(`[seeyable] execute ${action} ${elementId}: ${response.error.code}`);
         sendResponse(response);
       } catch (err) { fail(sendResponse, err); }
     })();
     return true; // async sendResponse
+  }
+
+  if (message.type === "SEEYABLE_APPROVE_CHALLENGE") {
+    if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Approval"); return false; }
+    (async () => {
+      try { sendResponse(await getExecutor().approveChallenge(message.challengeId)); }
+      catch (err) { fail(sendResponse, err); }
+    })();
+    return true; // async sendResponse
+  }
+
+  if (message.type === "SEEYABLE_CANCEL_CHALLENGE") {
+    if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Cancellation"); return false; }
+    try { sendResponse({ ok: true, ...getExecutor().cancelChallenge(message.challengeId) }); }
+    catch (err) { fail(sendResponse, err); }
+    return false;
+  }
+
+  if (message.type === "SEEYABLE_GATE_CONTROL") {
+    if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Gate control"); return false; }
+    try {
+      const executor = getExecutor();
+      const gate = message.command === "stop" ? executor.stopExecution()
+        : message.command === "pause" ? executor.pauseExecution()
+        : message.command === "resume" ? executor.resumeExecution()
+        : null;
+      if (!gate) { sendResponse({ ok: false, error: { code: "INVALID_REQUEST", message: "Unknown gate command." } }); return false; }
+      sendResponse({ ok: true, gate });
+    } catch (err) { fail(sendResponse, err); }
+    return false;
+  }
+
+  if (message.type === "SEEYABLE_GET_ACTION_LOG") {
+    if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Action log access"); return false; }
+    try { sendResponse({ ok: true, entries: getExecutor().getActionLog() }); }
+    catch (err) { fail(sendResponse, err); }
+    return false;
+  }
+
+  if (message.type === "SEEYABLE_CLEAR_ACTION_LOG") {
+    if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Action log clearing"); return false; }
+    try { sendResponse({ ok: true, ...getExecutor().clearActionLog() }); }
+    catch (err) { fail(sendResponse, err); }
+    return false;
   }
 
   if (message.type === "SEEYABLE_HIGHLIGHT_ID") {

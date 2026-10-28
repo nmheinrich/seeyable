@@ -113,6 +113,13 @@ the document is reported dispatched but never verified.
 
 ## Safety boundary (this milestone)
 
+> Superseded for consequential activation by Feature #11
+> (`docs/features/feature-11-shared-safety-gate.md`): the blanket
+> `CONSEQUENTIAL_BLOCKED` behavior below is now a held
+> `CONFIRMATION_REQUIRED` challenge requiring single-use human
+> approval. Classification, sensitive-field blocking, and all other
+> executor behavior described here are unchanged.
+
 - **Consequential guard (central, executor-side)**: native submit
   controls — including buttons whose effective type defaults to submit
   through form association, whether via an ancestor form or the `form`

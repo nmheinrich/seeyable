@@ -95,7 +95,7 @@ test("selection: snapshot populates targets; execute sends the exact payload", a
   panel.$("valueInput").value = "Ada";
   panel.$("btnExecute").click();
   await tick();
-  assert.deepEqual(JSON.parse(JSON.stringify(captured.request)), { action: "fill", elementId: "el-1", documentSessionId: "doc-A", revision: 1, value: "Ada" });
+  assert.deepEqual(JSON.parse(JSON.stringify(captured.request)), { action: "fill", elementId: "el-1", documentSessionId: "doc-A", revision: 1, value: "Ada", source: "manual" });
   assert.match(panel.$("execResult").textContent, /verified/i);
   panel.dom.window.close();
 });
@@ -724,5 +724,141 @@ test("speech: Stop speech before recognition end drops held feedback without rev
   assert.deepEqual(speech.spoken, [], "stopped held feedback must never speak after onend");
   assert.match(panel.$("status").textContent, /Tags hidden/, "the completed overlay command is not reversed or hidden from the user");
   assert.match(panel.$("voiceState").textContent, /Voice: idle/, "state returns to idle once recognition has actually ended");
+  panel.dom.window.close();
+});
+
+/* --- Feature 11: safety gate panel --------------------------------------- */
+
+const confirmationResponse = {
+  ok: false,
+  error: { code: "CONFIRMATION_REQUIRED", message: "click on \"Submit feedback\" is consequential" },
+  confirmation: {
+    challengeId: "ch-test-1", action: "click", elementId: "el-1", targetName: "Submit feedback",
+    targetQuestion: null, evidence: "native-submit", consequence: "This activates a form submission control.",
+    pageUrl: "https://example.test/form", documentSessionId: "doc-A", revision: 1,
+    expiresAt: "2026-10-28T12:01:00.000Z",
+  },
+  newSnapshotDiff: null, diffUnavailableReason: "awaiting human confirmation; nothing was performed",
+  documentSessionId: "doc-A", revision: 1,
+};
+
+function gatePanel({ approveImpl, cancelImpl } = {}) {
+  let snapCount = 0;
+  const sent = [];
+  const panel = makePanel(async (_t, msg) => {
+    sent.push(msg.type);
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") { snapCount += 1; return { ok: true, snapshot: snap([el("el-1", "Submit feedback")], snapCount) }; }
+    if (msg.type === "SEEYABLE_EXECUTE_ACTION") return JSON.parse(JSON.stringify(confirmationResponse));
+    if (msg.type === "SEEYABLE_APPROVE_CHALLENGE") return approveImpl ? approveImpl(msg) : { ok: true, result: { dispatched: true, verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 2 };
+    if (msg.type === "SEEYABLE_CANCEL_CHALLENGE") return cancelImpl ? cancelImpl(msg) : { ok: true, cancelled: true };
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [{ timestamp: "2026-10-28T12:00:00.000Z", source: "manual", action: "click", elementId: "el-1", targetName: "Submit feedback", decision: "confirmation-required", approved: false }] };
+    if (msg.type === "SEEYABLE_CLEAR_ACTION_LOG") return { ok: true, cleared: true };
+    if (msg.type === "SEEYABLE_GATE_CONTROL") return { ok: true, gate: msg.command === "stop" ? { stopped: true, paused: false } : msg.command === "pause" ? { paused: true, stopped: false } : { paused: false, stopped: false } };
+    throw new Error("unexpected " + msg.type);
+  });
+  return { panel, sent, snapCount: () => snapCount };
+}
+
+test("gate: confirmation is held without refresh; Approve once runs it and then refreshes", async () => {
+  const { panel, sent, snapCount } = gatePanel({});
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  assert.equal(panel.$("confirmBox").hidden, false, "confirmation UI is shown");
+  assert.match(panel.$("confirmText").textContent, /Submit feedback/);
+  assert.match(panel.$("confirmText").textContent, /form submission control/);
+  assert.equal(snapCount(), 1, "confirmation-required must not trigger the post-action refresh/replay path");
+  assert.equal(panel.$("btnExecute").disabled, true, "the reviewed request stays fixed while approval is pending");
+  panel.$("btnApproveOnce").click();
+  await tick(); await tick(); await tick();
+  assert.ok(sent.includes("SEEYABLE_APPROVE_CHALLENGE"), "approval travels the dedicated route with only the challenge id");
+  assert.match(panel.$("execResult").textContent, /verified/);
+  assert.equal(panel.$("confirmBox").hidden, true);
+  assert.equal(snapCount(), 2, "the approved execution is followed by the usual same-tab refresh");
+  panel.dom.window.close();
+});
+
+test("gate: Cancel revokes the challenge and executes nothing further", async () => {
+  const { panel, sent } = gatePanel({});
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  panel.$("btnCancelChallenge").click();
+  await tick(); await tick();
+  assert.ok(sent.includes("SEEYABLE_CANCEL_CHALLENGE"));
+  assert.ok(!sent.includes("SEEYABLE_APPROVE_CHALLENGE"));
+  assert.equal(panel.$("confirmBox").hidden, true);
+  assert.match(panel.$("confirmStatus").textContent, /revoked; nothing was executed/);
+  panel.dom.window.close();
+});
+
+test("gate: expired approval is shown as a dead end requiring a fresh request", async () => {
+  const { panel } = gatePanel({
+    approveImpl: () => ({ ok: false, error: { code: "APPROVAL_EXPIRED", message: "The confirmation expired before approval." }, newSnapshotDiff: null, diffUnavailableReason: "x", documentSessionId: "doc-A", revision: 1 }),
+  });
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  panel.$("btnApproveOnce").click();
+  await tick(); await tick();
+  assert.match(panel.$("confirmStatus").textContent, /APPROVAL_EXPIRED/);
+  assert.equal(panel.$("confirmBox").hidden, true);
+  panel.dom.window.close();
+});
+
+test("gate: tab change revokes a pending confirmation", async () => {
+  const { panel, sent } = gatePanel({});
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  assert.equal(panel.$("confirmBox").hidden, false);
+  for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 });
+  await tick();
+  assert.equal(panel.$("confirmBox").hidden, true, "pending confirmation is discarded on tab change");
+  assert.ok(sent.includes("SEEYABLE_CANCEL_CHALLENGE"), "revocation is sent to the owning tab");
+  panel.dom.window.close();
+});
+
+test("gate: Stop and Pause controls drive the executor gate and update state", async () => {
+  const { panel, sent } = gatePanel({});
+  panel.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.ok(sent.includes("SEEYABLE_GATE_CONTROL"));
+  assert.match(panel.$("gateStatus").textContent, /stopped/i);
+  assert.equal(panel.$("btnPauseExec").textContent, "Resume");
+  panel.$("btnPauseExec").click(); // gateClosed -> resume
+  await tick(); await tick();
+  assert.match(panel.$("gateStatus").textContent, /Gate: open/);
+  assert.equal(panel.$("btnPauseExec").textContent, "Pause");
+  panel.dom.window.close();
+});
+
+test("gate: action log renders safe entries and Clear empties it", async () => {
+  const { panel, sent } = gatePanel({});
+  panel.$("btnRefreshLog").click();
+  await tick(); await tick();
+  assert.match(panel.$("actionLog").textContent, /confirmation-required/);
+  assert.match(panel.$("actionLog").textContent, /Submit feedback/);
+  panel.$("btnClearLog").click();
+  await tick(); await tick();
+  assert.ok(sent.includes("SEEYABLE_CLEAR_ACTION_LOG"));
+  assert.match(panel.$("actionLog").textContent, /No log entries yet/);
+  panel.dom.window.close();
+});
+
+test("gate: cancel that arrives after dispatch reports too-late, not revocation", async () => {
+  const { panel } = gatePanel({ cancelImpl: () => ({ ok: true, cancelled: false, dispatched: true }) });
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  panel.$("btnCancelChallenge").click();
+  await tick(); await tick();
+  assert.match(panel.$("confirmStatus").textContent, /Too late to cancel/);
+  assert.match(panel.$("confirmStatus").textContent, /already dispatched/);
   panel.dom.window.close();
 });

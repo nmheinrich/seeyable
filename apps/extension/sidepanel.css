@@ -25,3 +25,9 @@ code { background: #eee; padding: 0 3px; border-radius: 3px; }
 #btnExecute:disabled, button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity: 0.55; }
 .exec-result { min-height: 3em; }
 :focus-visible { outline: 2px solid #141414; outline-offset: 2px; }
+.gate { border-top: 1px solid #ddd; margin-top: 12px; padding-top: 8px; }
+.gate h2 { font-size: 13px; margin: 0 0 4px; }
+.gate h3 { font-size: 12px; margin: 10px 0 4px; }
+#confirmBox { border: 1px solid #b02a1e; padding: 8px; margin: 8px 0; }
+#confirmText { white-space: pre-wrap; font-size: 12px; }
+.log { max-height: 24vh; }

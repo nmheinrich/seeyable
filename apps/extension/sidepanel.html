@@ -77,7 +77,7 @@
 
 <section class="exec" aria-labelledby="execHeading">
   <h2 id="execHeading">Manual execution</h2>
-  <p class="sub">One action at a time through the validated executor. Consequential and sensitive actions stay blocked by the executor.</p>
+  <p class="sub">One action at a time through the validated executor. Consequential actions pause for your approval in the Safety gate below; sensitive writes stay blocked by the executor.</p>
 
   <label class="field">
     Target
@@ -107,6 +107,34 @@
   <button id="btnExecute" type="button" disabled>Execute once</button>
   <p id="execStatus" class="status" role="status">No execution yet.</p>
   <pre id="execResult" class="output exec-result" aria-label="Execution result"></pre>
+</section>
+
+
+<section class="gate" aria-labelledby="gateHeading">
+  <h2 id="gateHeading">Safety gate</h2>
+  <p class="sub">Consequential actions (submit, pay, delete, send, publish…) pause here for one explicit human approval. Approval is single-use and bound to the exact target and page state.</p>
+  <div class="controls" aria-label="Gate controls">
+    <button id="btnStopExec" type="button">Stop</button>
+    <button id="btnPauseExec" type="button">Pause</button>
+  </div>
+  <p id="gateStatus" class="status" role="status">Gate: open.</p>
+
+  <div id="confirmBox" hidden>
+    <h3>Confirmation required</h3>
+    <p id="confirmText"></p>
+    <div class="controls">
+      <button id="btnApproveOnce" type="button">Approve once</button>
+      <button id="btnCancelChallenge" type="button">Cancel</button>
+    </div>
+  </div>
+  <p id="confirmStatus" class="status" role="status"></p>
+
+  <h3 class="log-heading">Action log</h3>
+  <pre id="actionLog" class="output log" aria-label="Action log">No log entries yet.</pre>
+  <div class="controls">
+    <button id="btnRefreshLog" type="button">Refresh log</button>
+    <button id="btnClearLog" type="button">Clear log</button>
+  </div>
 </section>
 
 <pre id="output" class="output">{}</pre>

@@ -15,6 +15,7 @@ the feature documents.
 | Executor (single validated actions) | Complete — `docs/features/feature-08-executor.md` |
 | Manual execution test panel | Complete — `docs/features/feature-09-manual-test-panel.md` |
 | Voice front end and typed fallback | Complete and accepted — `docs/features/feature-10-voice-front-end.md` |
+| Shared executor safety gate | Complete and accepted — `docs/features/feature-11-shared-safety-gate.md` |
 | Planner, proxy, MCP server | Not started |
 
 Repository: `main` tracks `origin/main`. The standard extension build
@@ -23,15 +24,21 @@ requires no `debugger` permission; CDP remains debug-only via
 
 ## Verification evidence
 
-- Extension test suite: `npm --prefix apps/extension test` — 84/84
+- Extension test suite: `npm --prefix apps/extension test` — 120/120
   passing at last run (snapshot engine, overlays, CDP helpers,
   executor incl. baseline/effective-disabled/final-verification
   corrections, panel ownership regressions, question-context scoping,
-  voice command normalization/lifecycle, and panel voice/typed
-  integration, incl. lifecycle/operation-lock corrections:
-  definitive recognition termination, cancel-invalidated pending
-  commands, mic-gated speech, symmetric locking). Re-run after any
-  change; do not trust this number without re-running.
+  voice command normalization/lifecycle and panel voice/typed
+  integration, and the Feature #11 safety gate: confirmation holds,
+  approval binding/expiry/consumption incl. dispatch-time expiry,
+  SHA-256 submission-destination binding (fail-closed without Web
+  Crypto), dispatch-boundary cancellation honesty, operation-scoped cancellation
+  (Stop/Pause permanently invalidating in-flight work), sender-
+  verified approval routing, sequential-harness stopping, log
+  redaction, and synchronous final validation after the last async
+  binding hash (mutations to disabled/detached/hidden targets during
+  hashing are rejected with zero activations). Re-run after any change; do not trust this number
+  without re-running.
 - Headless Chrome 156 runs through the real message paths:
   DOM/ARIA and CDP snapshots (20 controls, identical names), overlay
   tags/ring with measured alignment, nested-container scrolling,
@@ -85,6 +92,15 @@ requires no `debugger` permission; CDP remains debug-only via
   An initial microphone-denial message was observed before successful
   recognition. The exact permission-grant/setup-page sequence was not
   recorded; no claim is made that the setup page is always required.
+- Headed Feature #11 acceptance (2026-10-28), on the local executor
+  fixture: confirmation appeared before activation; keyboard Tab/Enter
+  approval returned dispatched-unverified; Cancel on Delete draft logged
+  approval-cancelled; Pause blocked execution and Resume replayed nothing;
+  Stop/Resume also replayed nothing. Changing Plain text after requesting
+  confirmation caused the approved attempt to return STALE_SNAPSHOT.
+  These results were confirmed by the Product Owner; exact activation
+  counts and race/expiry/replay cases also have automated coverage.
+  The log's approved flag records human approval, not dispatch success.
 
 ## Verification limits and next work
 
@@ -97,9 +113,11 @@ requires no `debugger` permission; CDP remains debug-only via
   have automated coverage; those specific timing paths were not separately
   confirmed audibly in the headed session. Typed show/hide browser evidence
   is on the demo survey, not a fresh Google Forms run for this feature.
-- Next: Feature #11, shared human-confirmation safety gate. Issue #29,
-  Plain Words product design, starts after #11. Planner/MCP remain
-  separate future work; Feature #10 adds no AI implementation.
+- Feature #11's local headed acceptance checks passed. Real consequential
+  actions on live websites were not tested. Planner/MCP callers remain
+  synthetic test callers; no live planner, proxy, or MCP transport exists.
+- Next: issue #29, Plain Words product design, following completed #11.
+  Planner/MCP remain separate future work.
 
 ## Known limitations to keep in mind
 
@@ -108,8 +126,9 @@ requires no `debugger` permission; CDP remains debug-only via
   the project fixtures, not arbitrary pages.
 - Sensitive-field and consequential-control classification is
   heuristic by design; it is not a comprehensive intent detector.
-  The human-approval safety gate is a future feature at the
-  executor's `execute()` boundary.
+  The shared human-approval safety gate is implemented at the executor
+  boundary. It binds DOM-observable submission state, not invisible
+  transformations performed by page scripts.
 - `cssPath` is a diagnostic locator, never an identity authority;
   stale references are rejected rather than retargeted.
 - Dense-grid tags can overlap and obscure word labels. Readability
@@ -118,6 +137,9 @@ requires no `debugger` permission; CDP remains debug-only via
   successful recognition took about three attempts. Exact command matching
   remains intentional; no fuzzy aliases were added. Cancellation status
   wording is verbose and can be refined in issue #29.
+- The action log's trailing "approved" means human approval was supplied,
+  even when a stale-state error prevented dispatch. Issue #29 should make
+  approval and execution outcome visually distinct.
 - Browser screenshots and E2E harnesses used during development live
   outside the repository (local `/tmp` scratch) except for the
   samples under `docs/spike/`.
