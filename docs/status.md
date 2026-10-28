@@ -14,7 +14,8 @@ the feature documents.
 | Visual overlays (numbered word tags, ID-based highlight) | Complete — `docs/features/feature-07-visual-overlay.md` |
 | Executor (single validated actions) | Complete — `docs/features/feature-08-executor.md` |
 | Manual execution test panel | Complete — `docs/features/feature-09-manual-test-panel.md` |
-| Voice, planner, proxy, MCP server | Not started |
+| Voice front end and typed fallback | Complete and accepted — `docs/features/feature-10-voice-front-end.md` |
+| Planner, proxy, MCP server | Not started |
 
 Repository: `main` tracks `origin/main`. The standard extension build
 requires no `debugger` permission; CDP remains debug-only via
@@ -22,12 +23,15 @@ requires no `debugger` permission; CDP remains debug-only via
 
 ## Verification evidence
 
-- Extension test suite: `npm --prefix apps/extension test` — 57/57
+- Extension test suite: `npm --prefix apps/extension test` — 84/84
   passing at last run (snapshot engine, overlays, CDP helpers,
   executor incl. baseline/effective-disabled/final-verification
-  corrections, panel ownership regressions, and question-context scoping).
-  Independently re-run during review on 2026-10-28. Re-run after any change; do not trust this number
-  without re-running.
+  corrections, panel ownership regressions, question-context scoping,
+  voice command normalization/lifecycle, and panel voice/typed
+  integration, incl. lifecycle/operation-lock corrections:
+  definitive recognition termination, cancel-invalidated pending
+  commands, mic-gated speech, symmetric locking). Re-run after any
+  change; do not trust this number without re-running.
 - Headless Chrome 156 runs through the real message paths:
   DOM/ARIA and CDP snapshots (20 controls, identical names), overlay
   tags/ring with measured alignment, nested-container scrolling,
@@ -66,15 +70,36 @@ requires no `debugger` permission; CDP remains debug-only via
   The Product Owner confirmed panel checks for Tone/Neutral checkbox,
   five-star radio, and a synthetic age text fill. No form was submitted.
 
+- Headless Chrome evidence for the voice front end (panel page on the
+  demo survey): typed `don't show tags` executed nothing; typed
+  `Show Tags!` showed 11 in-viewport badges and bound the snapshot;
+  typed `hide tags.` removed all badges; the Microphone setup button
+  opened the setup tab. Recognition/synthesis APIs were present, but
+  headless presence does not verify microphone capture.
+- Headed Feature #10 acceptance (2026-10-28), confirmed by the Product
+  Owner: real microphone commands show/hide tags, correct hide transcript,
+  visible badge changes, audible feedback without self-transcription,
+  typed show tags, rejected negated command, Cancel listening, keyboard
+  activation of Start listening followed by successful show tags, and
+  recognition cancellation on tab switch without commands on either page.
+  An initial microphone-denial message was observed before successful
+  recognition. The exact permission-grant/setup-page sequence was not
+  recorded; no claim is made that the setup page is always required.
+
 ## Verification limits and next work
 
 - Original demo-survey and additional executor-fixture flows have
   headless panel evidence; the headed panel checks listed above do not
   establish universal website or custom-widget compatibility. Google
   Forms native-select operation was not tested in this acceptance pass.
+- Feature #10's core headed acceptance checks passed. Stop-listening
+  finalization, mute/Stop-speech timing, and delayed-callback race handling
+  have automated coverage; those specific timing paths were not separately
+  confirmed audibly in the headed session. Typed show/hide browser evidence
+  is on the demo survey, not a fresh Google Forms run for this feature.
 - Next: Feature #11, shared human-confirmation safety gate. Issue #29,
-  Plain Words product design, starts after #11. Voice/planner/MCP remain
-  separate future work; this acceptance adds no AI implementation.
+  Plain Words product design, starts after #11. Planner/MCP remain
+  separate future work; Feature #10 adds no AI implementation.
 
 ## Known limitations to keep in mind
 
@@ -89,6 +114,10 @@ requires no `debugger` permission; CDP remains debug-only via
   stale references are rejected rather than retargeted.
 - Dense-grid tags can overlap and obscure word labels. Readability
   refinement belongs to issue #29 and must precede demo recording.
+- Browser recognition initially heard "tags" as "tax" and "targets";
+  successful recognition took about three attempts. Exact command matching
+  remains intentional; no fuzzy aliases were added. Cancellation status
+  wording is verbose and can be refined in issue #29.
 - Browser screenshots and E2E harnesses used during development live
   outside the repository (local `/tmp` scratch) except for the
   samples under `docs/spike/`.

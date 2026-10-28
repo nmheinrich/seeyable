@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seeyable — Microphone setup</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<header>
+  <h1>Seeyable · Microphone setup</h1>
+  <p class="sub">One-time, user-initiated permission step for voice commands in the side panel.</p>
+</header>
+
+<p>
+  Chrome grants microphone access per extension origin. The side panel
+  cannot always show that prompt itself, so this page asks once. The
+  microphone stream is stopped immediately after the permission answer —
+  no audio is recorded, stored, or sent anywhere by this page.
+</p>
+
+<button id="btnEnableMic" type="button">Enable microphone</button>
+<p id="micStatus" class="status" role="status">Not requested yet.</p>
+
+<p class="note">
+  After granting access, close this tab, return to the page you want to
+  operate, open the Seeyable side panel, and choose “Start listening”.
+  Browser speech recognition may still process recognized audio outside
+  this device; Seeyable itself stores no audio or transcripts.
+</p>
+
+<script src="mic-setup.js"></script>
+</body>
+</html>

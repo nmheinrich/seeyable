@@ -13,9 +13,11 @@
 ## Single purpose
 
 Current build: capture a labelled snapshot of the current page's
-interactive controls (DOM/ARIA, with a debug-only CDP cross-check) so
-the team can compare snapshot mechanisms. No planner, executor, voice
-UI, or MCP server exists in this build.
+interactive controls (DOM/ARIA, with a debug-only CDP cross-check),
+show numbered word tags, execute single validated actions from a
+manual test panel, and accept push-to-talk voice or typed commands
+that only show/hide those tags. No planner, AI, or MCP server exists
+in this build, and voice/typed commands never execute page actions.
 
 ## Permissions justification (standard `manifest.json`)
 
@@ -49,9 +51,16 @@ actionable error if the fallback is refused.
   downloaded only at the user's request.
 - **Sensitive values:** password and payment-like field values are
   replaced with `"[REDACTED]"` in DOM snapshots before display.
-- **Transmission:** none. No network requests, analytics, or external
-  services in this build. CDP raw trees (debug variant only) stay in
-  the panel.
+- **Transmission:** the extension itself makes no network requests
+  and has no analytics. One exception is browser-provided: Web Speech
+  recognition in Chrome may send audio to a remote recognition
+  service, so voice input is not guaranteed offline. Seeyable stores
+  no audio, persists no transcripts, and logs no raw utterances;
+  transcripts appear only in the panel's visible transcript line and
+  never in snapshot copy/download output. A user-initiated microphone
+  setup page (`mic-setup.html`) requests mic permission for the
+  extension origin and stops the stream immediately. CDP raw trees
+  (debug variant only) stay in the panel.
 - **Retention:** snapshots live in panel memory until cleared or the
   panel closes; downloads are user-initiated files.
 

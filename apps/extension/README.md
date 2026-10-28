@@ -1,9 +1,10 @@
 # Seeyable — Snapshot Spike (extension)
 
 MV3 extension that captures a labelled snapshot of a page's interactive
-controls using DOM/ARIA, with an optional debug-only CDP comparison.
-It exists to evaluate snapshot approaches; it contains no planner,
-executor, voice UI, or MCP server.
+controls using DOM/ARIA, with an optional debug-only CDP comparison,
+numbered word tags, a validated single-action executor with a manual
+test panel, and push-to-talk voice/typed commands that only show or
+hide tags. It contains no planner or MCP server.
 
 ## Load it
 

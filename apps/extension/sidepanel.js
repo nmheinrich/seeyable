@@ -140,17 +140,18 @@ function updateValueEnabled() {
   $("valueInput").disabled = !(action === "fill" || action === "select") || state.pending;
 }
 function updateExecuteEnabled() {
-  const ready = Boolean(state.snapshot && state.executorReady && !state.pending && !state.acquiring && selectedTargetId());
+  const ready = Boolean(state.snapshot && state.executorReady && !state.pending && !state.acquiring && !commandPending && selectedTargetId());
   $("btnExecute").disabled = !ready;
-  $("targetSelect").disabled = state.pending || !state.snapshot;
-  $("actionSelect").disabled = state.pending;
+  $("targetSelect").disabled = state.pending || commandPending || !state.snapshot;
+  $("actionSelect").disabled = state.pending || commandPending;
   // Conflicting snapshot/binding operations stay locked through the
   // post-action refresh, not just until the executor responds.
-  for (const id of ["btnDom", "btnRefresh", "btnShowTags", "btnHideTags", "btnHighlight"]) {
+  for (const id of ["btnDom", "btnRefresh", "btnShowTags", "btnHideTags", "btnHighlight", "btnCdp"]) {
     const btn = $(id);
-    if (btn) btn.disabled = state.pending;
+    if (btn) btn.disabled = state.pending || commandPending;
   }
   updateValueEnabled();
+  if (typeof updateVoiceControls === "function") updateVoiceControls();
 }
 
 function bindSnapshot(tabId, snapshot, viaContentScript) {
@@ -166,6 +167,7 @@ function bindSnapshot(tabId, snapshot, viaContentScript) {
 
 function invalidateExecution(reason) {
   state.generation += 1;
+  cancelVoiceInteraction();
   state.opTabId = null;
   state.snapshot = null;
   state.executorReady = false;
@@ -177,7 +179,7 @@ function invalidateExecution(reason) {
 }
 
 async function takeSnapshot(originLabel) {
-  if (state.pending || state.acquiring) return; // mutually exclusive with execution/acquisition; no queue
+  if (state.pending || state.acquiring || commandPending) return; // mutually exclusive with execution/acquisition/commands; no queue
   // Identity is captured BEFORE any asynchronous work (incl. tab lookup),
   // and ownership is retained until the whole acquisition settles.
   const gen = state.generation;
@@ -226,6 +228,7 @@ async function hasDebuggerPermission() {
 }
 
 $("btnCdp").addEventListener("click", async () => {
+  if (state.pending || state.acquiring || commandPending) { setStatus("Another panel operation is in progress. Wait for it to finish, then try again.", true); return; }
   const granted = await hasDebuggerPermission();
   if (!granted) {
     setStatus("CDP is unavailable in the standard build: it intentionally has no debugger permission. Reload the extension with manifest.debug.json (debug variant) to test the CDP AXTree path. The DOM/ARIA button works as-is.", true);
@@ -274,38 +277,46 @@ async function sendBound(payload) {
   return chrome.tabs.sendMessage(tab.id, payload);
 }
 
-$("btnShowTags").addEventListener("click", async () => {
-  if (state.pending || state.acquiring) return;
+/* Show tags as a reusable flow: the manual button, typed commands, and
+ * voice commands all run this exact code path (same ownership checks,
+ * same snapshot acquisition). Returns an outcome object; callers own
+ * presentation. Discarded outcomes mean the panel moved on mid-flight. */
+async function runShowTags(opts = {}) {
+  if (state.pending || state.acquiring || (commandPending && !opts.viaCommand)) {
+    return { ok: false, message: "Another panel operation is in progress. Wait for it to finish, then try again." };
+  }
   const gen = state.generation;
   const myOp = ++state.opSeq;
   state.acquiring = true;
   updateExecuteEnabled();
   try {
     const tab = await activeTab();
-    if (!tab || tab.id === undefined) { setStatus("No active tab.", true); return; }
-    if (gen !== state.generation || myOp !== state.opSeq) return;
+    if (!tab || tab.id === undefined) return { ok: false, message: "No active tab." };
+    if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
     state.opTabId = tab.id;
     const res = await chrome.tabs.sendMessage(tab.id, { type: "SEEYABLE_SHOW_TAGS" });
-    if (gen !== state.generation || myOp !== state.opSeq) return; // obsolete at stage 1
+    if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
     if (res && res.ok) {
       if (!state.snapshot) {
         // Tags took their own snapshot; bind execution to the same tab/session.
         // Ownership (opTabId) is retained across this follow-up fetch.
         try {
           const { snapshot, viaContentScript } = await fetchSnapshot(tab.id);
-          if (gen !== state.generation || myOp !== state.opSeq) return; // obsolete at stage 2
+          if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
           bindSnapshot(tab.id, snapshot, viaContentScript);
           showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${snapshot.url || ""}`);
           lastKind = "dom-aria";
         } catch { /* tags still shown; execution binding stays unset */ }
       }
-      if (gen !== state.generation || myOp !== state.opSeq) return;
-      setStatus(`Tags shown: ${res.shown} in viewport (${res.total} controls, revision ${res.revision}).`);
-    } else setStatus(`Show tags failed: ${(res && res.error) || "no response"}`, true);
+      if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
+      return { ok: true, message: `Tags shown: ${res.shown} in viewport (${res.total} controls, revision ${res.revision}).` };
+    }
+    return { ok: false, message: `Show tags failed: ${(res && res.error) || "no response"}` };
   } catch (err) {
     if (gen === state.generation && myOp === state.opSeq) {
-      setStatus(`Show tags failed: ${err.message || err}. Reload the tab if the extension was just reloaded.`, true);
+      return { ok: false, message: `Show tags failed: ${err.message || err}. Reload the tab if the extension was just reloaded.` };
     }
+    return { ok: false, discarded: true, message: "" };
   } finally {
     if (myOp === state.opSeq) {
       state.acquiring = false;
@@ -313,17 +324,40 @@ $("btnShowTags").addEventListener("click", async () => {
     }
     updateExecuteEnabled();
   }
+}
+
+$("btnShowTags").addEventListener("click", async () => {
+  const outcome = await runShowTags();
+  if (outcome && !outcome.discarded && outcome.message) setStatus(outcome.message, !outcome.ok);
 });
 
-$("btnHideTags").addEventListener("click", async () => {
+async function runHideTags(tabId, opts = {}) {
+  if (state.pending || state.acquiring || (commandPending && !opts.viaCommand)) {
+    return { ok: false, message: "Another panel operation is in progress. Wait for it to finish, then try again." };
+  }
+  state.acquiring = true; // shared lock: manual/typed/voice hide excludes other operations
+  updateExecuteEnabled();
   try {
-    const res = await sendBound({ type: "SEEYABLE_HIDE_TAGS" });
-    if (res && res.ok) setStatus("Tags hidden. Highlighting by number still works.");
-    else setStatus(`Hide tags failed: ${(res && res.error) || "no response"}`, true);
-  } catch (err) { setStatus(`Hide tags failed: ${err.message || err}`, true); }
+    const res = tabId !== undefined && tabId !== null
+      ? await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_HIDE_TAGS" })
+      : await sendBound({ type: "SEEYABLE_HIDE_TAGS" });
+    if (res && res.ok) return { ok: true, message: "Tags hidden. Highlighting by number still works." };
+    return { ok: false, message: `Hide tags failed: ${(res && res.error) || "no response"}` };
+  } catch (err) {
+    return { ok: false, message: `Hide tags failed: ${err.message || err}` };
+  } finally {
+    state.acquiring = false;
+    updateExecuteEnabled();
+  }
+}
+
+$("btnHideTags").addEventListener("click", async () => {
+  const outcome = await runHideTags();
+  setStatus(outcome.message, !outcome.ok);
 });
 
 $("btnHighlight").addEventListener("click", async () => {
+  if (state.pending || state.acquiring || commandPending) { setStatus("Another panel operation is in progress. Wait for it to finish, then try again.", true); return; }
   const raw = $("highlightInput").value.trim();
   const num = raw.replace(/^el-/i, "");
   if (!/^\d+$/.test(num)) { setStatus("Enter a target number from a DOM snapshot (e.g. 22).", true); return; }
@@ -341,6 +375,283 @@ $("btnHighlight").addEventListener("click", async () => {
     setStatus(`Highlight failed: ${err.message || err}`, true);
   }
 });
+
+/* --- Voice and typed commands (Feature #10) --------------------------------
+ * One dispatcher for voice and typed input. Commands only show/hide
+ * tags through the shared flows above — never the executor. Nothing is
+ * stored or logged: transcripts live only in the visible transcript
+ * line until replaced or invalidated. */
+const voiceApi = globalThis.SeeyableVoice || null;
+let commandPending = false;
+let interactionSeq = 0; // bumped whenever a voice/command interaction is invalidated
+let voiceTabId = null;
+let discardMessage = null; // why the latest interaction was invalidated, if stated
+let pendingSpoken = null;  // feedback held until the microphone has terminated
+
+const speechOutput = voiceApi
+  ? voiceApi.createSpeechOutput({ speechSynthesis: window.speechSynthesis, SpeechSynthesisUtterance: window.SpeechSynthesisUtterance })
+  : null;
+
+function setVoiceState(text, isError) {
+  const el = $("voiceState");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle("error", Boolean(isError));
+}
+
+function updateVoiceControls() {
+  if (!$("btnListen")) return;
+  const recActive = recognizer ? recognizer.isActive() : false;
+  const panelBusy = state.pending || state.acquiring;
+  $("btnListen").disabled = !recognizer || !recognizer.supported() || recActive || commandPending || panelBusy;
+  $("btnStopListen").disabled = !recActive;
+  $("btnCancelListen").disabled = !(recActive || commandPending);
+  $("btnSendCommand").disabled = commandPending || panelBusy;
+  $("commandInput").disabled = commandPending;
+}
+
+// Spoken feedback is held while recognition is active: synthesis must
+// never overlap an open microphone. It is released only when the
+// recognition session has terminated (end or error) and only if the
+// interaction that produced it is still current.
+function speakFeedback(text) {
+  if (!speechOutput || !text) return;
+  if (recognizer && recognizer.isActive()) {
+    pendingSpoken = { text, seq: interactionSeq };
+    return;
+  }
+  speechOutput.say(text);
+}
+function flushPendingSpoken() {
+  if (!pendingSpoken) return;
+  if (recognizer && recognizer.isActive()) return;
+  const held = pendingSpoken;
+  pendingSpoken = null;
+  if (held.seq === interactionSeq && speechOutput) speechOutput.say(held.text);
+}
+
+const recognizer = voiceApi
+  ? voiceApi.createRecognitionController({
+      window,
+      handlers: {
+        onState: ({ state: recState }) => {
+          if (recState === "listening") {
+            setVoiceState("Voice: listening… say one supported command.");
+          } else if (!commandPending) {
+            voiceTabId = null;
+            setVoiceState("Voice: idle.");
+          }
+          updateVoiceControls();
+          flushPendingSpoken(); // session ended: microphone is closed
+        },
+        onInterim: ({ text }) => { $("voiceTranscript").textContent = `Heard so far: ${text}`; },
+        onFinal: ({ text }) => {
+          $("voiceTranscript").textContent = text ? `Heard: ${text}` : "Heard: (no speech)";
+          // The one accepted utterance ends the session's purpose:
+          // wind recognition down now; feedback waits for its end.
+          if (recognizer) recognizer.stop();
+          void dispatchCommand(text, "voice");
+        },
+        onError: ({ message }) => {
+          setVoiceState(`Voice: error — ${message}`, true);
+          updateVoiceControls();
+          flushPendingSpoken(); // error also terminates the microphone
+        },
+      },
+    })
+  : null;
+
+function cancelVoiceInteraction(reason) {
+  interactionSeq += 1;
+  discardMessage = reason || null;
+  pendingSpoken = null;
+  if (recognizer && recognizer.isActive()) recognizer.cancel();
+  if (speechOutput) speechOutput.stop();
+  voiceTabId = null;
+  const transcript = $("voiceTranscript");
+  if (transcript) transcript.textContent = "Transcript: —";
+  if (reason) setVoiceState(`Voice: idle — ${reason}`, true);
+  if (typeof updateVoiceControls === "function") updateVoiceControls();
+}
+
+function presentCommandHelp(prefix) {
+  const message = `${prefix}Supported commands: "show tags" and "hide tags".`;
+  setVoiceState(`Voice: error — ${message}`, true);
+  setStatus(message, true);
+}
+
+async function dispatchCommand(rawText, source) {
+  if (!voiceApi) return;
+  if (commandPending) {
+    setVoiceState("Voice: error — a command is already running; nothing was queued.", true);
+    return;
+  }
+  if (state.pending || state.acquiring) {
+    setVoiceState("Voice: error — another panel operation is in progress. Wait for it to finish, then send the command again.", true);
+    return;
+  }
+  // Typed submission safely resolves any live recognition first:
+  // the speech session is cancelled and its utterance discarded.
+  if (source === "typed" && recognizer && recognizer.isActive()) recognizer.cancel();
+
+  const resolved = voiceApi.resolveCommand(rawText);
+  if (resolved.kind === "empty") {
+    presentCommandHelp(source === "voice" ? "No command was heard. " : "No command was entered. ");
+    return;
+  }
+  if (resolved.kind === "unknown") {
+    presentCommandHelp("Unsupported command. ");
+    return;
+  }
+
+  const gen = state.generation;
+  const seq = interactionSeq;
+  commandPending = true;
+  updateExecuteEnabled(); // command dispatch holds the shared panel lock
+  updateVoiceControls();
+  setVoiceState(resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…");
+  let outcome = null;
+  try {
+    if (resolved.kind === "show-tags") {
+      outcome = await runShowTags({ viaCommand: true });
+    } else {
+      // Capture and retain the target tab now — even with no bound
+      // snapshot — so a mid-dispatch switch cannot retarget the
+      // command, and navigation/reload of that tab invalidates it.
+      const tab = state.boundTabId !== null ? { id: state.boundTabId } : await activeTab();
+      if (gen !== state.generation || seq !== interactionSeq) outcome = { ok: false, discarded: true, message: "" };
+      else if (!tab || tab.id === undefined) outcome = { ok: false, message: "No active tab." };
+      else {
+        voiceTabId = tab.id;
+        outcome = await runHideTags(tab.id, { viaCommand: true });
+      }
+    }
+  } catch (err) {
+    outcome = { ok: false, message: `Command failed: ${err.message || err}` };
+  } finally {
+    commandPending = false;
+    if (!(recognizer && recognizer.isActive())) voiceTabId = null;
+    updateExecuteEnabled();
+  }
+
+  if (!outcome || outcome.discarded || gen !== state.generation || seq !== interactionSeq) {
+    // The interaction moved on (tab/document change, cancellation):
+    // never present or speak the late result as acting on this page.
+    const reason = discardMessage;
+    discardMessage = null;
+    pendingSpoken = null;
+    setVoiceState(reason
+      ? `Voice: idle — ${reason}`
+      : "Voice: idle — the tab or document changed while the command was running; its result was discarded.", true);
+    updateVoiceControls();
+    return;
+  }
+  discardMessage = null;
+  setStatus(outcome.message, !outcome.ok);
+  if (outcome.ok) {
+    // While recognition is still winding down, say so — the
+    // microphone has not closed yet and must not be reported idle.
+    setVoiceState(recognizer && recognizer.isActive()
+      ? "Voice: finishing — waiting for the microphone to close…"
+      : "Voice: idle.");
+    // Spoken success only after the page acknowledged the command,
+    // and only once any active microphone has terminated.
+    speakFeedback(resolved.spoken);
+  } else {
+    setVoiceState(`Voice: error — ${outcome.message}`, true);
+  }
+  updateVoiceControls();
+}
+
+$("btnListen").addEventListener("click", async () => {
+  if (!recognizer || !recognizer.supported()) {
+    setVoiceState("Voice: error — speech recognition is not supported in this browser. Typed commands remain available.", true);
+    return;
+  }
+  if (commandPending || state.pending || state.acquiring) {
+    setVoiceState("Voice: error — another panel operation is in progress. Wait for it to finish, then try again.", true);
+    return;
+  }
+  if (recognizer.isActive()) return; // repeated Start clicks are ignored
+  if (speechOutput) speechOutput.stop(); // never transcribe our own feedback
+  const gen = state.generation;
+  const seq = interactionSeq;
+  let tab = null;
+  try { tab = await activeTab(); } catch { /* start is refused below if ownership changed */ }
+  if (gen !== state.generation || seq !== interactionSeq) return;
+  voiceTabId = tab && tab.id !== undefined ? tab.id : null;
+  $("voiceTranscript").textContent = "Transcript: —";
+  setVoiceState("Voice: starting the microphone…");
+  recognizer.start();
+  updateVoiceControls();
+});
+
+$("btnStopListen").addEventListener("click", () => {
+  // Stop finishes the current utterance: a final result may still
+  // arrive once and dispatch; the session then returns to idle.
+  if (recognizer) recognizer.stop();
+  setVoiceState("Voice: finishing the current utterance…");
+  updateVoiceControls();
+});
+
+$("btnCancelListen").addEventListener("click", () => {
+  // Cancel discards the utterance and invalidates any pending command
+  // interaction, so a late acknowledgment is neither presented nor
+  // spoken. A command already sent to the page may still have taken
+  // effect there; that is stated, not hidden.
+  cancelVoiceInteraction("listening and any pending command were cancelled. A command already sent to the page may still have taken effect; verify the page before continuing.");
+});
+
+$("btnSendCommand").addEventListener("click", async () => {
+  const text = $("commandInput").value;
+  $("commandInput").value = "";
+  await dispatchCommand(text, "typed");
+});
+$("commandInput").addEventListener("keydown", async (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  const text = $("commandInput").value;
+  $("commandInput").value = "";
+  await dispatchCommand(text, "typed");
+});
+
+$("chkSpeak").addEventListener("change", () => {
+  if (speechOutput) speechOutput.setEnabled($("chkSpeak").checked);
+});
+$("btnStopSpeech").addEventListener("click", () => {
+  // Stop speech silences current synthesis AND drops feedback still
+  // held for microphone termination. The completed page command is
+  // unaffected — nothing here cancels or reverses it.
+  pendingSpoken = null;
+  if (speechOutput) speechOutput.stop();
+});
+$("btnMicSetup").addEventListener("click", async () => {
+  try {
+    const url = chrome.runtime.getURL("mic-setup.html");
+    if (chrome.tabs && typeof chrome.tabs.create === "function") await chrome.tabs.create({ url });
+    else window.open(url, "_blank");
+    setVoiceState("Voice: idle — complete the microphone setup in the opened tab, then return here and start listening again.");
+  } catch (err) {
+    setVoiceState(`Voice: error — could not open microphone setup: ${err.message || err}`, true);
+  }
+});
+
+window.addEventListener("beforeunload", () => {
+  interactionSeq += 1;
+  if (recognizer && recognizer.isActive()) recognizer.cancel();
+  if (speechOutput) speechOutput.stop();
+});
+
+if (!recognizer || !recognizer.supported()) {
+  $("btnListen").disabled = true;
+  $("voiceNote").textContent = "Speech recognition is not available in this browser, so voice input is disabled; typed commands remain fully available. Browser speech recognition may process audio outside this device — Seeyable stores no audio or transcripts.";
+} else {
+  $("voiceNote").textContent = "Recognition uses the browser Web Speech service, which may process audio outside this device. Seeyable stores no audio or transcripts and never adds them to snapshot output.";
+}
+if (speechOutput && !speechOutput.supported()) {
+  $("voiceNote").textContent += " Spoken feedback is unavailable in this browser; visible feedback still works.";
+}
+updateVoiceControls();
 
 /* --- Manual execution ------------------------------------------------------
  * Executes exactly the displayed snapshot's selection, once. After any
@@ -392,6 +703,7 @@ async function refreshAfterExecution(tabId, gen, previousSession) {
 $("btnExecute").addEventListener("click", async () => {
   if (state.pending) return; // duplicate dispatch guard (rapid click / Enter)
   if (state.acquiring) { setExecStatus("A snapshot acquisition is in progress. Wait for it to finish, review the snapshot, then execute.", true); return; }
+  if (commandPending) { setExecStatus("A voice/typed command is in progress. Wait for it to finish, review the snapshot, then execute.", true); return; }
   if (!state.snapshot || !state.executorReady) {
     setExecStatus("Take a DOM/ARIA snapshot through the content script before executing.", true);
     return;
@@ -479,6 +791,9 @@ $("actionSelect").addEventListener("change", updateValueEnabled);
 refreshTabInfo();
 chrome.tabs.onActivated.addListener((info) => {
   refreshTabInfo();
+  if ((recognizer && recognizer.isActive()) || commandPending || (speechOutput && speechOutput.isSpeaking())) {
+    cancelVoiceInteraction("listening and pending command results were discarded because the active tab changed.");
+  }
   // Invalidate even when nothing is bound yet: an in-flight initial
   // snapshot for another tab must never populate or authorize.
   const ownedTab = state.boundTabId !== null ? state.boundTabId : state.opTabId;
@@ -488,6 +803,9 @@ chrome.tabs.onActivated.addListener((info) => {
 });
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.title || info.url) refreshTabInfo();
+  if ((info.status === "loading" || info.url) && voiceTabId !== null && tabId === voiceTabId) {
+    cancelVoiceInteraction("listening was discarded because the tab navigated or reloaded.");
+  }
   const ownedTab = state.boundTabId !== null ? state.boundTabId : state.opTabId;
   if (ownedTab !== null && tabId === ownedTab && (info.status === "loading" || info.url)) {
     invalidateExecution("The tab navigated or reloaded. The previous execution selection was discarded; take a fresh snapshot.");

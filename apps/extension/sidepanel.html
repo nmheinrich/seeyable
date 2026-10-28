@@ -8,7 +8,7 @@
 <body>
 <header>
   <h1>Seeyable · Manual test panel</h1>
-  <p class="sub">Snapshots, tags, highlighting, and single-action executor tests. No planner, voice, or MCP.</p>
+  <p class="sub">Snapshots, tags, highlighting, voice/typed tag commands, and single-action executor tests. No planner or MCP.</p>
   <p id="tabInfo" class="tab-info">Active tab: —</p>
 </header>
 
@@ -43,6 +43,37 @@
     <button id="btnHighlight" type="button">Highlight</button>
   </span>
 </label>
+
+<section class="voice" aria-labelledby="voiceHeading">
+  <h2 id="voiceHeading">Voice and typed commands</h2>
+  <p class="sub">Push-to-talk or typed. Supported commands: “show tags” and “hide tags”. Commands only show or hide tags — they never execute page actions.</p>
+
+  <div class="controls" aria-label="Voice controls">
+    <button id="btnListen" type="button">Start listening</button>
+    <button id="btnStopListen" type="button" disabled>Stop listening</button>
+    <button id="btnCancelListen" type="button" disabled>Cancel listening</button>
+    <button id="btnMicSetup" type="button">Microphone setup</button>
+  </div>
+  <p id="voiceState" class="status" role="status">Voice: idle.</p>
+  <p id="voiceTranscript" class="transcript" aria-live="polite">Transcript: —</p>
+
+  <label class="field">
+    Typed command
+    <span class="highlight-row">
+      <input id="commandInput" type="text" autocomplete="off" placeholder="show tags">
+      <button id="btnSendCommand" type="button">Send command</button>
+    </span>
+  </label>
+
+  <div class="controls" aria-label="Speech feedback controls">
+    <label class="check">
+      <input id="chkSpeak" type="checkbox" checked>
+      Speak feedback
+    </label>
+    <button id="btnStopSpeech" type="button">Stop speech</button>
+  </div>
+  <p id="voiceNote" class="sub"></p>
+</section>
 
 <section class="exec" aria-labelledby="execHeading">
   <h2 id="execHeading">Manual execution</h2>
@@ -89,6 +120,7 @@
 </p>
 
 <script src="lib/snapshot-cdp.js"></script>
+<script src="lib/voice-commands.js"></script>
 <script src="sidepanel.js"></script>
 </body>
 </html>
