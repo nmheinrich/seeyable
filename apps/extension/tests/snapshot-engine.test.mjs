@@ -250,6 +250,49 @@ test("form actions: Submit/Clear keep names and form context but no question", (
   assert.equal(byName(snap, "Under 18").question, "How old are you?");
 });
 
+/* Regression: a fieldset legend must not leak onto unrelated following controls */
+test("question scope: rating legend stays inside its fieldset; following controls get no question", () => {
+  const { engine } = loadFile(join(here, "fixtures/executor-form.html"));
+  const snap = engine.snapshot();
+  // The five rating radios keep their certain fieldset association.
+  const radios = snap.elements.filter((e) => e.role === "radio");
+  assert.equal(radios.length, 5);
+  for (const r of radios) {
+    assert.equal(r.question, "How satisfied are you?");
+    assert.equal(r.questionSource, "fieldset-legend");
+    assert.equal(r.questionCertain, true);
+  }
+  // Unrelated controls after the fieldset inherit nothing — in the
+  // question fields or in the context text.
+  for (const name of ["Password", "Card number", "Deep field", "ARIA updates", "ARIA notifications", "Disabled field", "Readonly field"]) {
+    const el = byName(snap, name);
+    assert.ok(el, `${name} must remain in the snapshot`);
+    assert.equal(el.question, null, `${name} must not inherit the rating question`);
+    assert.equal(el.questionSource, null, `${name} must not cite the leaked source`);
+    assert.equal(el.questionCertain, false);
+    assert.ok(!el.context.includes("How satisfied are you?"), `${name} context must not cite the rating question`);
+  }
+  // Redaction and names are unaffected by the scoping change.
+  assert.equal(byName(snap, "Password").state.redacted, true);
+  assert.equal(byName(snap, "Card number").state.redacted, true);
+});
+
+test("question scope: heading inside an ARIA group scopes to that group; section inference survives", () => {
+  const { engine } = load(`<form aria-label="Scoped form">
+    <div role="group"><h3>Grouped prompt</h3>
+      <label for="grouped">Grouped field</label><input id="grouped"></div>
+    <label for="after">After group</label><input id="after">
+    <section><h2>Section prompt</h2>
+      <label for="insection">Section field</label><input id="insection"></section>
+    </form>`);
+  const snap = engine.snapshot();
+  assert.equal(byName(snap, "Grouped field").question, "Grouped prompt");
+  const after = byName(snap, "After group");
+  assert.equal(after.question, null, "a group heading must not leak to controls outside the group");
+  assert.ok(!after.context.includes("Grouped prompt"));
+  assert.equal(byName(snap, "Section field").question, "Section prompt", "legitimate section-heading inference is preserved");
+});
+
 /* Follow-up: non-interactive roles are never targets */
 test("roles: role=img and other non-interactive roles are excluded even with name/tabindex", () => {
   const { engine } = load(`<div role="img" aria-label="Company logo" tabindex="0"></div>

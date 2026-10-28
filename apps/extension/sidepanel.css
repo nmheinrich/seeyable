@@ -14,3 +14,11 @@ h1 { font-size: 15px; margin: 0 0 2px; }
 .highlight-row input { flex: 1; padding: 5px; }
 .output { background: #f6f6f4; border: 1px solid #ddd; padding: 8px; max-height: 55vh; overflow: auto; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 code { background: #eee; padding: 0 3px; border-radius: 3px; }
+.exec { border-top: 1px solid #ddd; margin-top: 12px; padding-top: 8px; }
+.exec h2 { font-size: 13px; margin: 0 0 4px; }
+.field { display: block; font-size: 12px; margin: 8px 0; }
+.field select, .field input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px; }
+#btnExecute { padding: 7px 12px; cursor: pointer; margin-top: 4px; }
+#btnExecute:disabled, button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity: 0.55; }
+.exec-result { min-height: 3em; }
+:focus-visible { outline: 2px solid #141414; outline-offset: 2px; }

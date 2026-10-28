@@ -27,7 +27,9 @@ broader visual style, color palette, or layout system.
   real personal data in demos.
 
 ## Current work
-Full roadmap: docs/roadmap.md. Issue #6 (production snapshot engine) is
-complete. Issue #7 (visual overlays) is complete. Current issue: #8 (executor actions).
+Issues #6 (production snapshot engine), #7 (visual overlays), #8 (executor
+actions), and #9 (manual execution test panel) are complete and accepted.
+Next issue: #11 (shared executor safety gate). Issue #29 (Plain Words
+product design) starts after #11. See docs/status.md for verification evidence.
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

@@ -214,11 +214,26 @@ function cssPath(el) {
 }
 
 /* --- Question context: the prompt a control answers, kept separate from its name --- */
+// A heading or legend describes only the controls inside the grouping
+// container it belongs to: a legend names its own fieldset, and a heading
+// inside a fieldset, ARIA group, or section-like container scopes to that
+// container. Without this check, searching a broad scope (e.g. the whole
+// form) lets a nested group's legend leak onto unrelated controls that
+// merely follow the group in document order.
+function headingScopesTo(h, el) {
+  const group = h.closest
+    ? h.closest("fieldset, section, article, li, [role='group'], [role='radiogroup'], [role='listbox'], [role='listitem']")
+    : null;
+  if (!group) return true;
+  return group === el || (typeof group.contains === "function" && group.contains(el));
+}
+
 function headingBefore(scope, el) {
   if (!scope || !scope.querySelectorAll) return null;
   const headings = scope.querySelectorAll("h1, h2, h3, h4, h5, h6, [role='heading'], legend");
   let best = null;
   for (const h of headings) {
+    if (!headingScopesTo(h, el)) continue;
     if (h.compareDocumentPosition && (h.compareDocumentPosition(el) & 4)) best = h;
     else if (!h.compareDocumentPosition) best = h;
   }
