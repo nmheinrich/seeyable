@@ -597,6 +597,8 @@ function buildDomSnapshot(doc, view) {
 }
 
 if (typeof globalThis !== "undefined") {
+  // Internal helpers shared with sibling content-script modules (executor).
+  globalThis.__seeyable_snapshotInternals = { normalizeElements, semanticHash, diffNormalized, sensitiveInfo, isVisible, computeAccessibleName };
   globalThis.__seeyable_createSnapshotEngine = createSnapshotEngine;
   globalThis.__seeyable_snapshotDOM = function __seeyable_snapshotDOM() { return buildDomSnapshot(); };
   globalThis.__seeyable_getSnapshotEngine = function __seeyable_getSnapshotEngine() {
@@ -606,6 +608,6 @@ if (typeof globalThis !== "undefined") {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     buildDomSnapshot, createSnapshotEngine, computeAccessibleName, roleOf,
-    normalizeElements, semanticHash, diffNormalized, sensitiveInfo, questionOf,
+    normalizeElements, semanticHash, diffNormalized, sensitiveInfo, questionOf, isVisible,
   };
 }

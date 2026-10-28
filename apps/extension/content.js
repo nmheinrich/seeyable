@@ -18,12 +18,25 @@
  *  - SEEYABLE_HIDE_TAGS                               -> hide tags (highlight ring unaffected)
  *  - SEEYABLE_HIGHLIGHT_ID { elementId, documentSessionId, revision }
  *                                                     -> scroll validated node into view + ring
+ *  - SEEYABLE_EXECUTE_ACTION { action, elementId, documentSessionId, revision, value }
+ *                                                     -> single executor entry point (async response)
  */
 
 console.info("[seeyable] content script ready:", location.href);
 
 function engine() {
   return globalThis.__seeyable_getSnapshotEngine();
+}
+
+let executor = null;
+function getExecutor() {
+  if (!executor) {
+    executor = globalThis.__seeyable_createExecutor({
+      engine: engine(),
+      internals: globalThis.__seeyable_snapshotInternals,
+    });
+  }
+  return executor;
 }
 
 let overlay = null;
@@ -95,6 +108,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok: true, shown: result.shown, total: result.total });
     } catch (err) { fail(sendResponse, err); }
     return false;
+  }
+
+  if (message.type === "SEEYABLE_EXECUTE_ACTION") {
+    // Single executor entry point. No action logic lives in messaging code,
+    // and raw request objects are never logged (values may be user data).
+    (async () => {
+      try {
+        const { action, elementId, documentSessionId, revision, value } = message.request || {};
+        const response = await getExecutor().execute({ action, elementId, documentSessionId, revision, value });
+        if (!response.ok) console.warn(`[seeyable] execute ${action} ${elementId}: ${response.error.code}`);
+        sendResponse(response);
+      } catch (err) { fail(sendResponse, err); }
+    })();
+    return true; // async sendResponse
   }
 
   if (message.type === "SEEYABLE_HIGHLIGHT_ID") {

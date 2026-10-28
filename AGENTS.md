@@ -28,6 +28,6 @@ broader visual style, color palette, or layout system.
 
 ## Current work
 Full roadmap: docs/roadmap.md. Issue #6 (production snapshot engine) is
-complete. Current issue: #7 (visual overlays).
+complete. Issue #7 (visual overlays) is complete. Current issue: #8 (executor actions).
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

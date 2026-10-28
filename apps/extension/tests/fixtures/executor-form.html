@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Executor test fixture</title>
+<style>#scroller{height:180px;overflow:auto;border:1px solid #555}.spacer{height:150px}</style></head>
+<body>
+<main>
+  <h1>Executor fixture</h1>
+  <p>Synthetic data only. Handlers record flags on <code>window.__flags</code>.</p>
+
+  <form id="main-form" aria-label="Executor fixture form">
+    <label for="controlled">Controlled name</label>
+    <input id="controlled" type="text" value="">
+    <output id="controlled-output" aria-label="Controlled output"></output>
+
+    <label for="plain">Plain text</label>
+    <input id="plain" type="text">
+
+    <label for="essay">Essay</label>
+    <textarea id="essay"></textarea>
+
+    <label for="role-select">Role</label>
+    <select id="role-select">
+      <option value="">Choose…</option>
+      <option value="designer">Designer</option>
+      <option value="engineer">Engineer</option>
+      <option value="legacy" disabled>Legacy (disabled)</option>
+    </select>
+
+    <label><input id="follow-toggle" type="checkbox"> Add follow-up details</label>
+    <div id="followup-wrap" hidden>
+      <label for="followup">Follow-up details</label>
+      <input id="followup" type="text">
+    </div>
+
+    <fieldset>
+      <legend>How satisfied are you?</legend>
+      <label><input type="radio" name="sat" value="1"> 1</label>
+      <label><input type="radio" name="sat" value="2"> 2</label>
+      <label><input type="radio" name="sat" value="3"> 3</label>
+      <label><input type="radio" name="sat" value="4"> 4</label>
+      <label><input type="radio" name="sat" value="5"> 5</label>
+    </fieldset>
+
+    <button id="harmless" type="button">Increment counter</button>
+    <output id="counter">0</output>
+
+    <div id="aria-check" role="checkbox" aria-checked="false" tabindex="0">ARIA updates</div>
+    <button id="aria-switch" type="button" role="switch" aria-checked="false">ARIA notifications</button>
+
+    <div id="scroller">
+      <p>Container top</p>
+      <div class="spacer"></div>
+      <label for="deep">Deep field</label>
+      <input id="deep" type="text">
+      <div class="spacer"></div>
+    </div>
+
+    <label for="disabled-field">Disabled field</label>
+    <input id="disabled-field" type="text" disabled>
+    <label for="readonly-field">Readonly field</label>
+    <input id="readonly-field" type="text" readonly value="fixed">
+
+    <label for="pw">Password</label>
+    <input id="pw" type="password" value="SyntheticPass!1">
+    <label for="cc">Card number</label>
+    <input id="cc" autocomplete="cc-number" value="4242424242424242">
+
+    <button id="submit-btn" type="submit">Submit feedback</button>
+    <button id="delete-btn" type="button">Delete draft</button>
+    <button id="pay-btn" type="button">Pay now</button>
+  </form>
+</main>
+<script>
+  window.__flags = { submitRan: false, deleteRan: false, payRan: false, harmlessClicks: 0, controlledInputs: 0 };
+  const controlled = document.getElementById("controlled");
+  controlled.addEventListener("input", () => {
+    window.__flags.controlledInputs += 1;
+    document.getElementById("controlled-output").textContent = controlled.value;
+  });
+  document.getElementById("follow-toggle").addEventListener("change", (e) => {
+    document.getElementById("followup-wrap").hidden = !e.target.checked;
+  });
+  document.getElementById("harmless").addEventListener("click", () => {
+    window.__flags.harmlessClicks += 1;
+    document.getElementById("counter").textContent = String(window.__flags.harmlessClicks);
+  });
+  const ariaCheck = document.getElementById("aria-check");
+  ariaCheck.addEventListener("click", () => {
+    ariaCheck.setAttribute("aria-checked", ariaCheck.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
+  const ariaSwitch = document.getElementById("aria-switch");
+  ariaSwitch.addEventListener("click", () => {
+    ariaSwitch.setAttribute("aria-checked", ariaSwitch.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
+  document.getElementById("submit-btn").addEventListener("click", () => { window.__flags.submitRan = true; });
+  document.getElementById("delete-btn").addEventListener("click", () => { window.__flags.deleteRan = true; });
+  document.getElementById("pay-btn").addEventListener("click", () => { window.__flags.payRan = true; });
+  document.getElementById("main-form").addEventListener("submit", (e) => { e.preventDefault(); window.__flags.submitRan = true; });
+</script>
+</body>
+</html>
