@@ -30,11 +30,13 @@ function setStatus(text, isError) {
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
   console.info("[seeyable panel]", text);
+  renderState();
 }
 function setExecStatus(text, isError) {
   const el = $("execStatus");
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
+  renderState();
 }
 function showJson(obj, metaText) {
   lastJson = JSON.stringify(obj, null, 2);
@@ -52,9 +54,9 @@ async function refreshTabInfo() {
     const tab = await activeTab();
     // Do not depend on tab.url/title being exposed; snapshot metadata is
     // the execution-relevant identity, this line is informational only.
-    const label = tab && tab.title ? tab.title : tab ? `Tab ${tab.id}` : "—";
+    const label = tab && tab.title ? tab.title : tab ? "Current page" : "—";
     const bound = state.boundTabId !== null && tab && tab.id !== state.boundTabId ? " (execution bound to another tab)" : "";
-    $("tabInfo").textContent = tab ? `Active tab: ${label}${bound}` : "Active tab: —";
+    $("tabInfo").textContent = tab ? `${label}${bound}` : "—";
   } catch { /* panel may open before tabs settle */ }
 }
 
@@ -100,6 +102,30 @@ function numberFromId(id) {
   return m ? m[1] : "?";
 }
 
+// Word-first labels share the overlay's display builder (lib/overlay.js):
+// snapshot names minus display-only annotations, question context for
+// duplicates, never values. The panel never invents labels.
+function shortLabel(element, elements) {
+  if (typeof globalThis.__seeyable_buildTagLabel === "function") {
+    return globalThis.__seeyable_buildTagLabel(element, elements, { short: true }).text;
+  }
+  return (element.name || "").trim() || `${element.role || "control"} ${numberFromId(element.id)}`;
+}
+function fullLabel(element, elements) {
+  if (typeof globalThis.__seeyable_buildTagLabel === "function") {
+    return globalThis.__seeyable_buildTagLabel(element, elements, { full: true }).text;
+  }
+  const name = (element.name || "").trim() || `${element.role || "control"} ${numberFromId(element.id)}`;
+  return element.question ? `${element.question} · ${name}` : name;
+}
+
+// Targets-list presentation state. The list is a view over the already
+// bound snapshot (same session/revision/tab as manual execution) — never
+// a second registry. unplacedIds mirrors the overlay's omit-no-fit
+// report; activeTargetId is the last explicitly highlighted target.
+let unplacedIds = new Set();
+let activeTargetId = null;
+
 function populateTargets(snapshot, preserveId) {
   const select = $("targetSelect");
   select.replaceChildren();
@@ -111,6 +137,10 @@ function populateTargets(snapshot, preserveId) {
   select.append(placeholder);
   if (!snapshot || !Array.isArray(snapshot.elements) || snapshot.elements.length === 0) {
     select.disabled = true;
+    // Empty/invalid snapshots must clear the visible list too — a stale
+    // row from a previous tab/document must never stay on screen.
+    activeTargetId = null;
+    renderTargets();
     updateExecuteEnabled();
     return;
   }
@@ -129,11 +159,101 @@ function populateTargets(snapshot, preserveId) {
   // Preserve only the same ID (callers enforce the same-session rule);
   // anything else stays explicitly unselected and Execute stays disabled.
   select.value = preserveId && snapshot.elements.some((e) => e.id === preserveId) ? preserveId : "";
+  activeTargetId = null; // a new snapshot invalidates the previous active mark
+  renderTargets();
   updateExecuteEnabled();
+}
+
+// Discovery shortcut next to the main interaction: move keyboard focus
+// (and scroll) to the Targets heading so the list is one activation away.
+{
+  const viewBtn = $("btnViewTargets");
+  if (viewBtn) viewBtn.addEventListener("click", () => {
+    const heading = $("targetsHeading");
+    if (heading) heading.focus();
+  });
+}
+
+function targetMarks(element) {
+  const marks = [];
+  if (element.state && element.state.disabled) marks.push("(disabled)");
+  else if (element.state && element.state.readonly) marks.push("(readonly)");
+  if (unplacedIds.has(element.id)) marks.push("Shown in panel");
+  if (state.confirmation && state.confirmation.elementId === element.id) marks.push("▲ held");
+  return marks;
+}
+
+function renderTargets() {
+  const list = $("targetList");
+  if (!list) return;
+  list.replaceChildren();
+  const elements = state.snapshot && Array.isArray(state.snapshot.elements) ? state.snapshot.elements : [];
+  if (elements.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "sub";
+    empty.textContent = state.snapshot ? "No interactive controls in this snapshot." : "Take a snapshot in Developer view to see its targets here.";
+    list.append(empty);
+    return;
+  }
+  for (const element of elements) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "target";
+    button.dataset.targetId = element.id;
+    const isActive = element.id === activeTargetId;
+    const label = isActive ? fullLabel(element, elements) : shortLabel(element, elements);
+    const marks = targetMarks(element);
+    button.textContent = `${numberFromId(element.id)} · ${label}${marks.length ? ` ${marks.join(" ")}` : ""}`;
+    if (isActive) button.setAttribute("aria-current", "true");
+    button.addEventListener("click", () => highlightElementId(element.id));
+    list.append(button);
+  }
 }
 
 function selectedTargetId() {
   return $("targetSelect").value || null;
+}
+
+/* --- Product surface (presentation only) -----------------------------------
+ * renderState derives the visible status chip and voice phase from the
+ * panel's current DOM text and ownership flags. It never touches
+ * ownership, locks, requests, or approval authority. */
+function renderState() {
+  const chip = $("stateChip");
+  if (chip) {
+    const statusEl = $("status");
+    const execText = $("execResult") ? $("execResult").textContent : "";
+    const voice = $("voiceState") ? $("voiceState").textContent : "";
+    let cls = "";
+    let label = "Ready";
+    if (state.confirmation) { label = "\u25B2 Held \u2014 nothing sent"; cls = "is-held"; }
+    else if (state.pending || commandPending) { label = "\u25CF Acting"; cls = "is-acting"; }
+    else if (state.acquiring) { label = "\u25CF Working"; cls = "is-acting"; }
+    else if (voicePhase === "listening") { label = "Listening"; cls = "is-listening"; }
+    else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
+    else if (voicePhase === "finishing") { label = "Finishing"; cls = "is-listening"; }
+    else if (gateClosed) { label = /paused/i.test(($("gateStatus") || {}).textContent || "") ? "Paused" : "Stopped"; cls = "is-error"; }
+    else if ((statusEl && statusEl.classList.contains("error"))
+      || ($("execStatus") && $("execStatus").classList.contains("error"))
+      || (/^Failed/.test(execText))
+      || (($("confirmStatus") && $("confirmStatus").classList.contains("error"))
+        && !/^Completed and verified/.test(execText))
+      || voiceErrorUnresolved) { label = "\u00D7 Needs attention"; cls = "is-error"; }
+    else if (/^Completed and verified/.test(execText)) { label = "\u25A0 Done"; cls = "is-success"; }
+    chip.className = "chip" + (cls ? " " + cls : "");
+    chip.textContent = label;
+  }
+  document.body.dataset.voice = voicePhase === "listening" ? "listening"
+    : voicePhase === "starting" || voicePhase === "finishing" ? "finishing" : "idle";
+  document.body.dataset.voiceError = voiceErrorUnresolved ? "true" : "false";
+  const voiceEl = $("voiceState");
+  document.body.dataset.voiceMsg = voiceEl && voiceEl.textContent === "Voice: idle." ? "quiet" : "shown";
+  const transcriptEl = $("voiceTranscript");
+  document.body.dataset.transcript = !transcriptEl || /^Transcript:/.test(transcriptEl.textContent) ? "empty" : "shown";
+  const heroHeading = $("commandHeading");
+  if (heroHeading) heroHeading.textContent = voicePhase === "listening" ? "Listening"
+    : voicePhase === "finishing" ? "Finishing" : "Ready when you are.";
+  if (typeof updateVoiceControls === "function") updateVoiceControls();
 }
 
 function updateValueEnabled() {
@@ -155,8 +275,14 @@ function updateExecuteEnabled() {
     const btn = $(id);
     if (btn) btn.disabled = state.pending || commandPending;
   }
+  // Targets-list highlighting shares the highlight lock exactly.
+  const listLocked = state.pending || state.acquiring || commandPending;
+  for (const item of document.querySelectorAll("#targetList .target")) {
+    item.disabled = listLocked;
+  }
   updateValueEnabled();
   if (typeof updateVoiceControls === "function") updateVoiceControls();
+  renderState();
 }
 
 function bindSnapshot(tabId, snapshot, viaContentScript) {
@@ -166,29 +292,52 @@ function bindSnapshot(tabId, snapshot, viaContentScript) {
   state.boundTabId = tabId;
   state.snapshot = snapshot;
   state.executorReady = viaContentScript;
+  unplacedIds = new Set(); // a new binding invalidates the previous float report
   populateTargets(snapshot, preserveId);
+  renderPageLine();
   if (selectedTargetId() !== preserveId) $("valueInput").value = "";
+}
+
+// Page identity from data already in hand (no new permissions): the
+// tab title on the bold line, and domain plus control count from the
+// bound snapshot on the meta line. Unbound shows the honest empty state.
+function renderPageLine() {
+  const meta = $("pageMeta");
+  if (!meta) return;
+  const snapshot = state.snapshot;
+  if (snapshot && snapshot.url) {
+    try {
+      const domain = new URL(snapshot.url).hostname || snapshot.url;
+      const count = Array.isArray(snapshot.elements) ? snapshot.elements.length : snapshot.elementCount;
+      meta.textContent = `${domain} · ${count} controls`;
+      return;
+    } catch { /* fall through to the empty state */ }
+  }
+  meta.textContent = "No snapshot yet";
 }
 
 function invalidateExecution(reason) {
   state.generation += 1;
   cancelVoiceInteraction();
+  const tagsChip = $("tagsChip");
+  if (tagsChip) tagsChip.textContent = "Tags: unknown";
   if (state.confirmation) {
     const held = state.confirmation;
-    state.confirmation = null;
-    $("confirmBox").hidden = true;
     try {
       const sent = chrome.tabs.sendMessage(held.tabId, { type: "SEEYABLE_CANCEL_CHALLENGE", challengeId: held.challengeId });
       if (sent && typeof sent.catch === "function") sent.catch(() => {});
     } catch { /* the document is gone; its challenges died with it */ }
-    setConfirmStatus("The pending confirmation was discarded because the tab or document changed. If its action had already been dispatched to the page, it may still have taken effect; verify page state before continuing.");
+    clearConfirmation("The pending confirmation was discarded because the tab or document changed. If its action had already been dispatched to the page, it may still have taken effect; verify page state before continuing.", true, { restoreFocus: false });
   }
   state.opTabId = null;
   state.snapshot = null;
   state.executorReady = false;
   state.boundTabId = null;
+  unplacedIds = new Set();
+  activeTargetId = null;
   $("valueInput").value = "";
   populateTargets(null, null);
+  renderPageLine();
   if (reason) setStatus(reason, true);
   updateExecuteEnabled();
 }
@@ -214,7 +363,7 @@ async function takeSnapshot(originLabel) {
     const fresh = snapshot.fresh === false ? " · STALE" : "";
     showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${snapshot.url || ""}`);
     if (viaContentScript) {
-      setStatus(`DOM/ARIA snapshot done: ${snapshot.elementCount} interactive elements (revision ${snapshot.revision}).`);
+      setStatus(`Found ${snapshot.elementCount} controls on this page.`);
     } else {
       setStatus("Snapshot obtained through the scripting fallback. Execution is disabled: reload the tab and reopen the panel so the full content script is available.", true);
     }
@@ -267,6 +416,53 @@ $("btnCdp").addEventListener("click", async () => {
   } catch (err) {
     console.error(err);
     setStatus(`CDP snapshot failed: ${err.message || err}`, true);
+  }
+});
+
+/* --- MCP bridge pairing (Issue #28 spike) ----------------------------------
+ * The token is transient: it is sent only to the extension's own service
+ * worker (which forwards it over the loopback socket), kept in
+ * chrome.storage.session, and the input is cleared after pairing. It is
+ * never logged, never copied into snapshot output, and never sent to a
+ * webpage. */
+function setBridgeStatus(text, isError) {
+  const el = $("bridgeStatus");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle("error", Boolean(isError));
+}
+$("btnBridgeConnect").addEventListener("click", async () => {
+  const token = $("bridgeToken").value.trim();
+  const port = Number($("bridgePort").value.trim());
+  if (!token) { setBridgeStatus("Bridge: paste the pairing token the server printed, then connect.", true); return; }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) { setBridgeStatus("Bridge: port must be 1–65535.", true); return; }
+  setBridgeStatus("Bridge: connecting to 127.0.0.1…");
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "SEEYABLE_BRIDGE_CONNECT", token, port });
+    $("bridgeToken").value = "";
+    if (!res || !res.ok) throw new Error((res && res.error) || "No response from the service worker.");
+    setBridgeStatus(`Bridge: pairing sent to the service worker on 127.0.0.1:${port}. Ask for status to confirm.`);
+  } catch (err) {
+    setBridgeStatus(`Bridge: connect failed: ${err.message || err}`, true);
+  }
+});
+$("btnBridgeDisconnect").addEventListener("click", async () => {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "SEEYABLE_BRIDGE_DISCONNECT" });
+    if (!res || !res.ok) throw new Error((res && res.error) || "No response from the service worker.");
+    $("bridgeToken").value = "";
+    setBridgeStatus("Bridge: disconnected; pairing token discarded.");
+  } catch (err) {
+    setBridgeStatus(`Bridge: disconnect failed: ${err.message || err}`, true);
+  }
+});
+$("btnBridgeStatus").addEventListener("click", async () => {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "SEEYABLE_BRIDGE_STATUS" });
+    if (!res || !res.ok) throw new Error((res && res.error) || "No response from the service worker.");
+    setBridgeStatus(res.connected ? `Bridge: connected on 127.0.0.1:${res.port}.` : "Bridge: not connected.", !res.connected);
+  } catch (err) {
+    setBridgeStatus(`Bridge: status failed: ${err.message || err}`, true);
   }
 });
 
@@ -323,8 +519,20 @@ async function runShowTags(opts = {}) {
           lastKind = "dom-aria";
         } catch { /* tags still shown; execution binding stays unset */ }
       }
+      // Crowded-out targets (no whitespace for a floating tag) stay
+      // discoverable in the Targets list, marked "Shown in panel".
+      unplacedIds = new Set(Array.isArray(res.unplaced) ? res.unplaced : []);
       if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
-      return { ok: true, message: `Tags shown: ${res.shown} in viewport (${res.total} controls, revision ${res.revision}).` };
+      const chip = $("tagsChip");
+      // Visibility only: placement changes as the page scrolls/resizes
+      // and the panel gets no live recount, so a number here would go
+      // stale. The chip states the durable fact (tags on), nothing more.
+      if (chip) chip.textContent = "Tags: on";
+      renderTargets(); // refresh "Shown in panel" marks from this show's report
+      if (unplacedIds.size > 0) {
+        return { ok: true, message: `Tags shown (${res.total} controls, revision ${res.revision}). Some word tags stay in the panel \u2014 see Targets.` };
+      }
+      return { ok: true, message: `Tags shown (${res.total} controls, revision ${res.revision}).` };
     }
     return { ok: false, message: `Show tags failed: ${(res && res.error) || "no response"}` };
   } catch (err) {
@@ -356,7 +564,13 @@ async function runHideTags(tabId, opts = {}) {
     const res = tabId !== undefined && tabId !== null
       ? await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_HIDE_TAGS" })
       : await sendBound({ type: "SEEYABLE_HIDE_TAGS" });
-    if (res && res.ok) return { ok: true, message: "Tags hidden. Highlighting by number still works." };
+    if (res && res.ok) {
+      const chip = $("tagsChip");
+      if (chip) chip.textContent = "Tags: off";
+      unplacedIds = new Set();
+      renderTargets();
+      return { ok: true, message: "Tags hidden. Highlighting by number still works." };
+    }
     return { ok: false, message: `Hide tags failed: ${(res && res.error) || "no response"}` };
   } catch (err) {
     return { ok: false, message: `Hide tags failed: ${err.message || err}` };
@@ -371,24 +585,61 @@ $("btnHideTags").addEventListener("click", async () => {
   setStatus(outcome.message, !outcome.ok);
 });
 
-$("btnHighlight").addEventListener("click", async () => {
+// One highlight flow for the Developer number box and the Targets list:
+// the already-bound snapshot's session/revision plus the captured tab.
+// No retargeting, no second registry.
+// Highlight results are owned: each request captures its tab, document
+// session, revision, and panel generation, plus a monotonic highlight
+// sequence. A response applies only while all of those still match and
+// no newer highlight has been requested — obsolete successes AND
+// failures are discarded silently, so a late response from document A
+// can never mark or report a different field that reuses el-N in
+// document B.
+let highlightSeq = 0;
+
+async function highlightElementId(elementId) {
   if (state.pending || state.acquiring || commandPending) { setStatus("Another panel operation is in progress. Wait for it to finish, then try again.", true); return; }
+  if (!/^el-\d+$/.test(elementId || "")) { setStatus("Enter a target number from a DOM snapshot (e.g. 22).", true); return; }
+  if (!state.snapshot) { setStatus("Take a DOM/ARIA snapshot first so the target session is known.", true); return; }
+  const owner = {
+    seq: ++highlightSeq,
+    tabId: state.boundTabId,
+    session: state.snapshot.documentSessionId,
+    revision: state.snapshot.revision,
+    generation: state.generation,
+  };
+  const stillOwned = () => owner.seq === highlightSeq
+    && state.boundTabId === owner.tabId
+    && state.generation === owner.generation
+    && Boolean(state.snapshot)
+    && state.snapshot.documentSessionId === owner.session
+    && state.snapshot.revision === owner.revision;
+  let res = null;
+  let err = null;
+  try {
+    res = await chrome.tabs.sendMessage(owner.tabId, {
+      type: "SEEYABLE_HIGHLIGHT_ID",
+      elementId,
+      documentSessionId: owner.session,
+      revision: owner.revision,
+    });
+  } catch (e) { err = e; }
+  if (!stillOwned()) return; // obsolete result: discard silently
+  if (err) { setStatus(`Highlight failed: ${err.message || err}`, true); return; }
+  if (res && res.ok) {
+    activeTargetId = elementId; // the target the page is now outlining
+    renderTargets();
+    const target = state.snapshot.elements.find((e) => e.id === elementId);
+    const words = target ? fullLabel(target, state.snapshot.elements) : "";
+    setStatus(`Highlighted target ${numberFromId(elementId)}${words ? ` — ${words}` : ""}.`);
+  } else setStatus(`Highlight failed: ${(res && res.error) || "no response"}`, true);
+}
+
+$("btnHighlight").addEventListener("click", async () => {
   const raw = $("highlightInput").value.trim();
   const num = raw.replace(/^el-/i, "");
   if (!/^\d+$/.test(num)) { setStatus("Enter a target number from a DOM snapshot (e.g. 22).", true); return; }
-  if (!state.snapshot) { setStatus("Take a DOM/ARIA snapshot first so the target session is known.", true); return; }
-  try {
-    const res = await chrome.tabs.sendMessage(state.boundTabId, {
-      type: "SEEYABLE_HIGHLIGHT_ID",
-      elementId: `el-${num}`,
-      documentSessionId: state.snapshot.documentSessionId,
-      revision: state.snapshot.revision,
-    });
-    if (res && res.ok) setStatus(`Highlighted target ${num}.`);
-    else setStatus(`Highlight failed: ${(res && res.error) || "no response"}`, true);
-  } catch (err) {
-    setStatus(`Highlight failed: ${err.message || err}`, true);
-  }
+  await highlightElementId(`el-${num}`);
 });
 
 /* --- Voice and typed commands (Feature #10) --------------------------------
@@ -398,6 +649,18 @@ $("btnHighlight").addEventListener("click", async () => {
  * line until replaced or invalidated. */
 const voiceApi = globalThis.SeeyableVoice || null;
 let commandPending = false;
+// Presentation-only mirror of the recognition lifecycle. This is the
+// single source for microphone/voice phase in renderState — it is set
+// only at authoritative transition points (handlers below), never
+// inferred from user-facing sentences, so cancellation copy that
+// mentions "listening" can never read as a live microphone.
+let voicePhase = "idle"; // idle | starting | listening | finishing
+// Presentation-only: a recognition error with no recovery yet. Set only
+// on the authoritative recognition-error transition; cleared by a new
+// start attempt, a live session, cancellation, or a successful command
+// outcome. Never inferred from sentence text, so the intentional
+// "Voice: idle — … cancelled" message does not trip it.
+let voiceErrorUnresolved = false;
 let interactionSeq = 0; // bumped whenever a voice/command interaction is invalidated
 let voiceTabId = null;
 let discardMessage = null; // why the latest interaction was invalidated, if stated
@@ -412,6 +675,7 @@ function setVoiceState(text, isError) {
   if (!el) return;
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
+  renderState();
 }
 
 function updateVoiceControls() {
@@ -423,6 +687,11 @@ function updateVoiceControls() {
   $("btnCancelListen").disabled = !(recActive || commandPending);
   $("btnSendCommand").disabled = commandPending || panelBusy;
   $("commandInput").disabled = commandPending;
+  // Suggestion chips dispatch through the same typed flow and lock.
+  for (const id of ["btnTryShow", "btnTryHide"]) {
+    const btn = $(id);
+    if (btn) btn.disabled = commandPending || panelBusy;
+  }
 }
 
 // Spoken feedback is held while recognition is active: synthesis must
@@ -450,10 +719,15 @@ const recognizer = voiceApi
       window,
       handlers: {
         onState: ({ state: recState }) => {
+          // Any authoritative session transition supersedes a prior
+          // recognition-error presentation.
+          voiceErrorUnresolved = false;
           if (recState === "listening") {
+            voicePhase = "listening";
             setVoiceState("Voice: listening… say one supported command.");
           } else if (!commandPending) {
             voiceTabId = null;
+            voicePhase = "idle";
             setVoiceState("Voice: idle.");
           }
           updateVoiceControls();
@@ -462,12 +736,15 @@ const recognizer = voiceApi
         onInterim: ({ text }) => { $("voiceTranscript").textContent = `Heard so far: ${text}`; },
         onFinal: ({ text }) => {
           $("voiceTranscript").textContent = text ? `Heard: ${text}` : "Heard: (no speech)";
+          voicePhase = "finishing";
           // The one accepted utterance ends the session's purpose:
           // wind recognition down now; feedback waits for its end.
           if (recognizer) recognizer.stop();
           void dispatchCommand(text, "voice");
         },
         onError: ({ message }) => {
+          voicePhase = "idle";
+          voiceErrorUnresolved = true;
           setVoiceState(`Voice: error — ${message}`, true);
           updateVoiceControls();
           flushPendingSpoken(); // error also terminates the microphone
@@ -478,6 +755,8 @@ const recognizer = voiceApi
 
 function cancelVoiceInteraction(reason) {
   interactionSeq += 1;
+  voicePhase = "idle";
+  voiceErrorUnresolved = false; // intentional cancellation is not a recognition failure
   discardMessage = reason || null;
   pendingSpoken = null;
   if (recognizer && recognizer.isActive()) recognizer.cancel();
@@ -552,6 +831,7 @@ async function dispatchCommand(rawText, source) {
   if (!outcome || outcome.discarded || gen !== state.generation || seq !== interactionSeq) {
     // The interaction moved on (tab/document change, cancellation):
     // never present or speak the late result as acting on this page.
+    voicePhase = recognizer && recognizer.isActive() ? "finishing" : "idle";
     const reason = discardMessage;
     discardMessage = null;
     pendingSpoken = null;
@@ -562,8 +842,11 @@ async function dispatchCommand(rawText, source) {
     return;
   }
   discardMessage = null;
+  voicePhase = recognizer && recognizer.isActive() ? "finishing" : "idle";
   setStatus(outcome.message, !outcome.ok);
   if (outcome.ok) {
+    // A completed command is recovery from any prior recognition error.
+    voiceErrorUnresolved = false;
     // While recognition is still winding down, say so — the
     // microphone has not closed yet and must not be reported idle.
     setVoiceState(recognizer && recognizer.isActive()
@@ -596,12 +879,15 @@ $("btnListen").addEventListener("click", async () => {
   if (gen !== state.generation || seq !== interactionSeq) return;
   voiceTabId = tab && tab.id !== undefined ? tab.id : null;
   $("voiceTranscript").textContent = "Transcript: —";
+  voicePhase = "starting";
+  voiceErrorUnresolved = false; // a new attempt supersedes the prior error presentation
   setVoiceState("Voice: starting the microphone…");
   recognizer.start();
   updateVoiceControls();
 });
 
 $("btnStopListen").addEventListener("click", () => {
+  voicePhase = "finishing";
   // Stop finishes the current utterance: a final result may still
   // arrive once and dispatch; the session then returns to idle.
   if (recognizer) recognizer.stop();
@@ -622,6 +908,15 @@ $("btnSendCommand").addEventListener("click", async () => {
   $("commandInput").value = "";
   await dispatchCommand(text, "typed");
 });
+// Suggestion chips offer only the two supported commands, dispatched
+// through the same shared typed flow (same locks, same ownership).
+for (const [buttonId, command] of [["btnTryShow", "show tags"], ["btnTryHide", "hide tags"]]) {
+  const chip = $(buttonId);
+  if (chip) chip.addEventListener("click", async () => {
+    $("commandInput").value = "";
+    await dispatchCommand(command, "typed");
+  });
+}
 $("commandInput").addEventListener("keydown", async (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
@@ -678,6 +973,8 @@ function renderExecution(lines, response) {
   const parts = [...lines];
   if (response) parts.push("", JSON.stringify(response, null, 2));
   $("execResult").textContent = parts.join("\n");
+  const latest = $("latestResult");
+  if (latest) latest.textContent = lines.length ? `Latest result: ${lines[0]}` : "";
 }
 
 function describeOutcome(response) {
@@ -831,15 +1128,23 @@ function setGateStatus(text, isError) {
   const el = $("gateStatus");
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
+  renderState();
 }
 function setConfirmStatus(text, isError) {
   const el = $("confirmStatus");
   el.textContent = text || "";
   el.classList.toggle("error", Boolean(isError));
+  renderState();
 }
 
+let confirmFocusReturn = null;
+let confirmFocusMoved = false;
+
 function showConfirmation(confirmation, tabId) {
-  state.confirmation = { challengeId: confirmation.challengeId, tabId, expiresAt: confirmation.expiresAt };
+  state.confirmation = { challengeId: confirmation.challengeId, tabId, expiresAt: confirmation.expiresAt, elementId: confirmation.elementId };
+  confirmFocusReturn = document.activeElement && document.contains(document.activeElement)
+    ? document.activeElement : null;
+  confirmFocusMoved = false;
   const lines = [
     `Page: ${confirmation.pageUrl || "(current page)"}`,
     `Action: ${confirmation.action} on “${confirmation.targetName || confirmation.elementId}” (${confirmation.elementId})`,
@@ -849,14 +1154,31 @@ function showConfirmation(confirmation, tabId) {
   lines.push(`Approval expires: ${confirmation.expiresAt}. Approving runs exactly this action once; it cannot be replayed.`);
   $("confirmText").textContent = lines.join("\n");
   $("confirmBox").hidden = false;
+  renderTargets(); // mark the held target in the list from authoritative state
+  const title = $("confirmTitle");
+  if (title && typeof title.focus === "function") {
+    title.focus();
+    confirmFocusMoved = document.activeElement === title;
+  }
   setConfirmStatus("Waiting for your decision. Nothing has been executed.");
   updateExecuteEnabled();
 }
 
-function clearConfirmation(statusText, isError) {
+function clearConfirmation(statusText, isError, opts) {
   state.confirmation = null;
   $("confirmBox").hidden = true;
+  renderTargets();
   if (statusText !== undefined) setConfirmStatus(statusText, isError);
+  if (confirmFocusMoved && (!opts || opts.restoreFocus !== false)) {
+    confirmFocusMoved = false;
+    if (confirmFocusReturn && document.contains(confirmFocusReturn) &&
+        typeof confirmFocusReturn.focus === "function") {
+      confirmFocusReturn.focus();
+    }
+    confirmFocusReturn = null;
+  } else if (!opts || opts.restoreFocus !== false) {
+    confirmFocusReturn = null;
+  }
   updateExecuteEnabled();
 }
 
@@ -920,7 +1242,7 @@ $("btnApproveOnce").addEventListener("click", async () => {
     void fetchActionLog(tabId);
     return;
   }
-  setConfirmStatus(response.ok ? "Approved action finished. See the execution result above." : "Approved action finished with a failure. See the execution result above.", !response.ok);
+  setConfirmStatus(response.ok ? "Approved action finished. See the execution result above." : "Human approval was supplied and consumed; the action itself did not complete (see its code above). Request a fresh confirmation to try again.", !response.ok);
   try {
     await refreshAfterExecution(tabId, gen, previousSession);
   } finally {
@@ -1042,4 +1364,5 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
     invalidateExecution("The tab navigated or reloaded. The previous execution selection was discarded; take a fresh snapshot.");
   }
 });
+renderTargets(); // empty state until the first snapshot binds
 updateExecuteEnabled();

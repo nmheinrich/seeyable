@@ -1,10 +1,11 @@
-# Seeyable — Snapshot Spike (extension)
+# Seeyable (extension)
 
 MV3 extension that captures a labelled snapshot of a page's interactive
 controls using DOM/ARIA, with an optional debug-only CDP comparison,
-numbered word tags, a validated single-action executor with a manual
-test panel, and push-to-talk voice/typed commands that only show or
-hide tags. It contains no planner or MCP server.
+numbered word tags, a validated single-action executor, push-to-talk
+voice/typed commands that only show or hide tags, and a shared
+human-confirmation safety gate with Stop/Pause and a redacted action
+log. It contains no planner or MCP server.
 
 ## Load it
 
@@ -23,16 +24,22 @@ hide tags. It contains no planner or MCP server.
 
 ## Use it
 
+The panel is a product surface: identity and tag state, current status,
+voice/typed tag commands (`show tags` / `hide tags` only), and the
+Safety section (confirmation, Stop/Pause/Resume, gate status) are
+always visible. Diagnostic tools — snapshot buttons, JSON copy/download,
+tag visibility buttons, highlight-by-number, manual single-action
+execution, and the detailed action log — live in the collapsible
+**Developer view**. Risky actions pause for one explicit approval;
+nothing is submitted, paid, deleted, sent, or published without it.
+
 1. Serve/open the demo survey (`apps/demo-survey/index.html`, any static
    server or `file://`).
 2. Click the extension action to open the side panel.
-3. **Snapshot via DOM/ARIA** — content-script snapshot
-   (`lib/snapshot-dom.js`, injected via `scripting` as a fallback).
-4. **Snapshot via CDP AXTree** — service worker attaches `chrome.debugger`,
-   runs `Accessibility.enable` + `Accessibility.getFullAXTree`, detaches,
-   and the panel shows the simplified interactive nodes plus the raw tree.
-5. Copy/Download the JSON. Paste a DOM entry's `cssPath` into the highlight
-   box to flash the real element on the page (mapping-back probe).
+3. Take a DOM/ARIA snapshot (Developer view), then Show tags.
+   Say or type “show tags” / “hide tags” to toggle them.
+4. The CDP AXTree path is debug-only; the panel explains the
+   `debugger`-permission situation in place.
 
 ## Files
 
@@ -44,7 +51,8 @@ hide tags. It contains no planner or MCP server.
 | `content.js` | Content script: DOM snapshot + highlight message handlers |
 | `lib/snapshot-dom.js` | DOM/ARIA walker: role, accessible name (aria-label → aria-labelledby → label → text → placeholder → title), state, context, `cssPath` mapping |
 | `lib/snapshot-cdp.js` | AXTree simplifier (`simplifyAxTree`, `interactiveOnly`) |
-| `sidepanel.html/.js/.css` | Debug UI: the two snapshot buttons + JSON viewer |
+| `sidepanel.html/.js/.css` | Plain Words product panel: status, commands, safety gate, collapsible developer tools |
+| `fonts/` | Bundled Jost + DM Mono latin woff2 with OFL licenses; no remote fonts |
 
 ## Snapshot shapes
 

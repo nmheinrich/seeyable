@@ -1,33 +1,403 @@
-body { font: 13px/1.45 system-ui, sans-serif; margin: 12px; color: #1a1a1a; }
-h1 { font-size: 15px; margin: 0 0 2px; }
-.sub, .tab-info, .note { color: #555; font-size: 12px; }
-.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 4px; }
-.controls button { padding: 7px 10px; cursor: pointer; }
-.check { font-size: 12px; color: #333; }
-.status { min-height: 1.4em; font-size: 12px; }
-.status.error { color: #b02a1e; }
-.toolbar { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
-.toolbar button { padding: 4px 8px; cursor: pointer; }
-.meta { font-size: 12px; color: #555; }
-.highlight { display: block; font-size: 12px; margin: 8px 0; }
-.highlight-row { display: flex; gap: 6px; margin-top: 4px; }
-.highlight-row input { flex: 1; padding: 5px; }
-.output { background: #f6f6f4; border: 1px solid #ddd; padding: 8px; max-height: 55vh; overflow: auto; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
-code { background: #eee; padding: 0 3px; border-radius: 3px; }
-.exec { border-top: 1px solid #ddd; margin-top: 12px; padding-top: 8px; }
-.exec h2 { font-size: 13px; margin: 0 0 4px; }
-.voice { border-top: 1px solid #ddd; margin-top: 12px; padding-top: 8px; }
-.voice h2 { font-size: 13px; margin: 0 0 4px; }
-.transcript { font-size: 12px; color: #333; min-height: 1.4em; margin: 4px 0; }
-.field { display: block; font-size: 12px; margin: 8px 0; }
-.field select, .field input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px; }
-#btnExecute { padding: 7px 12px; cursor: pointer; margin-top: 4px; }
-#btnExecute:disabled, button:disabled, select:disabled, input:disabled { cursor: not-allowed; opacity: 0.55; }
+/* Plain Words product interface (issue #29).
+ * Tokens: ink #141414, panel #F2F2EE, canvas #E3E5E0, amber #F2B33D,
+ * brick #B3401F. Jost for readable text, DM Mono for numbers and
+ * short status labels, with local system fallbacks. Dark theme
+ * follows the system setting. No pulse, no shadows-as-elevation. */
+
+@font-face {
+  font-family: "Jost";
+  src: url("fonts/Jost-400.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+/* The reference export bundles this same single Jost file for
+ * weights 300-600; declaring 300 with it reproduces the reference's
+ * light heading rendering without synthetic bolding. */
+@font-face {
+  font-family: "Jost";
+  src: url("fonts/Jost-400.woff2") format("woff2");
+  font-weight: 300; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Jost";
+  src: url("fonts/Jost-500.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Jost";
+  src: url("fonts/Jost-600.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "DM Mono";
+  src: url("fonts/DMMono-400.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "DM Mono";
+  src: url("fonts/DMMono-500.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --bg-canvas: #E3E5E0;
+  --bg-panel: #F2F2EE;
+  --surface: #F2F2EE;
+  --control: #FFFFFF;
+  --surface-hover: #ECEEE9;
+  --text: #141414;
+  --text-secondary: #3A3A38;
+  --text-muted: #55574F;
+  --border-subtle: #D8DAD4;
+  --control-edge: #7B7D74;
+  --focus: #141414;
+  --amber: #F2B33D;
+  --brick: #B3401F;
+  --brick-ink: #7E2C14;
+  --listening: #2F5F8A;
+  --success-ink: #2E4E37;
+  --success-fill: #D9E6D8;
+  --warning-ink: #6A4A08;
+  --error-ink: #9A1B3C;
+  --error-fill: #F4D9DE;
+  --disabled-fg: #8A8C84;
+  --ring-light: #F2F2EE;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg-canvas: #111111;
+    --bg-panel: #1A1A19;
+    --surface: #242423;
+    --control: #2E2E2C;
+    --surface-hover: #2E2E2C;
+    --text: #F2F2EE;
+    --text-secondary: #D5D5D1;
+    --text-muted: #A8AAA2;
+    --border-subtle: #2E2E2C;
+    --control-edge: #7C7C78;
+    --focus: #F2F2EE;
+    --amber: #F2B33D;
+    --brick: #F3B49C;
+    --brick-ink: #F3B49C;
+    --listening: #8EC5F2;
+    --success-ink: #9FD4AE;
+    --success-fill: #242423;
+    --warning-ink: #E7B86E;
+    --error-ink: #F49AB0;
+    --error-fill: #242423;
+    --disabled-fg: #6B6B67;
+    --ring-light: #141414;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font: 16px/1.5 "Jost", "Century Gothic", system-ui, -apple-system, sans-serif;
+  margin: 0; padding: 10px 10px 20px; color: var(--text);
+  background: var(--bg-canvas);
+}
+
+h1, h2, h3 { margin: 0; }
+.sub, .note { color: var(--text-secondary); font-size: 14px; }
+.note code { background: var(--surface-hover); padding: 0 3px; border-radius: 3px; }
+
+/* Identity: compact wordmark row + page identity card */
+.identity { margin-bottom: 8px; }
+.brand-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wordmark {
+  font-family: "DM Mono", ui-monospace, Consolas, monospace;
+  font-weight: 400; font-size: 17px;
+}
+.mode {
+  font-family: "DM Mono", ui-monospace, Consolas, monospace;
+  color: var(--text-muted); font-size: 12px; letter-spacing: 0.06em;
+}
+.page-card {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface);
+  border-radius: 22px; padding: 12px 16px; margin-top: 8px;
+}
+.page-dot { width: 22px; height: 22px; border-radius: 6px; background: #0B6E67; flex: 0 0 22px; }
+.page-text { min-width: 0; }
+.page-title { font-size: 16px; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
+.page-meta { font-size: 13px; color: var(--text-muted); margin: 2px 0 0; overflow-wrap: anywhere; }
+
+/* Cards: 22px sections, compact rhythm */
+.card {
+  background: var(--surface);
+  border-radius: 22px; padding: 14px; margin: 0 0 10px;
+}
+.commands { border-radius: 28px; padding: 26px 20px 20px; }
+/* Concise status integrated into the composition: one slim strip,
+ * chip + status line, no separate status card */
+.status-strip {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 2px 6px 8px;
+}
+.status-strip .status { margin: 0; min-height: 0; font-size: 14px; color: var(--text-secondary); }
+.status-strip .result-line { flex-basis: 100%; margin: 0; font-size: 14px; }
+
+/* Reference hero composition */
+.hero-title { font-size: 34px; font-weight: 300; line-height: 1.05; margin: 4px 0 8px; }
+.hero-copy { font-size: 16px; line-height: 1.45; color: var(--text-secondary); margin: 0 0 18px; }
+#btnListen.btn-mic {
+  display: flex; align-items: center; gap: 16px; width: 100%;
+  min-height: 104px; padding: 0 22px 0 20px; border-radius: 999px;
+  background: var(--text); border-color: transparent; color: var(--bg-panel);
+  font-size: 23px; font-weight: 500; text-align: left;
+}
+#btnListen.btn-mic:hover:not(:disabled) { background: var(--text); }
+.mic-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px; flex: 0 0 64px; border-radius: 50%;
+  background: var(--bg-panel); color: var(--text);
+}
+/* Ready state: no empty transcript, no disabled listening controls
+ * between the microphone and the typed input */
+body[data-voice="idle"] .listen-actions { display: none; }
+body[data-transcript="empty"] .transcript { display: none; }
+body[data-voice="idle"][data-voice-msg="quiet"] #voiceState { display: none; }
+/* Listening takes the reference's filled blue surface */
+body[data-voice="listening"] .commands {
+  background: #2F5F8A; color: #FFFFFF;
+}
+body[data-voice="listening"] .hero-copy,
+body[data-voice="listening"] .transcript,
+body[data-voice="listening"] #voiceState { color: #E8EEF4; }
+body[data-voice="listening"] .meter span { background: #FFFFFF; }
+body[data-voice="listening"] .try-label { color: #C9D6E2; }
+.listen-actions { margin: 2px 0 6px; }
+.listen-actions button { font-size: 14px; padding: 6px 14px; color: var(--text-secondary); }
+
+/* Integrated typed-request row: Send sits inside the same pill */
+.request-label { font-size: 15px; font-weight: 500; color: var(--text); }
+.request-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  border: 0; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--control-edge);
+  padding: 4px; background: var(--control);
+}
+.field .request-row input {
+  flex: 1 1 auto; min-width: 0; width: auto; display: block;
+  border: 0; background: transparent; margin: 0; padding: 8px 12px;
+  min-height: 48px; border-radius: 999px;
+}
+.request-row #btnSendCommand {
+  flex: 0 0 auto; min-width: 76px; min-height: 48px; background: var(--text); border-color: transparent;
+  color: var(--bg-panel); padding: 8px 20px;
+}
+.request-row #btnSendCommand:hover:not(:disabled) { background: var(--text); }
+
+.view-targets {
+  display: block; width: 100%; margin: 10px 0 4px; padding: 10px 14px;
+  font-size: 15px; font-weight: 500;
+}
+
+/* Secondary voice/microphone area: settings, speech, privacy note */
+details.voice-settings { margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+details.voice-settings summary {
+  font-weight: 600; font-size: 15px; cursor: pointer; min-height: 44px;
+  display: flex; align-items: center;
+}
+details.voice-settings summary::marker { color: var(--text-muted); }
+/* Listening accent: the command card carries the live state color */
+/* (listening surface is filled above; no border shift) */
+
+/* Mono section labels and stamps */
+.section-label, .chip, .meta, .transcript, .log-heading, .stamp {
+  font-family: "DM Mono", ui-monospace, Consolas, monospace;
+}
+.section-label {
+  font-size: 12px; font-weight: 500; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px;
+}
+.stamp {
+  display: inline-block; min-width: 2em; text-align: center;
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+}
+
+/* State chips: color AND words, never color alone */
+.chip {
+  display: inline-block; font-size: 12px; font-weight: 500;
+  padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--control-edge); color: var(--text);
+  background: transparent;
+}
+#tagsChip {
+  font-family: "Jost", "Century Gothic", system-ui, sans-serif;
+  font-size: 14px; font-weight: 400; padding: 6px 14px;
+  background: var(--control); margin-left: auto;
+}
+.chip.is-acting { background: var(--amber); border-color: var(--amber); color: #141414; }
+.chip.is-held { background: var(--brick); border-color: var(--brick); color: #fff; }
+@media (prefers-color-scheme: dark) {
+  .chip.is-held { color: #141414; }
+}
+.chip.is-listening { border-color: var(--listening); color: var(--listening); }
+.chip.is-error { background: var(--error-fill); border-color: var(--error-ink); color: var(--error-ink); }
+.chip.is-success { background: var(--success-fill); border-color: var(--success-ink); color: var(--success-ink); }
+
+/* Buttons: 44px minimum, pills; primary 52px, gate 64px */
+button {
+  font: inherit; font-size: 16px; font-weight: 500;
+  min-height: 44px; padding: 8px 16px; border-radius: 999px;
+  border: 1px solid var(--control-edge); background: var(--control);
+  color: var(--text); cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+button:hover:not(:disabled) { background: var(--surface-hover); }
+button:active:not(:disabled) { transform: scale(0.98); }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+#btnExecute, #btnSendCommand, #btnListen { min-height: 52px; }
+#btnApproveOnce, #btnCancelChallenge { min-height: 64px; flex: 1; }
+#btnApproveOnce:not(:disabled) {
+  background: var(--brick); border-color: var(--brick); color: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  #btnApproveOnce:not(:disabled) { color: #141414; }
+}
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.controls.tight button { padding: 6px 12px; }
+.check { font-size: 13px; color: var(--text-secondary); display: inline-flex; gap: 6px; align-items: center; min-height: 44px; }
+.check input { width: 18px; height: 18px; accent-color: var(--text); }
+
+/* Primary command button: full-width ink pill, inverts in dark theme */
+.btn-primary {
+  display: block; width: 100%; margin: 8px 0; padding: 12px 16px;
+  background: var(--text); border-color: transparent; color: var(--bg-panel);
+  font-size: 17px; font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { background: var(--text); }
+.btn-primary:active:not(:disabled) { transform: scale(0.99); }
+
+/* Suggestion chips: only the two supported commands, never examples */
+.try-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.try-label {
+  font-family: "DM Mono", ui-monospace, Consolas, monospace; font-size: 12px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+}
+.chip-btn { padding: 6px 16px; font-size: 15px; background: var(--control); }
+
+/* Targets list: every snapshot target stays discoverable; crowded-out
+ * floating tags are marked "in list"; the active target shows its full
+ * label and aria-current. Compact 15px rows for a long list. */
+.target-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.target-list .sub { margin: 0; }
+.target {
+  display: block; width: 100%; text-align: left; font-size: 15px;
+  line-height: 1.4; padding: 8px 14px;
+}
+.target[aria-current="true"] { border: 2px solid var(--text); font-weight: 600; }
+
+/* Status text: plain words next to the chip, never color alone */
+.status { min-height: 1.4em; font-size: 16px; margin: 6px 0; overflow-wrap: anywhere; }
+.status.error { color: var(--error-ink); font-weight: 500; }
+.result-line { font-size: 16px; color: var(--text-secondary); margin: 6px 0 0; overflow-wrap: anywhere; }
+.result-line:empty { display: none; }
+.meta { font-size: 12px; color: var(--text-muted); }
+
+.toolbar { display: flex; gap: 6px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.toolbar button { min-height: 44px; padding: 6px 12px; }
+
+.highlight { display: block; font-size: 14px; margin: 8px 0; }
+.highlight-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.highlight-row input { flex: 1 1 200px; min-width: 0; }
+.highlight-row button { flex: 0 1 auto; }
+.field { display: block; font-size: 14px; margin: 8px 0; color: var(--text-secondary); }
+.field select, .field input {
+  display: block; width: 100%; margin-top: 3px; padding: 10px 12px;
+  font: inherit; font-size: 16px; color: var(--text);
+  background: var(--control); border: 1px solid var(--control-edge);
+  border-radius: 16px; min-height: 44px;
+}
+
+.output {
+  background: var(--control); border: 1px solid var(--border-subtle);
+  padding: 10px; max-height: 55vh; overflow: auto; font-size: 12px;
+  white-space: pre-wrap; word-break: break-word; border-radius: 16px;
+  font-family: "DM Mono", ui-monospace, Consolas, monospace;
+}
+code { background: var(--surface-hover); padding: 0 3px; border-radius: 3px; }
+.exec h2 { font-size: 14px; margin: 0 0 4px; }
 .exec-result { min-height: 3em; }
-:focus-visible { outline: 2px solid #141414; outline-offset: 2px; }
-.gate { border-top: 1px solid #ddd; margin-top: 12px; padding-top: 8px; }
-.gate h2 { font-size: 13px; margin: 0 0 4px; }
-.gate h3 { font-size: 12px; margin: 10px 0 4px; }
-#confirmBox { border: 1px solid #b02a1e; padding: 8px; margin: 8px 0; }
-#confirmText { white-space: pre-wrap; font-size: 12px; }
+
+.transcript { font-size: 16px; color: var(--text-secondary); min-height: 1.4em; margin: 4px 0; }
+
+/* Listening meter: static bars when reduced motion is requested */
+.meter { display: none; gap: 4px; align-items: flex-end; height: 20px; margin: 4px 0; }
+.meter span { width: 6px; background: var(--listening); border-radius: 3px; }
+body[data-voice="listening"] .meter { display: flex; }
+body[data-voice="listening"] .meter span { animation: meter 900ms ease-in-out infinite alternate; }
+body[data-voice="listening"] .meter span:nth-child(2) { animation-delay: 150ms; }
+body[data-voice="listening"] .meter span:nth-child(3) { animation-delay: 300ms; }
+body[data-voice="listening"] .meter span:nth-child(1) { height: 40%; }
+body[data-voice="listening"] .meter span:nth-child(2) { height: 90%; }
+body[data-voice="listening"] .meter span:nth-child(3) { height: 60%; }
+@keyframes meter { from { transform: scaleY(0.5); } to { transform: scaleY(1); } }
+
+/* Safety: brick confirmation card, always in the main flow */
+.gate { border-width: 1px; }
+#confirmBox {
+  border: 1px solid var(--brick); border-radius: 28px;
+  padding: 22px 20px 18px; margin: 8px 0; background: var(--surface);
+}
+#confirmBox h3 { font-size: 26px; font-weight: 400; line-height: 1.1; margin-bottom: 8px; }
+#confirmBox h3::before { content: "▲ "; }
+#confirmText { white-space: pre-wrap; font-size: 14px; }
+/* Held state takes the reference's full-brick treatment: white on brick
+ * in light theme, ink on pale brick in dark (both ≥ 4.5:1). Approve and
+ * Cancel are restyled to stay legible on the brick. */
+#confirmBox:not([hidden]) {
+  background: var(--brick); border: 2px solid var(--brick); color: #fff;
+}
+#confirmBox:not([hidden]) h3 { color: inherit; }
+#confirmBox #btnApproveOnce:not(:disabled) {
+  background: #F2F2EE; border-color: #F2F2EE; color: var(--brick-ink);
+}
+#confirmBox #btnCancelChallenge {
+  background: transparent; border-color: currentColor; color: inherit;
+}
+@media (prefers-color-scheme: dark) {
+  #confirmBox:not([hidden]) { color: #141414; }
+  #confirmBox #btnApproveOnce:not(:disabled) {
+    background: #141414; border-color: #141414; color: var(--brick);
+  }
+}
 .log { max-height: 24vh; }
+.log-heading {
+  font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted); margin: 12px 0 4px;
+}
+
+/* Developer view: collapsed diagnostics, same controllers */
+details.developer summary {
+  font-weight: 600; font-size: 15px; cursor: pointer; min-height: 44px;
+  display: flex; align-items: center;
+}
+details.developer summary::marker { color: var(--text-muted); }
+
+:focus-visible {
+  outline: 3px solid var(--focus); outline-offset: 2px;
+  box-shadow: 0 0 0 5px var(--bg-panel);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+@media (forced-colors: active) {
+  .card, #confirmBox { border: 1px solid CanvasText; }
+  #confirmBox:not([hidden]) { background: Canvas; color: CanvasText; }
+  #confirmBox #btnApproveOnce:not(:disabled),
+  #confirmBox #btnCancelChallenge { background: ButtonFace; color: ButtonText; border: 2px solid ButtonText; }
+  .chip { border-color: CanvasText; forced-color-adjust: none; background: Canvas; color: CanvasText; }
+  .chip.is-acting { background: Highlight; color: HighlightText; border-color: HighlightText; }
+  .chip.is-held, .chip.is-error { background: Canvas; color: CanvasText; border: 2px solid CanvasText; }
+  button { border-color: ButtonText; }
+  #btnApproveOnce:not(:disabled) { background: ButtonFace; color: ButtonText; border: 2px solid ButtonText; }
+  .meter span { background: Highlight; }
+  :focus-visible { outline-color: Highlight; box-shadow: none; }
+}

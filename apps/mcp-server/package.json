@@ -1,0 +1,16 @@
+{
+  "name": "seeyable-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Issue #28 spike: local stdio MCP server with a loopback WebSocket bridge to the Seeyable extension.",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/bridge.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "ws": "8.22.0",
+    "zod": "3.25.76"
+  }
+}

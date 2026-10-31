@@ -4,9 +4,16 @@ Seeyable is a Chrome extension (Meta Global AI Developer Hackathon, Indie /
 Push the Frontier) that turns any webpage into labeled, safe, callable tools:
 a person operates the page by voice; external agents operate it via a local
 MCP server. Same executor, same safety gate for both.
-Design: Plain Words is approved for the visual overlay scope (page tags and
-target highlight). Other UI remains minimal placeholders; do not invent a
-broader visual style, color palette, or layout system.
+Design: Plain Words (D) is the selected design reference; the current
+implementation has NOT received visual acceptance. The side
+panel is a Plain Words surface — identity, status, commands, and
+safety always visible; diagnostics in a collapsible Developer view —
+and overlays use word-first token pills with a quiet number dot,
+placement verified clear of controls and rendered text, and omission
+to the panel Targets list when nothing is clear (never number piles,
+never a forced badge for the active target). Keep later work inside that
+visual system; do not invent a competing one, and do not build
+plan/agent/undo states until their features exist.
 
 ## Architecture (build in this order)
 - apps/extension — MV3: content script (snapshot/labels/overlay/executor),
@@ -32,7 +39,13 @@ actions), and #9 (manual execution test panel) are complete and accepted.
 Issue #10 (voice front end and typed fallback — show/hide tag commands
 only) is complete and accepted. Issue #11 (shared executor safety
 gate: human confirmation, action log, Stop/Pause) is complete and accepted.
-Next issue: #29 (Plain Words product design), following #11.
+Issue #29 (Plain Words product interface and overlay refinement) is
+implemented but visually NOT accepted, and deferred by the Product Owner
+on 2026-10-30. Preserve its work; do not resume visual refinement unless
+requested. Issue #28 (early local MCP bridge smoke test: stdio server,
+loopback bridge, tab-explicit snapshot/highlight tools) is complete and
+accepted. Product Owner confirmed explicit disconnect/re-pair and stale-target
+rejection after the headed snapshot/highlight and idle checks passed.
 See docs/status.md for verification evidence.
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

@@ -125,7 +125,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     try {
       const snapshot = globalThis.__seeyable_snapshotDOM();
       const result = getOverlay().show(snapshot.elements);
-      sendResponse({ ok: true, shown: result.shown, total: result.total, revision: snapshot.revision, documentSessionId: snapshot.documentSessionId });
+      sendResponse({ ok: true, shown: result.shown, total: result.total, unplaced: result.unplaced || [], revision: snapshot.revision, documentSessionId: snapshot.documentSessionId });
     } catch (err) { fail(sendResponse, err); }
     return false;
   }

@@ -1,9 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Seeyable — Snapshot Spike",
+  "minimum_chrome_version": "116",
+  "name": "Seeyable",
   "version": "0.1.0",
   "description": "Captures labelled snapshots of page controls (DOM/ARIA) for accessibility evaluation.",
-  "permissions": ["activeTab", "scripting", "sidePanel", "storage"],
+  "permissions": ["activeTab", "scripting", "sidePanel", "storage", "tabs"],
+  "host_permissions": ["http://127.0.0.1:6123/*"],
   "background": {
     "service_worker": "background.js"
   },
@@ -11,7 +13,7 @@
     "default_path": "sidepanel.html"
   },
   "action": {
-    "default_title": "Seeyable snapshot spike"
+    "default_title": "Seeyable"
   },
   "content_scripts": [
     {

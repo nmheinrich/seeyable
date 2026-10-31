@@ -10,13 +10,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, "../sidepanel.html"), "utf8");
 const panelJs = readFileSync(join(here, "../sidepanel.js"), "utf8");
 const voiceJs = readFileSync(join(here, "../lib/voice-commands.js"), "utf8");
+const overlayJs = readFileSync(join(here, "../lib/overlay.js"), "utf8");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tick = async () => { await sleep(0); await sleep(0); await sleep(0); };
 
-function snap(elements, revision = 1, session = "doc-A") {
+function snap(elements, revision = 1, session = "doc-A", url = "https://example.test/form") {
   return {
     schemaVersion: 2, kind: "dom-aria", documentSessionId: session, revision,
-    semanticHash: "abcd1234", fresh: true, url: "https://example.test/form",
+    semanticHash: "abcd1234", fresh: true, url,
     elementCount: elements.length, elements,
   };
 }
@@ -61,6 +62,7 @@ function makePanel(sendImpl, opts = {}) {
   };
   if (!win.navigator.clipboard) Object.defineProperty(win.navigator, "clipboard", { value: { writeText: async () => {} } });
   win.eval(voiceJs);
+  win.eval(overlayJs); // shared word-first label builder used by the panel
   win.eval(panelJs);
   const doc = win.document;
   return { dom, win, doc, calls, listeners, logs, $: (id) => doc.getElementById(id) };
@@ -97,6 +99,139 @@ test("selection: snapshot populates targets; execute sends the exact payload", a
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(captured.request)), { action: "fill", elementId: "el-1", documentSessionId: "doc-A", revision: 1, value: "Ada", source: "manual" });
   assert.match(panel.$("execResult").textContent, /verified/i);
+  panel.dom.window.close();
+});
+
+test("targets: list shows every snapshot target in words; annotations stripped", async () => {
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
+      return { ok: true, snapshot: snap([el("el-1", "Full name"), el("el-2", "Nickname (placeholder only)")], 1, "doc-A") };
+    }
+    throw new Error("unexpected " + msg.type);
+  });
+  assert.match(panel.$("targetList").textContent, /Take a snapshot in Developer view/, "empty state before any snapshot");
+  await takeSnapshot(panel);
+  const items = [...panel.doc.querySelectorAll("#targetList .target")];
+  assert.equal(items.length, 2, "every snapshot target stays discoverable");
+  assert.match(items[0].textContent, /1 · Full name/);
+  assert.match(items[1].textContent, /2 · Nickname/);
+  assert.ok(!items[1].textContent.includes("placeholder only"), "display annotations are stripped from labels");
+  assert.ok(!panel.$("targetList").textContent.includes("Ada"), "no values leak anywhere");
+  assert.equal(panel.$("pageMeta").textContent, "example.test · 2 controls", "page meta uses snapshot metadata, no new permissions");
+  panel.dom.window.close();
+});
+
+test("targets: activating an item highlights through the bound session; active shows full words", async () => {
+  const longName = "A very long descriptive field name for notes use";
+  let highlighted = null;
+  const panel = makePanel(async (tabId, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Full name"), el("el-2", longName)]) };
+    if (msg.type === "SEEYABLE_HIGHLIGHT_ID") { highlighted = { tabId, ...msg }; return { ok: true, highlighted: msg.elementId }; }
+    throw new Error("unexpected " + msg.type);
+  });
+  await takeSnapshot(panel);
+  const items = [...panel.doc.querySelectorAll("#targetList .target")];
+  assert.ok(items[1].textContent.length < longName.length + 10, "floating list label is the short form");
+  assert.ok(!items[1].textContent.includes("descriptive field name for notes use"), "long label is shortened until active");
+  items[1].click();
+  await tick();
+  assert.deepEqual(highlighted && { tabId: highlighted.tabId, elementId: highlighted.elementId, documentSessionId: highlighted.documentSessionId, revision: highlighted.revision }, { tabId: 111, elementId: "el-2", documentSessionId: "doc-A", revision: 1 });
+  const active = panel.doc.querySelector('#targetList .target[aria-current="true"]');
+  assert.ok(active, "active target is marked");
+  assert.match(active.textContent, /descriptive field name for notes use/, "active item shows the full readable label");
+  panel.dom.window.close();
+});
+
+test("targets: crowded-out ids are marked after show; counts stay truthful; discovery reveals the list", async () => {
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Full name"), el("el-2", "Nickname")]) };
+    if (msg.type === "SEEYABLE_SHOW_TAGS") return { ok: true, shown: 1, total: 2, unplaced: ["el-2"], revision: 1, documentSessionId: "doc-A" };
+    throw new Error("unexpected " + msg.type);
+  });
+  await takeSnapshot(panel);
+  panel.$("btnTryShow").click();
+  await tick(); await tick();
+  // No stale precision: the chip reports visibility only and the status
+  // carries no placed/listed counts (placement changes as the page moves).
+  assert.equal(panel.$("tagsChip").textContent, "Tags: on");
+  assert.ok(!/\d+ placed|\d+ more/.test(panel.$("status").textContent), "status must not present one-time placement counts as live");
+  assert.match(panel.$("status").textContent, /Some word tags stay in the panel/);
+  const items = [...panel.doc.querySelectorAll("#targetList .target")];
+  assert.ok(!items[0].textContent.includes("Shown in panel"));
+  assert.match(items[1].textContent, /Shown in panel/, "crowded-out target stays discoverable with a clear mark");
+  // Discovery: the obvious control moves focus to the Targets heading.
+  panel.$("btnViewTargets").click();
+  assert.equal(panel.doc.activeElement.id, "targetsHeading", "View page targets reveals and focuses the Targets section");
+  panel.dom.window.close();
+});
+
+test("targets: held confirmation marks its target from authoritative state", async () => {
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Submit survey", { role: "button", actionable: true })]) };
+    if (msg.type === "SEEYABLE_HIGHLIGHT_ID") return { ok: true, highlighted: msg.elementId };
+    if (msg.type === "SEEYABLE_EXECUTE_ACTION") {
+      return { ok: false, error: { code: "CONFIRMATION_REQUIRED", message: "Held." }, confirmation: { challengeId: "cb1", elementId: "el-1", targetName: "Submit survey", action: "click", consequence: "Submits.", expiresAt: "soon" }, newSnapshotDiff: null, diffUnavailableReason: "awaiting human confirmation", documentSessionId: "doc-A", revision: 1 };
+    }
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    throw new Error("unexpected " + msg.type);
+  });
+  await takeSnapshot(panel);
+  panel.doc.querySelector("#targetList .target").click();
+  await tick();
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  assert.equal(panel.$("stateChip").textContent, "▲ Held — nothing sent");
+  const item = panel.doc.querySelector("#targetList .target");
+  assert.match(item.textContent, /▲ held/, "held mark comes from the confirmation, not a second registry");
+  panel.dom.window.close();
+});
+
+test("targets: invalidation clears the visible list (no stale rows)", async () => {
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Original field")]) };
+    throw new Error("unexpected " + msg.type);
+  });
+  await takeSnapshot(panel);
+  assert.equal(panel.doc.querySelectorAll("#targetList .target").length, 1);
+  assert.match(panel.doc.querySelector("#targetList .target").textContent, /Original field/);
+  for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 });
+  await tick();
+  assert.equal(panel.doc.querySelectorAll("#targetList .target").length, 0, "stale rows from the previous document must disappear");
+  assert.match(panel.$("targetList").textContent, /Take a snapshot in Developer view/, "empty state comes back");
+  panel.dom.window.close();
+});
+
+test("targets: late highlight from document A cannot mark document B; newer beats older", async () => {
+  const resolvers = [];
+  let currentSnap = snap([el("el-1", "Original field")], 1, "doc-A", "https://a.example/form");
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: currentSnap };
+    if (msg.type === "SEEYABLE_HIGHLIGHT_ID") return new Promise((resolve) => resolvers.push(resolve));
+    throw new Error("unexpected " + msg.type);
+  });
+  await takeSnapshot(panel);
+  panel.doc.querySelector("#targetList .target").click(); // doc A highlight in flight
+  assert.equal(resolvers.length, 1);
+  for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 }); // owner goes away
+  await tick();
+  currentSnap = snap([el("el-1", "Different field")], 1, "doc-B", "https://b.example/form");
+  await takeSnapshot(panel);
+  assert.match(panel.doc.querySelector("#targetList .target").textContent, /Different field/);
+  resolvers.shift()({ ok: true, highlighted: "el-1" }); // A's late success
+  await tick(); await tick();
+  assert.equal(panel.$("status").textContent.includes("Highlighted target"), false, "obsolete success is discarded silently");
+  assert.equal(panel.doc.querySelector('#targetList .target[aria-current="true"]'), null, "document B is not marked by A's response");
+  // Newer selection wins over an older in-flight response.
+  panel.doc.querySelector("#targetList .target").click();
+  panel.doc.querySelector("#targetList .target").click();
+  assert.equal(resolvers.length, 2);
+  resolvers[1]({ ok: true, highlighted: "el-1" }); // newer resolves first
+  await tick(); await tick();
+  assert.ok(panel.doc.querySelector('#targetList .target[aria-current="true"]'), "newer response applies");
+  resolvers[0]({ ok: true, highlighted: "el-1" }); // older resolves late
+  await tick(); await tick();
+  assert.match(panel.$("status").textContent, /Different field/, "status still describes the newer selection");
   panel.dom.window.close();
 });
 
@@ -426,7 +561,7 @@ test("voice/typed parity: typed show/hide use the shared flows and speak only af
   panel.$("btnSendCommand").click();
   await tick();
   assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 1);
-  assert.match(panel.$("status").textContent, /Tags shown: 2 in viewport/);
+  assert.match(panel.$("status").textContent, /^Tags shown \(\d+ controls, revision \d+\)\.$/, "count-free message stays truthful without placement precision");
   assert.deepEqual(speech.spoken, ["Tags shown"]);
   panel.$("commandInput").value = "hide tags.";
   panel.$("btnSendCommand").click();
@@ -860,5 +995,253 @@ test("gate: cancel that arrives after dispatch reports too-late, not revocation"
   await tick(); await tick();
   assert.match(panel.$("confirmStatus").textContent, /Too late to cancel/);
   assert.match(panel.$("confirmStatus").textContent, /already dispatched/);
+  panel.dom.window.close();
+});
+
+/* --- Issue #29: Plain Words presentation --------------------------------- */
+
+test("surface: developer controls live in the collapsible Developer view; safety stays in the main flow", () => {
+  const panel = makePanel(async () => { throw new Error("unexpected"); });
+  const dev = panel.$("developerView");
+  assert.ok(dev, "Developer view exists");
+  for (const id of ["btnDom", "btnRefresh", "btnCdp", "btnCopy", "btnDownload", "btnClear", "output",
+    "btnShowTags", "btnHideTags", "highlightInput", "btnHighlight",
+    "targetSelect", "actionSelect", "valueInput", "btnExecute", "execStatus", "execResult",
+    "actionLog", "btnRefreshLog", "btnClearLog"]) {
+    assert.ok(dev.contains(panel.$(id)), `${id} stays usable inside Developer view`);
+  }
+  for (const id of ["stateChip", "tagsChip", "status", "latestResult", "voiceState", "commandInput",
+    "confirmBox", "confirmTitle", "confirmText", "btnApproveOnce", "btnCancelChallenge",
+    "confirmStatus", "btnStopExec", "btnPauseExec", "gateStatus"]) {
+    assert.ok(!dev.contains(panel.$(id)), `${id} stays visible with Developer view closed`);
+  }
+  panel.dom.window.close();
+});
+
+test("surface: reference composition — discovery and safety precede the long target list", () => {
+  const panel = makePanel(async () => { throw new Error("unexpected"); });
+  const doc = panel.doc;
+  assert.equal(doc.getElementById("commandHeading").textContent, "Ready when you are.");
+  const before = (a, b) => Boolean(doc.getElementById(a).compareDocumentPosition(doc.getElementById(b)) & 4);
+  assert.ok(before("btnViewTargets", "targetList"), "View page targets sits in the primary area, before the list");
+  assert.ok(before("btnStopExec", "targetList"), "Stop/Pause come before the long target list");
+  assert.ok(before("confirmBox", "targetList"), "pending confirmation is presented ahead of the target list");
+  const settings = doc.getElementById("voiceSettings");
+  assert.equal(settings.open, false, "voice/microphone settings start collapsed");
+  for (const id of ["btnMicSetup", "chkSpeak", "btnStopSpeech", "voiceNote"]) {
+    assert.ok(settings.contains(panel.$(id)), `${id} lives in the secondary settings area`);
+  }
+  assert.ok(!settings.contains(panel.$("btnStopListen")), "Stop listening stays in the primary area");
+  assert.ok(!settings.contains(panel.$("btnCancelListen")), "Cancel listening stays in the primary area");
+  panel.dom.window.close();
+});
+
+test("bridge: pairing UI lives in Developer view, sends token+port once, and clears the input", async () => {
+  const panel = makePanel(async () => { throw new Error("unexpected"); });
+  const dev = panel.$("developerView");
+  for (const id of ["bridgeToken", "bridgePort", "btnBridgeConnect", "btnBridgeDisconnect", "btnBridgeStatus", "bridgeStatus"]) {
+    assert.ok(dev.contains(panel.$(id)), `${id} lives in Developer view`);
+  }
+  const sent = [];
+  panel.win.chrome.runtime.sendMessage = async (msg) => { sent.push(msg); return { ok: true }; };
+  panel.$("bridgeToken").value = "tok-123";
+  panel.$("bridgePort").value = "6123";
+  panel.$("btnBridgeConnect").click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(sent)), [{ type: "SEEYABLE_BRIDGE_CONNECT", token: "tok-123", port: 6123 }]);
+  assert.equal(panel.$("bridgeToken").value, "", "token input is cleared after pairing");
+  assert.match(panel.$("bridgeStatus").textContent, /127\.0\.0\.1:6123/);
+  panel.dom.window.close();
+});
+
+test("surface: state chip and tags chip follow real operations", async () => {
+  const panel = makePanel(tagImpl, { speech: makeSpeechMock() });
+  assert.match(panel.$("stateChip").textContent, /Ready/);
+  assert.equal(panel.$("tagsChip").textContent, "Tags: off");
+  panel.$("commandInput").value = "show tags";
+  panel.$("btnSendCommand").click();
+  await tick(); await tick();
+  assert.match(panel.$("tagsChip").textContent, /Tags: on/);
+  panel.$("commandInput").value = "hide tags";
+  panel.$("btnSendCommand").click();
+  await tick(); await tick();
+  assert.equal(panel.$("tagsChip").textContent, "Tags: off");
+  panel.dom.window.close();
+});
+
+test("surface: held confirmation shows a held chip and focuses its title, not Approve", async () => {
+  const { panel } = gatePanel({});
+  panel.$("btnSendCommand").focus();
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  assert.equal(panel.$("developerView").open, false, "confirmation is visible with Developer view closed");
+  assert.match(panel.$("stateChip").textContent, /Held/);
+  assert.ok(panel.$("stateChip").className.includes("is-held"));
+  assert.equal(panel.dom.window.document.activeElement.id, "confirmTitle", "focus moves to the confirmation heading, not Approve");
+  panel.$("btnCancelChallenge").click();
+  await tick(); await tick();
+  assert.equal(panel.dom.window.document.activeElement.id, "btnSendCommand", "focus is restored after cancellation");
+  panel.dom.window.close();
+});
+
+test("surface: latest result mirrors the execution outcome in the main flow", async () => {
+  const { panel } = gatePanel({});
+  await takeSnapshot(panel);
+  assert.equal(panel.$("latestResult").textContent, "");
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  assert.match(panel.$("latestResult").textContent, /^Latest result:/);
+  assert.match(panel.$("latestResult").textContent, /Confirmation required/);
+  panel.dom.window.close();
+});
+
+test("surface: human approval and execution outcome are verbally distinct", async () => {
+  const { panel } = gatePanel({
+    approveImpl: () => ({ ok: false, error: { code: "STALE_SNAPSHOT", message: "The page changed." }, newSnapshotDiff: null, diffUnavailableReason: "x", documentSessionId: "doc-A", revision: 1 }),
+  });
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  panel.$("btnApproveOnce").click();
+  await tick(); await tick();
+  assert.match(panel.$("confirmStatus").textContent, /Human approval was supplied and consumed/);
+  assert.match(panel.$("confirmStatus").textContent, /did not complete/);
+  panel.dom.window.close();
+});
+
+/* --- Issue #29 correction: explicit presentation state ------------------ */
+
+test("surface: listening lifecycle drives the chip from the lifecycle, not sentences", async () => {
+  const speech = makeSpeechMock();
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const panel = makePanel(tagImpl, { speech, speechRecognition: FakeRecognition });
+  panel.$("btnListen").click();
+  await tick();
+  assert.equal(panel.$("stateChip").textContent, "Starting", "startup is its own phase, not Finishing and not Ready");
+  assert.equal(panel.dom.window.document.body.dataset.voice, "finishing");
+  instances[0].fireStart();
+  assert.equal(panel.$("stateChip").textContent, "Listening");
+  assert.ok(panel.$("stateChip").className.includes("is-listening"));
+  assert.equal(panel.dom.window.document.body.dataset.voice, "listening");
+  instances[0].fireEnd();
+  await tick();
+  assert.equal(panel.$("stateChip").textContent, "Ready");
+  assert.equal(panel.dom.window.document.body.dataset.voice, "idle");
+  panel.dom.window.close();
+});
+
+test("surface: cancelled listening never reads as a live microphone, even after snapshot and failure", async () => {
+  const speech = makeSpeechMock();
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const calls = { send: [] };
+  const panel = makePanel(async (t, msg) => {
+    calls.send.push(msg.type);
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Full name")]) };
+    if (msg.type === "SEEYABLE_EXECUTE_ACTION") {
+      return { ok: false, error: { code: "ACTION_FAILED", message: "boom" }, newSnapshotDiff: null, diffUnavailableReason: "x", documentSessionId: "doc-A", revision: 1 };
+    }
+    return tagImpl(t, msg);
+  }, { speech, speechRecognition: FakeRecognition });
+  panel.$("btnListen").click();
+  await tick();
+  instances[0].fireStart();
+  assert.equal(panel.dom.window.document.body.dataset.voice, "listening");
+  panel.$("btnCancelListen").click();
+  await tick();
+  assert.match(panel.$("voiceState").textContent, /cancelled/);
+  assert.equal(panel.$("stateChip").textContent, "Ready", "cancellation copy mentioning listening must not set a Listening chip");
+  assert.equal(panel.dom.window.document.body.dataset.voice, "idle");
+  await takeSnapshot(panel);
+  assert.notEqual(panel.$("stateChip").textContent, "Listening", "a fresh snapshot must not resurrect Listening");
+  assert.notEqual(panel.dom.window.document.body.dataset.voice, "listening");
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  assert.equal(panel.$("stateChip").textContent, "× Needs attention", "failed execution surfaces as an error state");
+  assert.equal(panel.dom.window.document.body.dataset.voice, "idle", "failure must not leave a stale Listening phase");
+  panel.dom.window.close();
+});
+
+test("surface: verified completion, unverified dispatch, and gate states read honestly", async () => {
+  const { panel } = gatePanel({});
+  await takeSnapshot(panel);
+  selectTarget(panel, "el-1");
+  panel.$("btnExecute").click();
+  await tick(); await tick();
+  assert.match(panel.$("latestResult").textContent, /Confirmation required/);
+  assert.match(panel.$("stateChip").textContent, /Held/);
+  panel.$("btnApproveOnce").click();
+  await tick(); await tick(); await tick();
+  assert.match(panel.$("stateChip").textContent, /Done/, "consumed approval with verified outcome reads Done");
+  panel.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.match(panel.$("stateChip").textContent, /Stopped/);
+  assert.equal(panel.dom.window.document.body.dataset.voice, "idle");
+  panel.dom.window.close();
+});
+
+test("surface: denied recognition shows Needs attention while the microphone stays idle", async () => {
+  const speech = makeSpeechMock();
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const panel = makePanel(tagImpl, { speech, speechRecognition: FakeRecognition });
+  panel.$("btnListen").click();
+  await tick();
+  assert.equal(panel.$("stateChip").textContent, "Starting");
+  instances[0].fireError("not-allowed");
+  await tick();
+  assert.match(panel.$("voiceState").textContent, /Microphone access was denied/);
+  assert.equal(panel.$("stateChip").textContent, "× Needs attention", "unresolved denial surfaces as an error state");
+  assert.equal(panel.dom.window.document.body.dataset.voice, "idle", "an error is not an active microphone");
+  panel.dom.window.close();
+});
+
+test("surface: voice-error presentation clears on recovery, cancellation stays Ready", async () => {
+  const speech = makeSpeechMock();
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const panel = makePanel(tagImpl, { speech, speechRecognition: FakeRecognition });
+  // Denial, then a new start attempt clears the error presentation.
+  panel.$("btnListen").click();
+  await tick();
+  instances[0].fireError("not-allowed");
+  await tick();
+  assert.equal(panel.$("stateChip").textContent, "× Needs attention");
+  panel.$("btnListen").click();
+  await tick();
+  assert.equal(panel.$("stateChip").textContent, "Starting", "a new attempt supersedes the prior error");
+  // Denial, then a live session clears it. A stale onstart from the
+  // terminated session must stay ignored; only the new session counts.
+  instances[1].fireError("not-allowed");
+  await tick();
+  assert.equal(panel.$("stateChip").textContent, "× Needs attention");
+  instances[1].fireStart();
+  assert.equal(panel.$("stateChip").textContent, "× Needs attention", "onstart from a terminated session is ignored");
+  panel.$("btnListen").click();
+  await tick();
+  instances[2].fireStart();
+  assert.equal(panel.$("stateChip").textContent, "Listening");
+  // Denial on the live session, then a successful typed command clears it.
+  instances[2].fireError("not-allowed");
+  await tick();
+  assert.equal(panel.$("stateChip").textContent, "× Needs attention");
+  panel.$("commandInput").value = "show tags";
+  panel.$("btnSendCommand").click();
+  await tick(); await tick(); await tick();
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.");
+  assert.equal(panel.$("stateChip").textContent, "Ready", "a completed command is recovery from the error");
+  assert.equal(panel.dom.window.document.body.dataset.voice, "idle");
+  panel.dom.window.close();
+});
+
+test("surface: typed-command completion settles to Ready, never stuck acting", async () => {
+  const panel = makePanel(tagImpl, { speech: makeSpeechMock() });
+  panel.$("commandInput").value = "show tags";
+  panel.$("btnSendCommand").click();
+  await tick(); await tick(); await tick();
+  assert.match(panel.$("stateChip").textContent, /Ready/);
+  assert.equal(panel.dom.window.document.body.dataset.voice, "idle");
   panel.dom.window.close();
 });

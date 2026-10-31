@@ -18,39 +18,117 @@ function numberFromId(id) {
   return match ? match[1] : null;
 }
 
-function buildTagLabel(desc, all) {
+// Display-only annotations: authoring notes that ship inside accessible
+// names (e.g. the demo fixture's "Nickname (placeholder only)") are
+// stripped from floating tags and panel labels. The snapshot keeps the
+// accessible name, its source, and the element identity untouched.
+const DISPLAY_ANNOTATIONS = [/\(placeholder only\)\s*$/i];
+function displayName(desc) {
+  let name = (desc && desc.name ? String(desc.name) : "").trim();
+  for (const re of DISPLAY_ANNOTATIONS) name = name.replace(re, "").trim();
+  return name;
+}
+
+function truncateWords(text, cap) {
+  if (text.length <= cap) return text;
+  const cut = text.slice(0, cap - 1);
+  const space = cut.lastIndexOf(" ");
+  return (space > 8 ? cut.slice(0, space) : cut) + "…";
+}
+
+function buildTagLabel(desc, all, opts = {}) {
   const number = numberFromId(desc && desc.id);
-  const name = (desc && desc.name ? String(desc.name) : "").trim();
+  const name = displayName(desc);
   const role = (desc && desc.role) || "control";
   if (!name) return { text: `${role} ${number === null ? "" : number}`.trim(), number, uncertain: false };
   const peers = Array.isArray(all) ? all : [];
-  const duplicate = name && peers.filter((e) => (e.name || "").trim() === name).length > 1;
+  const duplicate = name && peers.filter((e) => displayName(e) === name).length > 1;
   const needsQuestion = duplicate || /^\d+$/.test(name) || name.length <= 2;
   const question = (desc.question || "").trim();
+  // Floating tags are short (~32 chars at a word boundary); the panel
+  // list and the highlighted target use the full display label.
+  const cap = opts.full ? Infinity : (opts.short === false ? 72 : 32);
   if (needsQuestion && question) {
     // Uncertain (proximity-inferred) context is marked, never presented
-    // as verified. Compact truncation keeps the distinguishing end.
+    // as verified.
     const marker = desc.questionCertain ? "" : " ?";
-    const text = `${question}${marker} · ${name}`;
-    return { text: text.length > 72 ? text.slice(0, 71) + "…" : text, number, uncertain: !desc.questionCertain };
+    return { text: truncateWords(`${question}${marker} · ${name}`, cap), number, uncertain: !desc.questionCertain };
   }
   // Field values (state) are deliberately never consulted for labels.
-  return { text: name.length > 72 ? name.slice(0, 71) + "…" : name, number, uncertain: false };
+  return { text: truncateWords(name, cap), number, uncertain: false };
+}
+
+// Whitespace-first placement (pure): try above, below, right, then left
+// of the target with a small gap. A spot must fit the viewport, must not
+// cover the target's own box, and must not cover an already-placed badge.
+// Returns the placed box or null when nothing fits — the caller omits the
+// floating tag and leaves the label to the panel list. No collision
+// engine, no pile-ups.
+// One canonical box shape for all placement math: {left, top, width,
+// height}. Rects arriving as {x, y} (getBoundingClientRect style) are
+// normalized here so every comparison reads real coordinates — mixing
+// the two shapes silently disabled neighbor exclusion in the past.
+function toBox(b) {
+  if (!b) return { left: 0, top: 0, width: 0, height: 0 };
+  return {
+    left: b.left !== undefined ? b.left : (b.x || 0),
+    top: b.top !== undefined ? b.top : (b.y || 0),
+    width: b.width || 0,
+    height: b.height || 0,
+  };
+}
+function boxesOverlap(a, b) {
+  return a.left < b.left + b.width && a.left + a.width > b.left
+    && a.top < b.top + b.height && a.top + a.height > b.top;
+}
+function chooseSpot(rect, size, viewport, placed, avoid, accept) {
+  const gap = 4, margin = 2;
+  const r = toBox(rect);
+  const spots = [
+    { left: r.left, top: r.top - size.height - gap },
+    { left: r.left, top: r.top + r.height + gap },
+    { left: r.left + r.width + gap, top: r.top },
+    { left: r.left - size.width - gap, top: r.top },
+  ];
+  const vw = (viewport && viewport.width) || 0;
+  const vh = (viewport && viewport.height) || 0;
+  const target = { left: r.left, top: r.top, width: r.width, height: r.height };
+  const others = (Array.isArray(avoid) ? avoid : []).map(toBox);
+  const placedBoxes = (Array.isArray(placed) ? placed : []).map(toBox);
+  for (const spot of spots) {
+    const box = { left: Math.round(spot.left), top: Math.round(spot.top), width: size.width, height: size.height };
+    if (vw && (box.left < margin || box.top < margin || box.left + box.width > vw - margin || box.top + box.height > vh - margin)) continue;
+    if (boxesOverlap(box, target)) continue;
+    if (placedBoxes.some((p) => boxesOverlap(box, p))) continue;
+    // Never cover another control's box: labels and hit areas of
+    // neighboring targets stay readable and clickable.
+    if (others.some((o) => boxesOverlap(box, o))) continue;
+    // Optional conservative clearance check (e.g. page text). When the
+    // candidate cannot be verified clear, it is skipped like any other
+    // obstruction; null means every spot failed.
+    if (typeof accept === "function" && !accept(box)) continue;
+    return box;
+  }
+  return null;
 }
 
 const OVERLAY_CSS = `
   :host { all: initial; }
   .layer { position: fixed; inset: 0; pointer-events: none; z-index: 2147483647; }
   .badge {
-    position: fixed; display: flex; align-items: baseline; max-width: 240px;
-    background: #141414; color: #F2F2EE; border: 1px solid #F2F2EE;
-    font: 12px/1.3 system-ui, sans-serif; padding: 3px 7px; border-radius: 4px;
+    position: fixed; display: flex; align-items: center; max-width: 240px;
+    background: #141414; color: #F2F2EE; border: 1px solid rgba(242, 242, 238, 0.9);
+    font: 12px/1.3 "Jost", system-ui, sans-serif; padding: 3px 4px 3px 10px;
+    border-radius: 999px;
     transition: opacity 120ms ease;
   }
   .badge .word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .badge .num { flex: 0 0 auto; opacity: 0.62; margin-left: 6px; font-size: 11px; }
-  .badge.compact .word { display: none; }
-  .badge.compact .num { margin-left: 0; opacity: 1; }
+  .badge .num {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    min-width: 22px; height: 22px; margin-left: 6px; padding: 0 4px;
+    font: 11px/1 "DM Mono", ui-monospace, monospace;
+    border: 1px solid rgba(242, 242, 238, 0.9); border-radius: 999px;
+  }
   .ring {
     position: fixed; display: none; pointer-events: none; border-radius: 6px;
     border: 3px solid #F2F2EE; box-shadow: 0 0 0 2px #141414, inset 0 0 0 1px #141414;
@@ -65,6 +143,39 @@ const OVERLAY_CSS = `
   }
 `;
 
+function visibleOverflow(value) {
+  return value !== "auto" && value !== "scroll" && value !== "hidden";
+}
+
+// A badge must not float for a target that its own scroll container
+// has scrolled (or clipped) out of view: walk the ancestors for the
+// nearest clipping container and require overlap with its visible
+// region on every clipped axis. Viewport exclusion is handled
+// separately in refresh().
+function clippedByScroller(docRef, win, node, rect) {
+  let ancestor = node.parentElement;
+  while (ancestor && ancestor !== docRef.body && ancestor !== docRef.documentElement) {
+    let overflowX = "";
+    let overflowY = "";
+    try {
+      const cs = win && win.getComputedStyle ? win.getComputedStyle(ancestor) : null;
+      if (cs) { overflowX = cs.overflowX || ""; overflowY = cs.overflowY || ""; }
+    } catch { /* unstyled context (tests): fall back to inline style */ }
+    if (!overflowX && ancestor.style) overflowX = ancestor.style.overflowX || ancestor.style.overflow || "";
+    if (!overflowY && ancestor.style) overflowY = ancestor.style.overflowY || ancestor.style.overflow || "";
+    const clipX = !visibleOverflow(overflowX);
+    const clipY = !visibleOverflow(overflowY);
+    if ((clipX || clipY) && ancestor.getBoundingClientRect) {
+      const s = ancestor.getBoundingClientRect();
+      const outsideX = rect.x + rect.width <= s.x || rect.x >= s.x + s.width;
+      const outsideY = rect.y + rect.height <= s.y || rect.y >= s.y + s.height;
+      if ((clipX && outsideX) || (clipY && outsideY)) return true;
+    }
+    ancestor = ancestor.parentElement;
+  }
+  return false;
+}
+
 function createOverlayController(options) {
   const docRef = options.document;
   const win = options.window || docRef.defaultView;
@@ -78,6 +189,8 @@ function createOverlayController(options) {
   let ring = null;
   let descriptors = new Map();
   let tagsVisible = false;
+  let omitted = []; // valid targets with no whitespace for a floating tag
+  let placedById = new Map(); // id -> placed box, for tests/diagnostics
   let highlightedId = null;
   let highlightedNode = null;
   let rafPending = false;
@@ -173,21 +286,46 @@ function createOverlayController(options) {
     return { width: Math.min(240, Math.max(28, Math.round(16 + chars * 6.5))), height: 22 };
   }
 
-  function placeBadge(badge, rect, label) {
-    const vw = win && win.innerWidth ? win.innerWidth : 0;
-    const vh = win && win.innerHeight ? win.innerHeight : 0;
-    const size = badgeSize(badge, label);
-    let left = rect.x;
-    let top = rect.y >= size.height + 4 ? rect.y - size.height - 2 : rect.y + rect.height + 4;
-    if (vw) left = Math.max(0, Math.min(left, Math.max(0, vw - size.width)));
-    if (vh) top = Math.max(0, Math.min(top, Math.max(0, vh - size.height)));
-    badge.style.left = `${Math.round(left)}px`;
-    badge.style.top = `${Math.round(top)}px`;
-    return { left, top, width: size.width, height: size.height };
+  // Conservative rendered-content check for candidate spots. Control
+  // rectangles alone miss the labels, legends, and plain text around a
+  // target, so each candidate is sampled on a 3x3 grid with the
+  // browser's own hit test. A point counts as occupied when the hit
+  // element is interactive (or inside an interactive element/label),
+  // carries direct rendered text, or renders shadow text. Bare
+  // background and empty containers count as clear. Limits, honestly:
+  // text falling strictly between sample points can be missed, and in
+  // non-layout environments (no hit test) geometry checks alone
+  // govern — production Chrome always hit-tests.
+  function hitIsRenderedContent(el) {
+    if (!el) return false; // nothing rendered at that point
+    const tag = el.tagName || "";
+    if (tag === "HTML" || tag === "BODY") return false;
+    if (typeof el.closest === "function"
+      && el.closest("a, button, input, select, textarea, label, summary, [role='button'], [role='link'], [contenteditable]")) return true;
+    if (el.shadowRoot && el.shadowRoot.textContent && el.shadowRoot.textContent.trim()) return true;
+    for (const node of el.childNodes || []) {
+      if (node.nodeType === 3 && node.textContent && node.textContent.trim()) return true;
+    }
+    return false;
   }
 
-  function setBadgeLabel(badge, desc) {
-    const label = buildTagLabel(desc, Array.from(descriptors.values()));
+  function spotClearOfPageContent(box) {
+    if (!docRef || typeof docRef.elementFromPoint !== "function") return true;
+    const xs = [box.left + 2, Math.round(box.left + box.width / 2), box.left + box.width - 2];
+    const ys = [box.top + 2, Math.round(box.top + box.height / 2), box.top + box.height - 2];
+    for (const y of ys) {
+      for (const x of xs) {
+        let el = null;
+        try { el = docRef.elementFromPoint(Math.round(x), Math.round(y)); }
+        catch { return false; } // cannot verify clear: treat as occupied
+        if (hitIsRenderedContent(el)) return false;
+      }
+    }
+    return true;
+  }
+
+  function setBadgeLabel(badge, desc, full) {
+    const label = buildTagLabel(desc, Array.from(descriptors.values()), full ? { full: true } : { short: true });
     const word = badge.querySelector(".word");
     const num = badge.querySelector(".num");
     const wordText = label.text;
@@ -221,6 +359,16 @@ function createOverlayController(options) {
     const vh = win && win.innerHeight ? win.innerHeight : 0;
     const seen = new Set();
     const placed = [];
+    const unplaced = [];
+    // The explicitly highlighted target is placed first (placement
+    // order only). Every badge, highlighted or not, must find a spot
+    // that is clear of controls, placed badges, and rendered page
+    // content; crowded-out targets are omitted and stay discoverable
+    // in the panel's target list instead of piling up.
+    // First pass: resolve every descriptor to its live box. Second-pass
+    // placement avoids all of these, so a floating tag never covers a
+    // neighboring control's box either.
+    const live = [];
     for (const [id, desc] of descriptors) {
       const resolved = resolveNode(id);
       if (!resolved || resolved.status !== "ok" || !resolved.node) continue; // invalid target: omit tag
@@ -229,9 +377,16 @@ function createOverlayController(options) {
       if (!r || (r.width === 0 && r.height === 0)) continue;
       const rx = r.x !== undefined ? r.x : r.left || 0;
       const ry = r.y !== undefined ? r.y : r.top || 0;
+      if (clippedByScroller(docRef, win, node, { x: rx, y: ry, width: r.width, height: r.height })) continue;
       // Exclude fully offscreen controls on BOTH axes: no edge badges.
       if (vw && (rx + r.width <= 0 || rx >= vw)) continue;
       if (vh && (ry + r.height <= 0 || ry >= vh)) continue;
+      live.push({ id, desc, rect: { x: rx, y: ry, width: r.width, height: r.height } });
+    }
+    const ordered = live.sort((a, b) => (a.id === highlightedId ? -1 : b.id === highlightedId ? 1 : 0));
+    for (const { id, desc, rect } of ordered) {
+      const rx = rect.x;
+      const ry = rect.y;
       seen.add(id);
       let badge = badgeLayer.querySelector(`[data-target-id="${id}"]`);
       if (!badge) {
@@ -246,19 +401,28 @@ function createOverlayController(options) {
         badgeLayer.append(badge);
       }
       // Always refresh text from the current descriptor (labels change).
-      const label = setBadgeLabel(badge, desc);
-      badge.classList.remove("compact");
-      let box = placeBadge(badge, { x: rx, y: ry, width: r.width, height: r.height }, label);
-      // Compact fallback for tightly spaced controls: if this badge would
-      // cover an already-placed badge, shrink to the number alone so the
-      // number stays readable. Deliberately simple; no collision engine.
-      const overlaps = placed.some((p) => box.left < p.left + p.width && box.left + box.width > p.left && box.top < p.top + p.height && box.top + box.height > p.top);
-      if (overlaps) {
-        badge.classList.add("compact");
-        box = placeBadge(badge, { x: rx, y: ry, width: r.width, height: r.height }, { text: "", number: label.number });
+      const isActive = id === highlightedId;
+      const label = setBadgeLabel(badge, desc, isActive);
+      const size = badgeSize(badge, label);
+      // Neighboring controls' boxes are off-limits too, so a tag never
+      // covers another target's box; the content check additionally
+      // keeps it off rendered labels and text. The explicitly
+      // highlighted target gets NO exemption: safe placement first,
+      // and when nothing is safe it keeps its ring and its full label
+      // in the panel instead of text forced over the page.
+      const neighbors = live.filter((t) => t.id !== id).map((t) => t.rect);
+      const box = chooseSpot(rect, size, { width: vw, height: vh }, placed, neighbors, spotClearOfPageContent);
+      if (!box) {
+        badge.remove();
+        unplaced.push(id);
+        continue;
       }
-      placed.push(box);
+      badge.style.left = `${box.left}px`;
+      badge.style.top = `${box.top}px`;
+      placed.push({ ...box, id });
     }
+    omitted = unplaced;
+    placedById = new Map(placed.map((p) => [p.id, p]));
     for (const badge of Array.from(badgeLayer.children)) {
       if (!seen.has(badge.getAttribute("data-target-id"))) badge.remove();
     }
@@ -269,11 +433,13 @@ function createOverlayController(options) {
     descriptors = new Map((elements || []).map((e) => [e.id, e]));
     tagsVisible = true;
     refresh();
-    return { shown: badgeLayer ? badgeLayer.children.length : 0, total: descriptors.size };
+    return { shown: badgeLayer ? badgeLayer.children.length : 0, total: descriptors.size, unplaced: [...omitted] };
   }
 
   function hide() {
     tagsVisible = false;
+    omitted = [];
+    placedById = new Map();
     if (badgeLayer) badgeLayer.replaceChildren();
     return { shown: 0, total: descriptors.size };
   }
@@ -313,6 +479,8 @@ function createOverlayController(options) {
 
   function destroy() {
     stopListening();
+    omitted = [];
+    placedById = new Map();
     stopMutationObserver();
     if (settleTimer !== null && win && win.clearTimeout) win.clearTimeout(settleTimer);
     settleTimer = null;
@@ -324,8 +492,6 @@ function createOverlayController(options) {
   }
 
   function visibleBadgeText(badge) {
-    const num = badge.querySelector(".num");
-    if (badge.classList.contains("compact")) return num ? num.textContent : "";
     return badge.textContent;
   }
 
@@ -334,7 +500,8 @@ function createOverlayController(options) {
       tagsVisible,
       badgeCount: badgeLayer ? badgeLayer.children.length : 0,
       badgeTexts: badgeLayer ? Array.from(badgeLayer.children).map((b) => visibleBadgeText(b)) : [],
-      badges: badgeLayer ? Array.from(badgeLayer.children).map((b) => ({ id: b.getAttribute("data-target-id"), text: visibleBadgeText(b), compact: b.classList.contains("compact"), left: b.style.left, top: b.style.top })) : [],
+      badges: badgeLayer ? Array.from(badgeLayer.children).map((b) => { const box = placedById.get(b.getAttribute("data-target-id")) || { width: 0, height: 0 }; return { id: b.getAttribute("data-target-id"), text: visibleBadgeText(b), left: b.style.left, top: b.style.top, width: box.width, height: box.height }; }) : [],
+      unplaced: [...omitted],
       highlightedId,
       ringVisible: Boolean(ring && ring.style.display === "block"),
       hostPresent: Boolean(host),
@@ -347,8 +514,10 @@ function createOverlayController(options) {
 if (typeof globalThis !== "undefined") {
   globalThis.__seeyable_createOverlay = createOverlayController;
   globalThis.__seeyable_buildTagLabel = buildTagLabel;
+  globalThis.__seeyable_displayName = displayName;
+  globalThis.__seeyable_chooseSpot = chooseSpot;
   globalThis.__seeyable_numberFromId = numberFromId;
 }
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { createOverlayController, buildTagLabel, numberFromId };
+  module.exports = { createOverlayController, buildTagLabel, displayName, chooseSpot, numberFromId };
 }

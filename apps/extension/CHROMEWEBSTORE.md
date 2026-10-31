@@ -27,6 +27,9 @@ in this build, and voice/typed commands never execute page actions.
 | `scripting` | permissions | Fallback injection of the snapshot script into a tab that was open before the extension was installed/reloaded. Primary path is the declared content script. |
 | `sidePanel` | permissions | Shows the snapshot tool beside the page so users can capture and inspect results without leaving the page. |
 | `storage` | permissions | Reserved for local extension state. No user page data is persisted by the spike. |
+| `tabs` | permissions | **(Issue #28 spike)** Lets the loopback MCP bridge list open tabs with titles/URLs so a caller picks an explicit tab. Tab IDs, titles, and URLs are returned only to the local bridge client over the paired socket, never to webpages. |
+| `http://127.0.0.1:6123/*` | host_permissions | **(Issue #28 spike)** Lets the service worker open the outbound pairing WebSocket to the local bridge server. Loopback only; no remote hosts. |
+| `minimum_chrome_version: 116` | manifest | **(Issue #28 spike)** WebSocket in service workers requires Chrome 116+; the bridge heartbeat follows Chrome's documented keepalive pattern. |
 | content-script matches `<all_urls>` | content_scripts | The declared snapshot/highlight scripts must be able to run on the page being examined; this is the spike's subject matter. Scoping is revisited before any non-spike release. |
 | `debugger` | **not declared** | Deliberately absent in every form. Chrome forbids `debugger` in `optional_permissions` (load error), and the product path must not require it. Present **only** in `manifest.debug.json`, a clearly-marked local debug variant that must never ship. |
 

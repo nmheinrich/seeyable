@@ -1,6 +1,6 @@
 # Project Status and Pending Verification
 
-Last updated: 2026-10-28. This file records what is built, what has
+Last updated: 2026-10-30. This file records what is built, what has
 actually been verified, and what still needs a human with a headed
 browser. It is a status note, not a roadmap; scope decisions live in
 the feature documents.
@@ -16,7 +16,19 @@ the feature documents.
 | Manual execution test panel | Complete — `docs/features/feature-09-manual-test-panel.md` |
 | Voice front end and typed fallback | Complete and accepted — `docs/features/feature-10-voice-front-end.md` |
 | Shared executor safety gate | Complete and accepted — `docs/features/feature-11-shared-safety-gate.md` |
-| Planner, proxy, MCP server | Not started |
+| Plain Words product interface (#29) | Deferred by Product Owner on 2026-10-30; visually NOT accepted — `docs/features/feature-29-plain-words-interface.md` |
+| Planner, proxy | Not started |
+| MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
+
+Issue #29 is parked to prioritize remaining functionality. Keep its current
+uncommitted implementation; do not resume visual refinements without a new
+Product Owner request. Remaining work includes reference-composition fidelity,
+headed visual/accessibility acceptance, and a known Listening-state input-label
+contrast issue (dark text on blue, approximately 2.74:1 at review). The last
+independently rerun suite passed 146/146; this does not constitute visual acceptance.
+Issue #28's local MCP bridge smoke test is now complete and accepted.
+Git staging, commits, and pushes remain with the Product Owner; the current
+working tree also contains #29's deferred, visually unaccepted work.
 
 Repository: `main` tracks `origin/main`. The standard extension build
 requires no `debugger` permission; CDP remains debug-only via
@@ -24,12 +36,40 @@ requires no `debugger` permission; CDP remains debug-only via
 
 ## Verification evidence
 
-- Extension test suite: `npm --prefix apps/extension test` — 120/120
+- Extension test suite: `npm --prefix apps/extension test` — 159/159
+  (147 prior plus twelve #28 bridge-client lifecycle regressions run
+  against the real client file in a VM, incl. heartbeat health,
+  restore-once semantics, identical-repeat preservation, and
+  credential/port replacement). MCP server suite:
+  `npm --prefix apps/mcp-server test` — 11/11 (bridge auth,
+  correlation, failure handling, atomic single-auth,
+  shutdown-with-live-clients, and ping/pong regressions).
+  Headless #28 end-to-end: 15/15 through a custom stdio JSON-RPC
+  client (the same frames the Inspector sends) over the real
+  loopback bridge and extension, plus a 10/10 lifecycle run (tab
+  switches, idle 95 s with the panel closed and no worker DevTools,
+  worker Stop/restart recovery without re-pairing, server restart,
+  and post-Disconnect silence). The pre-fix reproduction showed the
+  worker suspending ~30 s after the panel closed (socket detach at
+  +36 s); the 20 s heartbeat plus init restore corrects this.
+  stdio JSON-RPC, the loopback bridge, and the real extension
+  (list_tabs, real 20-control snapshot, highlight round trip,
+  wrong-token rejection, disconnect/reconnect without replay). Real
+  Inspector CLI runs confirmed tools/list and the honest
+  NO_EXTENSION error path. Project-manager headed Inspector checks on
+  2026-10-30 verified a real highlight result plus visible Full name outline;
+  after reloading the heartbeat changes, snapshots succeeded before/after at
+  least 95 seconds idle with the panel closed and after three tab round trips,
+  without manual re-pairing or attached service-worker DevTools. Headed
+  explicit-disconnect/re-pair and stale-target rejection/fresh-snapshot
+  recovery were subsequently reported passed by the Product Owner. This
+  accepts the thin bridge spike, not the future executor/MCP action toolset.
+- Previous extension baseline for reference: 146/146
   passing at last run (snapshot engine, overlays, CDP helpers,
   executor incl. baseline/effective-disabled/final-verification
   corrections, panel ownership regressions, question-context scoping,
   voice command normalization/lifecycle and panel voice/typed
-  integration, and the Feature #11 safety gate: confirmation holds,
+  integration, the Feature #11 safety gate: confirmation holds,
   approval binding/expiry/consumption incl. dispatch-time expiry,
   SHA-256 submission-destination binding (fail-closed without Web
   Crypto), dispatch-boundary cancellation honesty, operation-scoped cancellation
@@ -37,7 +77,15 @@ requires no `debugger` permission; CDP remains debug-only via
   verified approval routing, sequential-harness stopping, log
   redaction, and synchronous final validation after the last async
   binding hash (mutations to disabled/detached/hidden targets during
-  hashing are rejected with zero activations). Re-run after any change; do not trust this number
+  hashing are rejected with zero activations), and issue #29
+  presentation coverage (Developer-view placement, held-focus
+  behavior, outcome labels, scroll-region exclusion, highlighted-
+  target word protection, plus the word-first pass: placement clear
+  of controls and rendered text (normalized geometry + 3×3 hit-test
+  sampling) with omission-to-list, short display labels with
+  annotation stripping, Targets-list binding/owned-highlight/held
+  marks, no active-target obstruction exception, list clearing on
+  invalidation, and the snapshot-metadata page line). Re-run after any change; do not trust this number
   without re-running.
 - Headless Chrome 156 runs through the real message paths:
   DOM/ARIA and CDP snapshots (20 controls, identical names), overlay
@@ -116,8 +164,55 @@ requires no `debugger` permission; CDP remains debug-only via
 - Feature #11's local headed acceptance checks passed. Real consequential
   actions on live websites were not tested. Planner/MCP callers remain
   synthetic test callers; no live planner, proxy, or MCP transport exists.
-- Next: issue #29, Plain Words product design, following completed #11.
-  Planner/MCP remain separate future work.
+- Headless Chrome 156 evidence for issue #29 (`/tmp/spike-run/plain-evidence/`):
+  word-first pass — product surface with Developer view closed,
+  word tags placed clear of controls and rendered text (labels and
+  the Contact preferences legend readable), dense Likert cluster
+  omitted to the panel Targets list (marked “Shown in
+  panel”; placement counts are no longer displayed, since they go
+  stale as the page moves), panel fallback for a listed target (ring + full
+  words in the panel, no forced badge), active target with ring +
+  full-word tag where a clear spot exists, held
+  confirmation in full brick (5.72:1 light, 10.37:1 dark, computed)
+  with focus on the heading and “▲ held” in the list, dark theme,
+  forced-colors treatment, real-Tab focus ring, 320 px and 200% zoom
+  with no overflow. Earlier correction-pass evidence retained:
+  Ready/Tags states, open Developer view with execution result and
+  log, dark theme, forced-colors mode, Starting/Listening/Finishing
+  states, cancelled-then-idle with a Ready chip, narrow-320/stacked
+  command row, long-URL wrapping at 320 px, execution-failure state.
+  Dense rating grids now omit to the list instead of converging to
+  number dots.
+  Later composition passes: matched-width (400 px) reference-versus-
+  implementation Ready/Listening/Held comparisons, compact header
+  and status, “View page targets” discovery button, and removal of
+  stale placement counts (Tags chip is visibility-only). The latest
+  pass restructures the panel to the reference hero (“Ready when
+  you are.”, microphone pill, integrated Send row), integrates the
+  status strip, moves Safety (Stop/Pause, confirmation) ahead of
+  the Targets list, and puts microphone/speech settings in a
+  collapsed secondary area; same-width/same-viewport (400×720)
+  comparisons are `impl2-{ready,listening,held}-400x720` in the
+  same evidence folder. A further visual-fidelity pass extracted
+  the reference templates’ exact values (Jost 300 heading at
+  34 px — the export bundles one Jost file for all weights, and
+  the bundled copy is byte-identical — tonal borderless surfaces,
+  104 px microphone pill, radii 22/28) and applied them; Ready now
+  hides the empty transcript and disabled listening controls, the
+  page-title fallback is “Current page”, and comparisons are
+  `impl3-*`/`compare3-*` in the same folder with computed-style
+  probes matching the reference. Visual acceptance is still
+  pending the Product Owner’s headed review. Headless
+  keyboard run reached targets and safety controls with visible
+  3 px focus rings, and Enter activation of the native button was
+  verified via CDP (one activation; focus moves to the Targets
+  heading). Emulated forced-colors and reduced-motion render
+  correctly. All of this is headless/emulated evidence.
+  Pending before the design is accepted: Product Owner headed visual
+  approval (real 320–420 px widths, actual 200% zoom, system dark
+  theme, OS forced-colors, reduced motion, keyboard-only flows,
+  long-name/error readability).
+- Planner/MCP remain separate future work.
 
 ## Known limitations to keep in mind
 
@@ -131,15 +226,18 @@ requires no `debugger` permission; CDP remains debug-only via
   transformations performed by page scripts.
 - `cssPath` is a diagnostic locator, never an identity authority;
   stale references are rejected rather than retargeted.
-- Dense-grid tags can overlap and obscure word labels. Readability
-  refinement belongs to issue #29 and must precede demo recording.
+- Dense grids no longer converge to number dots: the word-first pass
+  omits crowded-out floating tags to the panel Targets list instead
+  (sweep-based compaction removed); the highlighted target keeps its
+  full words. The overlay still carries no collision engine and
+  row/column labelling stays future planner work.
 - Browser recognition initially heard "tags" as "tax" and "targets";
   successful recognition took about three attempts. Exact command matching
   remains intentional; no fuzzy aliases were added. Cancellation status
-  wording is verbose and can be refined in issue #29.
+  wording was tightened in issue #29 (explicit too-late claims).
 - The action log's trailing "approved" means human approval was supplied,
-  even when a stale-state error prevented dispatch. Issue #29 should make
-  approval and execution outcome visually distinct.
+  even when a stale-state error prevented dispatch; since issue #29 the
+  panel states that distinction explicitly in the confirmation area.
 - Browser screenshots and E2E harnesses used during development live
   outside the repository (local `/tmp` scratch) except for the
   samples under `docs/spike/`.

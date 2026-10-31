@@ -15,6 +15,18 @@
 // `chrome.debugger` is undefined unless the `debugger` permission is granted
 // (debug variant only). Every use below is guarded: dereferencing it in the
 // standard build throws at service-worker startup and fails SW registration.
+// Issue #28 spike: localhost MCP bridge client (WebSocket, outbound only).
+try { importScripts("lib/bridge-client.js"); } catch (err) {
+  console.warn("[seeyable] bridge client failed to load:", err);
+}
+console.info(`[seeyable] service worker evaluated at ${new Date().toISOString()}`);
+// Restore a previously requested bridge pairing on ordinary worker
+// initialization (every wake re-evaluates this file), not only on
+// browser startup. Listeners below still register synchronously.
+if (typeof globalThis.__seeyableBridgeMaybeReconnect === "function") {
+  globalThis.__seeyableBridgeMaybeReconnect();
+}
+
 const hasDebuggerApi = typeof chrome.debugger !== "undefined";
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((err) => {
@@ -23,6 +35,12 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((err) 
 
 chrome.runtime.onInstalled.addListener(() => {
   console.info("[seeyable] extension installed");
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  if (typeof globalThis.__seeyableBridgeMaybeReconnect === "function") {
+    globalThis.__seeyableBridgeMaybeReconnect();
+  }
 });
 
 // Wrap chrome.debugger callback APIs in promises (MV3 service workers have
@@ -102,6 +120,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
     })();
     return true; // async sendResponse
+  }
+
+  if (message.type === "SEEYABLE_BRIDGE_CONNECT") {
+    (async () => {
+      try {
+        if (typeof globalThis.__seeyableBridgeConnect !== "function") throw new Error("Bridge client unavailable.");
+        sendResponse(await globalThis.__seeyableBridgeConnect({ token: message.token, port: message.port }));
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
+    })();
+    return true;
+  }
+  if (message.type === "SEEYABLE_BRIDGE_DISCONNECT") {
+    (async () => {
+      try { sendResponse(await globalThis.__seeyableBridgeDisconnect()); }
+      catch (err) { sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }); }
+    })();
+    return true;
+  }
+  if (message.type === "SEEYABLE_BRIDGE_STATUS") {
+    try { sendResponse(globalThis.__seeyableBridgeStatus()); }
+    catch (err) { sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }); }
+    return false;
   }
   return false;
 });

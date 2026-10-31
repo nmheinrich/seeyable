@@ -2,125 +2,84 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Seeyable — Manual Test Panel</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seeyable</title>
 <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
-<header>
-  <h1>Seeyable · Manual test panel</h1>
-  <p class="sub">Snapshots, tags, highlighting, voice/typed tag commands, and single-action executor tests. No planner or MCP.</p>
-  <p id="tabInfo" class="tab-info">Active tab: —</p>
+<header class="identity">
+  <div class="brand-row">
+    <span class="wordmark">SEEYABLE</span>
+    <span class="mode">~you</span>
+    <span id="tagsChip" class="chip">Tags: off</span>
+  </div>
+  <div class="page-card">
+    <span class="page-dot" aria-hidden="true"></span>
+    <div class="page-text">
+      <p id="tabInfo" class="page-title">Current page</p>
+      <p id="pageMeta" class="page-meta">No snapshot yet</p>
+    </div>
+  </div>
 </header>
 
-<section class="controls" aria-label="Snapshot controls">
-  <button id="btnDom" type="button">Snapshot via DOM/ARIA</button>
-  <button id="btnRefresh" type="button">Refresh snapshot</button>
-  <button id="btnCdp" type="button">Snapshot via CDP AXTree</button>
-  <label class="check">
-    <input id="chkIgnored" type="checkbox">
-    CDP: include ignored nodes
-  </label>
-</section>
+<div class="status-strip" role="group" aria-label="Current status">
+  <span id="stateChip" class="chip">Ready</span>
+  <span id="status" class="status" role="status">Open the page you want to work with.</span>
+  <p id="latestResult" class="result-line" aria-live="polite"></p>
+</div>
 
-<p id="status" class="status" role="status">Take a DOM/ARIA snapshot to begin.</p>
+<section class="card commands" aria-labelledby="commandHeading">
+  <h1 id="commandHeading" class="hero-title">Ready when you are.</h1>
+  <p class="hero-copy">Say or type <strong>“show tags”</strong> or <strong>“hide tags”</strong> — the only two commands that work today. Tag commands never run page actions.</p>
 
-<section class="toolbar" aria-label="Snapshot output tools">
-  <button id="btnCopy" type="button">Copy JSON</button>
-  <button id="btnDownload" type="button">Download JSON</button>
-  <button id="btnClear" type="button">Clear</button>
-  <span id="meta" class="meta"></span>
-</section>
-
-<section class="controls" aria-label="Overlay controls">
-  <button id="btnShowTags" type="button">Show tags</button>
-  <button id="btnHideTags" type="button">Hide tags</button>
-</section>
-
-<label class="highlight">
-  Highlight target number (from latest DOM snapshot):
-  <span class="highlight-row">
-    <input id="highlightInput" type="text" inputmode="numeric" placeholder="e.g. 22">
-    <button id="btnHighlight" type="button">Highlight</button>
-  </span>
-</label>
-
-<section class="voice" aria-labelledby="voiceHeading">
-  <h2 id="voiceHeading">Voice and typed commands</h2>
-  <p class="sub">Push-to-talk or typed. Supported commands: “show tags” and “hide tags”. Commands only show or hide tags — they never execute page actions.</p>
-
-  <div class="controls" aria-label="Voice controls">
-    <button id="btnListen" type="button">Start listening</button>
-    <button id="btnStopListen" type="button" disabled>Stop listening</button>
-    <button id="btnCancelListen" type="button" disabled>Cancel listening</button>
-    <button id="btnMicSetup" type="button">Microphone setup</button>
-  </div>
+  <button id="btnListen" type="button" class="btn-mic">
+    <span class="mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span>
+    <span>Start listening</span>
+  </button>
+  <div class="meter" id="voiceMeter" aria-hidden="true"><span></span><span></span><span></span></div>
   <p id="voiceState" class="status" role="status">Voice: idle.</p>
   <p id="voiceTranscript" class="transcript" aria-live="polite">Transcript: —</p>
 
-  <label class="field">
-    Typed command
-    <span class="highlight-row">
+  <div class="controls listen-actions" aria-label="Listening controls">
+    <button id="btnStopListen" type="button" disabled>Stop listening</button>
+    <button id="btnCancelListen" type="button" disabled>Cancel listening</button>
+  </div>
+
+  <label class="field request-label">
+    Or type a request
+    <span class="request-row">
       <input id="commandInput" type="text" autocomplete="off" placeholder="show tags">
-      <button id="btnSendCommand" type="button">Send command</button>
+      <button id="btnSendCommand" type="button">Send</button>
     </span>
   </label>
 
-  <div class="controls" aria-label="Speech feedback controls">
-    <label class="check">
-      <input id="chkSpeak" type="checkbox" checked>
-      Speak feedback
-    </label>
-    <button id="btnStopSpeech" type="button">Stop speech</button>
-  </div>
-  <p id="voiceNote" class="sub"></p>
+  <p class="try-row" aria-label="Supported command shortcuts">
+    <span class="try-label">Try</span>
+    <button id="btnTryShow" type="button" class="chip-btn">Show tags</button>
+    <button id="btnTryHide" type="button" class="chip-btn">Hide tags</button>
+  </p>
+
+  <button id="btnViewTargets" type="button" class="view-targets">View page targets ↓</button>
+
+  <details id="voiceSettings" class="voice-settings">
+    <summary>Voice and microphone settings</summary>
+    <div class="controls">
+      <button id="btnStopSpeech" type="button">Stop speech</button>
+      <label class="check">
+        <input id="chkSpeak" type="checkbox" checked>
+        Speak feedback
+      </label>
+      <button id="btnMicSetup" type="button">Microphone setup</button>
+    </div>
+    <p id="voiceNote" class="sub"></p>
+  </details>
 </section>
 
-<section class="exec" aria-labelledby="execHeading">
-  <h2 id="execHeading">Manual execution</h2>
-  <p class="sub">One action at a time through the validated executor. Consequential actions pause for your approval in the Safety gate below; sensitive writes stay blocked by the executor.</p>
-
-  <label class="field">
-    Target
-    <select id="targetSelect" disabled>
-      <option value="">Take a snapshot first</option>
-    </select>
-  </label>
-
-  <label class="field">
-    Action
-    <select id="actionSelect">
-      <option value="click">click</option>
-      <option value="fill">fill</option>
-      <option value="select">select (native, exact option value)</option>
-      <option value="check">check</option>
-      <option value="uncheck">uncheck</option>
-      <option value="scroll_to">scroll_to</option>
-      <option value="read">read</option>
-    </select>
-  </label>
-
-  <label class="field">
-    Value (fill/select only; for select use the exact option value)
-    <input id="valueInput" type="text" disabled autocomplete="off">
-  </label>
-
-  <button id="btnExecute" type="button" disabled>Execute once</button>
-  <p id="execStatus" class="status" role="status">No execution yet.</p>
-  <pre id="execResult" class="output exec-result" aria-label="Execution result"></pre>
-</section>
-
-
-<section class="gate" aria-labelledby="gateHeading">
-  <h2 id="gateHeading">Safety gate</h2>
-  <p class="sub">Consequential actions (submit, pay, delete, send, publish…) pause here for one explicit human approval. Approval is single-use and bound to the exact target and page state.</p>
-  <div class="controls" aria-label="Gate controls">
-    <button id="btnStopExec" type="button">Stop</button>
-    <button id="btnPauseExec" type="button">Pause</button>
-  </div>
-  <p id="gateStatus" class="status" role="status">Gate: open.</p>
-
+<section class="card gate" aria-labelledby="gateHeading">
+  <h2 id="gateHeading" class="section-label">Safety</h2>
+  <p class="sub">Risky actions — submit, pay, delete, send, publish — pause here for one explicit approval. Approval runs once and cannot be replayed.</p>
   <div id="confirmBox" hidden>
-    <h3>Confirmation required</h3>
+    <h3 id="confirmTitle" tabindex="-1">Confirmation required</h3>
     <p id="confirmText"></p>
     <div class="controls">
       <button id="btnApproveOnce" type="button">Approve once</button>
@@ -128,6 +87,105 @@
     </div>
   </div>
   <p id="confirmStatus" class="status" role="status"></p>
+  <div class="controls" aria-label="Gate controls">
+    <button id="btnStopExec" type="button">Stop</button>
+    <button id="btnPauseExec" type="button">Pause</button>
+  </div>
+  <p id="gateStatus" class="status" role="status">Gate: open.</p>
+</section>
+
+<section class="card" aria-labelledby="targetsHeading">
+  <h2 id="targetsHeading" class="section-label" tabindex="-1">Targets</h2>
+  <p class="sub">Word tags float on the page where there is room; the rest stay listed here, marked “Shown in panel.” Select a target to outline it on the page.</p>
+  <div id="targetList" class="target-list"></div>
+</section>
+
+<details id="developerView" class="card developer">
+  <summary>Developer view</summary>
+  <p class="sub">Snapshot tools, tag visibility, manual execution, and the detailed log. Confirmations, Stop/Pause, and the safety state above stay visible whether this is open or closed.</p>
+
+  <section class="controls" aria-label="Snapshot controls">
+    <button id="btnDom" type="button">Snapshot via DOM/ARIA</button>
+    <button id="btnRefresh" type="button">Refresh snapshot</button>
+    <button id="btnCdp" type="button">Snapshot via CDP AXTree</button>
+    <label class="check">
+      <input id="chkIgnored" type="checkbox">
+      CDP: include ignored nodes
+    </label>
+  </section>
+
+  <section class="toolbar" aria-label="Snapshot output tools">
+    <button id="btnCopy" type="button">Copy JSON</button>
+    <button id="btnDownload" type="button">Download JSON</button>
+    <button id="btnClear" type="button">Clear</button>
+    <span id="meta" class="meta"></span>
+  </section>
+
+  <section class="controls" aria-label="Overlay controls">
+    <button id="btnShowTags" type="button">Show tags</button>
+    <button id="btnHideTags" type="button">Hide tags</button>
+  </section>
+
+  <section class="exec" aria-labelledby="bridgeHeading">
+    <h2 id="bridgeHeading">MCP bridge (local spike)</h2>
+    <p class="sub">Pairs this browser with the loopback MCP bridge server on 127.0.0.1. Paste the runtime token the server printed; it is kept for this browser session only and never sent to webpages.</p>
+    <label class="field">
+      Pairing token
+      <input id="bridgeToken" type="password" autocomplete="off" placeholder="64 hex characters from the server">
+    </label>
+    <label class="field">
+      Bridge port
+      <input id="bridgePort" type="text" inputmode="numeric" value="6123" autocomplete="off">
+    </label>
+    <div class="controls">
+      <button id="btnBridgeConnect" type="button">Connect bridge</button>
+      <button id="btnBridgeDisconnect" type="button">Disconnect</button>
+      <button id="btnBridgeStatus" type="button">Bridge status</button>
+    </div>
+    <p id="bridgeStatus" class="status" role="status">Bridge: not connected.</p>
+  </section>
+
+  <label class="highlight">
+    Highlight target number (from latest DOM snapshot):
+    <span class="highlight-row">
+      <input id="highlightInput" type="text" inputmode="numeric" placeholder="e.g. 22">
+      <button id="btnHighlight" type="button">Highlight</button>
+    </span>
+  </label>
+
+  <section class="exec" aria-labelledby="execHeading">
+    <h2 id="execHeading">Manual execution</h2>
+    <p class="sub">One action at a time through the validated executor. Consequential actions pause for your approval in the Safety section above; sensitive writes stay blocked by the executor.</p>
+
+    <label class="field">
+      Target
+      <select id="targetSelect" disabled>
+        <option value="">Take a snapshot first</option>
+      </select>
+    </label>
+
+    <label class="field">
+      Action
+      <select id="actionSelect">
+        <option value="click">click</option>
+        <option value="fill">fill</option>
+        <option value="select">select (native, exact option value)</option>
+        <option value="check">check</option>
+        <option value="uncheck">uncheck</option>
+        <option value="scroll_to">scroll_to</option>
+        <option value="read">read</option>
+      </select>
+    </label>
+
+    <label class="field">
+      Value (fill/select only; for select use the exact option value)
+      <input id="valueInput" type="text" disabled autocomplete="off">
+    </label>
+
+    <button id="btnExecute" type="button" disabled>Execute once</button>
+    <p id="execStatus" class="status" role="status">No execution yet.</p>
+    <pre id="execResult" class="output exec-result" aria-label="Execution result"></pre>
+  </section>
 
   <h3 class="log-heading">Action log</h3>
   <pre id="actionLog" class="output log" aria-label="Action log">No log entries yet.</pre>
@@ -135,20 +193,21 @@
     <button id="btnRefreshLog" type="button">Refresh log</button>
     <button id="btnClearLog" type="button">Clear log</button>
   </div>
-</section>
 
-<pre id="output" class="output">{}</pre>
+  <pre id="output" class="output">{}</pre>
 
-<p class="note">
-  CDP path needs the <code>debugger</code> permission. The standard manifest
-  declares it in no form (Chrome forbids it as an optional permission), so
-  the CDP button reports this instead of failing; <code>manifest.debug.json</code>
-  grants it up front for debug testing. While attached, Chrome shows a
-  “started debugging this browser” banner — expected.
-</p>
+  <p class="note">
+    CDP path needs the <code>debugger</code> permission. The standard manifest
+    declares it in no form (Chrome forbids it as an optional permission), so
+    the CDP button reports this instead of failing; <code>manifest.debug.json</code>
+    grants it up front for debug testing. While attached, Chrome shows a
+    “started debugging this browser” banner — expected.
+  </p>
+</details>
 
 <script src="lib/snapshot-cdp.js"></script>
 <script src="lib/voice-commands.js"></script>
+<script src="lib/overlay.js"></script>
 <script src="sidepanel.js"></script>
 </body>
 </html>
