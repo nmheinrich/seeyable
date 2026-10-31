@@ -378,6 +378,15 @@ function proxyStub(plan, extra = {}) {
 
 const PAIRED = { plannerToken: "test-token", plannerPort: 6124 };
 
+// Issue #15: every AI step plan waits for review. Approval re-reads the
+// live page once (one extra SEEYABLE_SNAPSHOT_DOM) before step 1.
+async function approvePlan(panel) {
+  assert.equal(panel.$("planBox").hidden, false, "the plan waits for review first");
+  assert.equal(panel.calls.execute, 0, "nothing runs before approval");
+  panel.$("btnApprovePlan").click();
+  await tick(); await tick(); await tick(); await tick(); await tick();
+}
+
 test("planner: fast-path commands make zero proxy calls", async () => {
   const snapshot = snap([el("el-1", "Full name")]);
   const panel = makePanel(tabStub({ snapshots: [snapshot] }), { session: PAIRED });
@@ -406,7 +415,7 @@ test("planner: two-step plan runs sequentially with fresh revisions", async () =
   const rev3 = snap([el("el-1", "Full name"), el("el-2", "Nickname")], 3);
   const seenRevisions = [];
   const panel = makePanel(tabStub({
-    snapshots: [rev1, rev2, rev3],
+    snapshots: [rev1, rev1, rev2, rev3],
     onExecute: (request) => {
       seenRevisions.push(request.revision);
       return {
@@ -427,6 +436,7 @@ test("planner: two-step plan runs sequentially with fresh revisions", async () =
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "fill in Full name as Ada Lovelace and Nickname as Ada");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 2);
   assert.deepEqual(seenRevisions, [1, 2], "each step uses the current revision, never the initial one twice");
   assert.match(panel.$("status").textContent, /Completed 2 steps, all verified/);
@@ -441,7 +451,7 @@ test("planner: step failure stops the sequence; later steps never send", async (
   const rev1 = snap([el("el-1", "A"), el("el-2", "B"), el("el-3", "C")], 1);
   const rev2 = snap([el("el-1", "A"), el("el-2", "B"), el("el-3", "C")], 2);
   const panel = makePanel(tabStub({
-    snapshots: [rev1, rev2],
+    snapshots: [rev1, rev1, rev2],
     onExecute: (request) => request.elementId === "el-1"
       ? { ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 1 }
       : { ok: false, error: { code: "TARGET_DISABLED", message: "Target el-2 is disabled." }, newSnapshotDiff: null, diffUnavailableReason: "rejected", documentSessionId: "doc-A", revision: 2 },
@@ -458,6 +468,7 @@ test("planner: step failure stops the sequence; later steps never send", async (
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "click A then B then C");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 2, "step 3 never dispatches");
   assert.match(panel.$("status").textContent, /Stopped: step 2 failed: TARGET_DISABLED/);
   assert.match(panel.$("status").textContent, /Completed 1 of 3 first/);
@@ -481,6 +492,7 @@ test("planner: unverified step stops continuation honestly", async () => {
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "click A then B");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 1, "no second step on an unverified first");
   assert.match(panel.$("status").textContent, /could not be verified/);
   panel.dom.window.close();
@@ -516,7 +528,10 @@ test("planner: consequential step holds; later steps dropped; approval runs once
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "click A then submit then C");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 2, "held step sent; step 3 never sent");
+  assert.equal(panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_APPROVE_CHALLENGE").length, 0,
+    "approving the plan never approves the consequential step");
   assert.equal(panel.$("confirmBox").hidden, false, "held card appears");
   assert.match(panel.$("status").textContent, /Step 2 of 3 is held/);
   assert.match(panel.$("status").textContent, /1 later step was not run/);
@@ -543,7 +558,7 @@ test("planner: invented ids from the proxy are rejected with zero dispatches", a
   panel.dom.window.close();
 });
 
-test("planner: clarify choices render and execute with stored binding", async () => {
+test("planner: clarify choices render, then the chosen step enters review with stored binding", async () => {
   const snapshot = snap([el("el-1", "Full name"), el("el-2", "Nickname")]);
   const panel = makePanel(tabStub({ snapshots: [snapshot, snapshot] }), { session: PAIRED });
   const plan = {
@@ -564,9 +579,12 @@ test("planner: clarify choices render and execute with stored binding", async ()
   assert.equal(buttons.length, 2);
   buttons[1].click();
   await tick(); await tick();
+  assert.match(panel.$("planSteps").textContent, /Fill “Nickname” with “Ada”/, "the model-supplied value is reviewed, not run");
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 1);
   const req = JSON.parse(JSON.stringify(panel.calls.send.find((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION").msg.request));
   assert.deepEqual(req, { action: "fill", elementId: "el-2", documentSessionId: "doc-A", revision: 1, value: "Ada", source: "manual" });
+  assert.equal(panel.calls.fetch.length, 1, "approval makes no model call");
   panel.dom.window.close();
 });
 
@@ -601,7 +619,7 @@ test("planner: disappeared and changed targets stop the sequence", async () => {
   const rev1 = snap([el("el-1", "A"), el("el-2", "B")], 1);
   const revGone = snap([el("el-1", "A")], 2);
   const panel = makePanel(tabStub({
-    snapshots: [rev1, revGone],
+    snapshots: [rev1, rev1, revGone],
     onExecute: () => ({ ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: ["el-2"], updated: [] }, documentSessionId: "doc-A", revision: 1 }),
   }), { session: PAIRED });
   const plan = {
@@ -612,6 +630,7 @@ test("planner: disappeared and changed targets stop the sequence", async () => {
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "click A then B");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 1, "the vanished target is never invented back");
   assert.match(panel.$("status").textContent, /no longer on the page/);
   assert.match(panel.$("status").textContent, /Completed 1 of 2 first/);
@@ -622,7 +641,7 @@ test("planner: renamed target stops the sequence without retargeting", async () 
   const rev1 = snap([el("el-1", "A"), el("el-2", "B")], 1);
   const revRenamed = snap([el("el-1", "A"), el("el-2", "Something else entirely")], 2);
   const panel = makePanel(tabStub({
-    snapshots: [rev1, revRenamed],
+    snapshots: [rev1, rev1, revRenamed],
     onExecute: () => ({ ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [{ id: "el-2", changedFields: ["name"] }] }, documentSessionId: "doc-A", revision: 1 }),
   }), { session: PAIRED });
   const plan = {
@@ -633,6 +652,7 @@ test("planner: renamed target stops the sequence without retargeting", async () 
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "click A then B");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 1);
   assert.match(panel.$("status").textContent, /changed since planning/);
   panel.dom.window.close();
@@ -667,6 +687,8 @@ test("planner: select dispatches the exact option value for the requested label"
   }, seen);
   sendTyped(panel, "choose Product manager for Your role somehow");
   await tick(); await tick(); await tick(); await tick();
+  assert.match(panel.$("planSteps").textContent, /Choose “Product manager” in “Your role”/, "the reviewed step names the visible choice");
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 1);
   assert.equal(seen[0].value, "pm", "the exact option value dispatches — never the label, never lowercased");
   assert.match(panel.$("status").textContent, /Completed 1 step, all verified/);
@@ -678,7 +700,7 @@ test("planner: changed dropdown options stop the sequence before later steps", a
   const click = el("el-5", "More options", { role: "button", tag: "button" });
   const rev1 = snap([el("el-1", "Nickname"), roleEl("el-3", ROLE_OPTIONS), click], 1);
   const rev2 = snap([el("el-1", "Nickname"), roleEl("el-3", after), click], 2);
-  const panel = planPanel([rev1, rev2], {
+  const panel = planPanel([rev1, rev1, rev2], {
     version: "seeyable-plan-1", outcome: "steps",
     steps: [
       { action: "fill", elementId: "el-1", value: "Ada" },
@@ -688,6 +710,7 @@ test("planner: changed dropdown options stop the sequence before later steps", a
   });
   sendTyped(panel, "fill Nickname then choose Designer then open more somehow");
   await tick(); await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 1, "only the fill ran; the changed select stopped the sequence");
   assert.match(panel.$("status").textContent, /options changed since planning/);
   assert.match(panel.$("status").textContent, /Completed 1 of 3 first/);
@@ -715,7 +738,7 @@ test("planner: vanished, disabled, and ambiguous dropdown choices stop without d
   for (const c of cases) {
     const rev1 = snap([el("el-1", "Nickname"), roleEl("el-3", ROLE_OPTIONS)], 1);
     const rev2 = snap([el("el-1", "Nickname"), roleEl("el-3", c.after)], 2);
-    const panel = planPanel([rev1, rev2], {
+    const panel = planPanel([rev1, rev1, rev2], {
       version: "seeyable-plan-1", outcome: "steps",
       steps: [
         { action: "fill", elementId: "el-1", value: "Ada" },
@@ -724,6 +747,7 @@ test("planner: vanished, disabled, and ambiguous dropdown choices stop without d
     });
     sendTyped(panel, "fill Nickname then choose Designer somehow");
     await tick(); await tick(); await tick(); await tick(); await tick();
+    await approvePlan(panel);
     assert.equal(panel.calls.execute, 1, `${c.name}: the fill ran, the select never dispatched`);
     assert.match(panel.$("status").textContent, c.message, c.name);
     panel.dom.window.close();
@@ -880,6 +904,7 @@ test("planner: resume after a discarded plan replays nothing and restores availa
   // deferred gate resolves immediately for the new request).
   sendTyped(panel, "fill Full name up somehow");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   assert.equal(panel.calls.execute, 1, "a new command executes after resume");
   assert.match(panel.$("status").textContent, /Completed 1 step, all verified/);
   panel.dom.window.close();
@@ -1071,7 +1096,9 @@ test("planner: pairing stores the token and reports model/key status", async () 
 test("planner: conversation context travels bounded and document-scoped", async () => {
   const snapshot = snap([el("el-1", "Full name")]);
   const docB = snap([el("el-1", "Full name")], 1, "doc-B");
-  const panel = makePanel(tabStub({ snapshots: [snapshot, snapshot, snapshot, docB, docB] }), { session: PAIRED });
+  // Planning reads the live page each time (#15), so the second request
+  // takes its own doc-A snapshot before the document change.
+  const panel = makePanel(tabStub({ snapshots: [snapshot, snapshot, snapshot, snapshot, docB, docB] }), { session: PAIRED });
   const one = {
     version: "seeyable-plan-1", outcome: "steps",
     steps: [{ action: "fill", elementId: "el-1", value: "Ada" }],
@@ -1080,14 +1107,16 @@ test("planner: conversation context travels bounded and document-scoped", async 
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "fill Full name up somehow");
   await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel);
   sendTyped(panel, "fill Full name up again somehow");
   await tick(); await tick(); await tick(); await tick();
   assert.equal(stub.bodies.length, 2);
   assert.equal(stub.bodies[0].context.length, 0, "first request has no history");
-  assert.equal(stub.bodies[1].context.length, 1, "second request carries one bounded entry");
+  assert.equal(stub.bodies[1].context.length, 2, "review, then the approved run: two bounded entries");
   assert.equal(stub.bodies[1].context[0].summary, "fill Full name", "structured action/target summary, no transcript");
   assert.equal(stub.bodies[1].context[0].transcript, undefined);
-  assert.match(stub.bodies[1].context[0].outcome, /completed 1\/1 verified/);
+  assert.match(stub.bodies[1].context[0].outcome, /previewed/);
+  assert.match(stub.bodies[1].context[1].outcome, /completed 1\/1 verified/);
   assert.ok(!JSON.stringify(stub.bodies[1].context).includes("Ada"), "values stay out of context entries");
   // A document change resets the context.
   for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 });

@@ -227,3 +227,37 @@ test("recognition: normal end closes the session — saved callbacks after end e
   savedResult({ resultIndex: 0, results: [result] });
   assert.ok(!events.some(([k]) => k === "final"), "no dispatch after normal end without a new session");
 });
+
+test("review phrases (#15): exact matches only; edit keeps the full replacement", () => {
+  const kind = (t) => { const r = voice.resolveReviewCommand(t); return r && r.kind; };
+  assert.equal(kind("Approve plan."), "approve-plan");
+  assert.equal(kind("approve the plan"), "approve-plan");
+  assert.equal(kind("Cancel plan"), "cancel-plan");
+  assert.equal(kind("Undo last change"), "undo");
+  assert.equal(kind("Approve this action!"), "approve-action");
+  for (const t of ["approve plan please", "please approve plan", "don't approve plan", "I approve this action now",
+    "undo", "undo everything", "approve this", "submit and approve plan", "cancel"]) {
+    assert.equal(voice.resolveReviewCommand(t), null, t);
+  }
+  const edit = voice.resolveReviewCommand("Edit plan: put Grace Hopper in Full name and Scientist in Short bio.");
+  assert.deepEqual(edit, { kind: "edit-plan", replacement: "put Grace Hopper in Full name and Scientist in Short bio." }, "case and trailing punctuation kept");
+  assert.equal(voice.resolveReviewCommand("edit plan put Ada in Nickname").replacement, "put Ada in Nickname", "spoken form without a colon");
+  assert.equal(voice.resolveReviewCommand("Edit the plan, put Ada in Nickname").replacement, "put Ada in Nickname");
+  assert.equal(voice.resolveReviewCommand("edit plan").replacement, "", "an empty replacement is reported, not invented");
+  assert.equal(voice.resolveReviewCommand("please edit plan: x"), null, "anchored at the start");
+});
+
+test("plan-approval aliases (#15 headed finding): exact list only; approval-like speech is detected separately", () => {
+  for (const t of ["approve plan", "Approve the plan.", "approved plan", "Approved plan.", "approved the plan", "Approve", "approved!", "Go ahead.", "  GO   AHEAD  "]) {
+    assert.deepEqual(voice.resolveReviewCommand(t), { kind: "approve-plan" }, t);
+  }
+  assert.deepEqual(voice.resolveReviewCommand("approve this action"), { kind: "approve-action" }, "consequential phrase stays distinct");
+  for (const t of ["do not approve", "not approved", "approve later", "go ahead and submit", "approved plan and delete",
+    "don't approve", "i approve", "approve it", "go ahead please", "pre-approved plan"]) {
+    assert.equal(voice.resolveReviewCommand(t), null, `${t} must not authorize`);
+    assert.equal(voice.isApprovalLike(t), true, `${t} is approval-like (retained, explained)`);
+  }
+  for (const t of ["put Grace Hopper in Full name", "fill Short bio with Scientist", "show tags", "ahead of time fill Nickname"]) {
+    assert.equal(voice.isApprovalLike(t), false, t);
+  }
+});

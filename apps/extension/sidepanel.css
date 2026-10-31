@@ -208,6 +208,16 @@ body[data-voice="listening"] .try-label { color: #C9D6E2; }
   white-space: normal; /* long labels wrap instead of overflowing */
   overflow-wrap: anywhere;
 }
+/* Plan review (Issue #15): the same plain card language as
+   clarification — a numbered list of steps and native buttons. */
+.plan-review .section-label { margin: 0 0 4px; }
+.plan-steps { margin: 6px 0; padding-left: 22px; }
+.plan-steps li { margin: 4px 0; overflow-wrap: anywhere; }
+.plan-steps .step-note { color: var(--text-secondary); font-size: 14px; }
+.request-row #btnSubmitEdit {
+  flex: 0 0 auto; min-height: 48px; background: var(--text); border-color: transparent;
+  color: var(--bg-panel); padding: 8px 20px;
+}
 .view-targets {
   display: block; width: 100%; margin: 10px 0 4px; padding: 10px 14px;
   font-size: 15px; font-weight: 500;

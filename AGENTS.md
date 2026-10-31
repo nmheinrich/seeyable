@@ -58,7 +58,12 @@ Model API key, shared plan contract, pruned snapshots, guarded sequential
 execution, cached corrections) is complete and accepted: the Product Owner
 confirmed the full canonical Act 1 script typed then spoken on 2026-10-31,
 including the dropdown fix. Recognition remains imperfect; clear speech
-is needed. #15 (plan preview/editing, voice approval, undo) is future work.
+is needed. Issue #15 (plan preview/editing, voice approval, last-change undo)
+is complete and accepted for its core mouse-free workflow: the Product Owner
+confirmed preview, voice edit, unsupported-approval retention, contextual
+approval, and undo on 2026-10-31. Speech recognition still repeatedly heard
+“Grasshopper” for “Grace Hopper”; exact-name transcription is not established.
+Supplementary headed safety probes remain separately listed in the feature doc.
 See docs/status.md for verification evidence.
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

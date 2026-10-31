@@ -230,6 +230,7 @@ function renderState() {
     let label = "Ready";
     if (state.confirmation) { label = "\u25B2 Held \u2014 nothing sent"; cls = "is-held"; }
     else if (state.pending || commandPending) { label = "\u25CF Acting"; cls = "is-acting"; }
+    else if (pendingPlan) { label = "\u25B2 Review \u2014 nothing changed"; cls = "is-held"; }
     else if (state.acquiring) { label = "\u25CF Working"; cls = "is-acting"; }
     else if (voicePhase === "listening") { label = "Listening"; cls = "is-listening"; }
     else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
@@ -257,7 +258,9 @@ function updateValueEnabled() {
   $("valueInput").disabled = !(action === "fill" || action === "select") || state.pending;
 }
 function updateExecuteEnabled() {
-  const ready = Boolean(state.snapshot && state.executorReady && !state.pending && !state.acquiring && !commandPending && !state.confirmation && selectedTargetId());
+  // A plan waiting for review blocks conflicting manual execution; the
+  // review controls themselves need only the operation locks released.
+  const ready = Boolean(state.snapshot && state.executorReady && !state.pending && !state.acquiring && !commandPending && !state.confirmation && !pendingPlan && selectedTargetId());
   $("btnExecute").disabled = !ready;
   $("targetSelect").disabled = state.pending || commandPending || Boolean(state.confirmation) || !state.snapshot;
   $("actionSelect").disabled = state.pending || commandPending || Boolean(state.confirmation);
@@ -265,6 +268,16 @@ function updateExecuteEnabled() {
   if (approveBtn) approveBtn.disabled = !state.confirmation || state.pending;
   const cancelBtn = $("btnCancelChallenge");
   if (cancelBtn) cancelBtn.disabled = !state.confirmation || state.pending;
+  const reviewLocked = state.pending || state.acquiring || commandPending;
+  for (const id of ["btnApprovePlan", "btnEditPlan", "btnCancelPlan"]) {
+    const btn = $(id);
+    if (btn) btn.disabled = !pendingPlan || reviewLocked;
+  }
+  for (const id of ["btnSubmitEdit", "btnDiscardEdit"]) {
+    const btn = $(id);
+    if (btn) btn.disabled = reviewLocked;
+  }
+  if ($("planEditInput")) $("planEditInput").disabled = commandPending;
   // Conflicting snapshot/binding operations stay locked through the
   // post-action refresh, not just until the executor responds.
   for (const id of ["btnDom", "btnRefresh", "btnShowTags", "btnHideTags", "btnHighlight", "btnCdp"]) {
@@ -701,6 +714,14 @@ $("btnHighlight").addEventListener("click", async () => {
  * the visible transcript line until replaced or invalidated. */
 const voiceApi = globalThis.SeeyableVoice || null;
 let commandPending = false;
+// Issue #15: the one AI-generated plan waiting for review, or null. It is
+// a frozen object bound to its request, tab, document, revision,
+// generation, and interaction; review callbacks close over it and do
+// nothing once it is no longer the current one.
+let pendingPlan = null;
+// Voice review authority: what was displayed when the user started the
+// current recognition session. Set only by Start listening.
+let listenContext = null;
 // Presentation-only mirror of the recognition lifecycle. This is the
 // single source for microphone/voice phase in renderState — it is set
 // only at authoritative transition points (handlers below), never
@@ -793,13 +814,13 @@ const recognizer = voiceApi
           flushPendingSpoken(); // session ended: microphone is closed
         },
         onInterim: ({ text }) => { $("voiceTranscript").textContent = `Heard so far: ${text}`; },
-        onFinal: ({ text }) => {
+        onFinal: ({ text, sessionId }) => {
           $("voiceTranscript").textContent = text ? `Heard: ${text}` : "Heard: (no speech)";
           voicePhase = "finishing";
           // The one accepted utterance ends the session's purpose:
           // wind recognition down now; feedback waits for its end.
           if (recognizer) recognizer.stop();
-          void dispatchCommand(text, "voice");
+          void dispatchCommand(text, "voice", { sessionId });
         },
         onError: ({ message }) => {
           voicePhase = "idle";
@@ -822,8 +843,14 @@ function cancelVoiceInteraction(reason) {
   if (recognizer && recognizer.isActive()) recognizer.cancel();
   if (speechOutput) speechOutput.stop();
   voiceTabId = null;
+  listenContext = null;
+  pendingCorrection = null; // cached alternatives die with the interaction
   const transcript = $("voiceTranscript");
   if (transcript) transcript.textContent = "Transcript: —";
+  // A plan waiting for review is a pending command: it dies here too.
+  if (discardPlanReview() && !commandPending && reason) {
+    setStatus(`Plan discarded — ${reason} Nothing was executed.`, true);
+  }
   if (reason) setVoiceState(`Voice: idle — ${reason}`, true);
   if (typeof updateVoiceControls === "function") updateVoiceControls();
 }
@@ -876,10 +903,12 @@ function clearClarification() {
   if (choices) choices.replaceChildren();
 }
 
-async function ensureCommandSnapshot(tabId, gen, seq) {
+async function ensureCommandSnapshot(tabId, gen, seq, opts = {}) {
   // Reuse is allowed only under the established freshness contract:
-  // a snapshot bound to this exact tab with the executor ready.
-  if (state.snapshot && state.boundTabId === tabId && state.executorReady) {
+  // a snapshot bound to this exact tab with the executor ready. Plan
+  // approval passes { fresh: true }: it must compare the LIVE page with
+  // the reviewed state, never a cached copy.
+  if (!opts.fresh && state.snapshot && state.boundTabId === tabId && state.executorReady) {
     return { snapshot: state.snapshot };
   }
   const myOp = ++state.opSeq; // supersedes any earlier acquisition
@@ -1055,6 +1084,13 @@ async function runClarifiedChoice(elementId, clarification) {
     return;
   }
   const element = snapshot.elements.find((e) => e.id === elementId);
+  if (choice.origin === "planner") {
+    // A model clarification supplies the action and value; the human
+    // picked only the target. Its resolved step is an AI-generated plan
+    // like any other, so it enters review instead of executing (#15).
+    presentClarifiedPlan(choice, elementId, snapshot);
+    return;
+  }
   const request = {
     action: choice.action,
     elementId,
@@ -1181,7 +1217,8 @@ async function runCorrectionCommand(correction, source, gen, seq) {
     return { ok: false, message: "The correction belongs to another tab. Nothing was executed." };
   }
   voiceTabId = tab.id;
-  const ensured = await ensureCommandSnapshot(tab.id, gen, seq);
+  // A model-derived alternative becomes a preview bound to the live page.
+  const ensured = await ensureCommandSnapshot(tab.id, gen, seq, { fresh: entry.origin === "planner" });
   if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) {
     return { ok: false, discarded: true, message: "" };
   }
@@ -1195,15 +1232,45 @@ async function runCorrectionCommand(correction, source, gen, seq) {
     return { ok: false, message: "The alternative is no longer on the page. Nothing was executed." };
   }
   const priorNote = `Earlier choice “${entry.chosenLabel}” ${entry.prior}.`;
+  // Model-derived alternatives (Issue #15) keep their origin: a choice from
+  // them enters review, and a single alternative becomes a NEW preview —
+  // never execution. Local alternatives keep the #13/#14 behavior.
+  const fromPlanner = entry.origin === "planner";
   if (usable.length > 1) {
     renderClarification({ kind: entry.action, target: `the other one (was “${entry.chosenLabel}”)`, value: entry.value },
-      usable, { tabId: tab.id, session: snapshot.documentSessionId, revision: snapshot.revision, gen, seq });
+      usable, {
+        tabId: tab.id, session: snapshot.documentSessionId, revision: snapshot.revision, gen, seq,
+        ...(fromPlanner ? { origin: "planner", requestText: entry.requestText, source: entry.source } : {}),
+      });
     return {
       ok: true, clarify: true,
       message: `${priorNote} ${usable.length} alternatives remain — choose one. Nothing was executed.`,
       spoken: `${usable.length} alternatives. Choose one.`,
       contextSummary: `correction choice (${usable.length} alternatives)`,
       contextOutcome: "correction offered choices",
+    };
+  }
+  if (fromPlanner) {
+    const plannerApi = globalThis.SeeyablePlanner;
+    const planApi = globalThis.SeeyablePlan;
+    const step = { action: entry.action, elementId: usable[0].elementId };
+    if (entry.action === "fill" || entry.action === "select") step.value = entry.value;
+    const plan = { version: "seeyable-plan-1", outcome: "steps", steps: [step] };
+    const validation = planApi && plannerApi ? planApi.validatePlan(plan, snapshot.elements) : { ok: false, errors: [{ code: "UNAVAILABLE" }] };
+    if (!validation.ok) {
+      return { ok: false, message: `${priorNote} The alternative cannot become a safe plan (${validation.errors[0].code}). Nothing was executed.`, contextSummary: "correction request", contextOutcome: "correction rejected" };
+    }
+    presentPlanPreview(plan, {
+      tabId: tab.id, session: snapshot.documentSessionId, revision: snapshot.revision,
+      semanticHash: snapshot.semanticHash || null, gen, seq,
+      pruned: plannerApi.pruneSnapshot(snapshot), source: entry.source, requestText: entry.requestText,
+    });
+    return {
+      ok: true, preview: true,
+      message: `${priorNote} Alternative “${usable[0].label}”: plan ready for review: 1 step. Nothing has changed on the page yet — approve, edit, or cancel it.`,
+      spoken: "Plan ready for review.",
+      contextSummary: `correction to ${usable[0].label}`,
+      contextOutcome: "correction previewed; awaiting review",
     };
   }
   const target = snapshot.elements.find((e) => e.id === usable[0].elementId);
@@ -1312,15 +1379,20 @@ function selectStopReason(step, i, total, was, target) {
   return null;
 }
 
-async function runPlanSteps(plan, { tabId, source, gen, seq, pruned }) {
-  const total = plan.steps.length;
+// Value-free plan summary for retained context: validated actions with
+// target NAMES from the pruned snapshot. Step values are never included.
+function planSummaryOf(plan, pruned) {
   const prunedById = new Map(pruned.elements.map((e) => [e.id, e]));
-  // Value-free plan summary for retained context: validated actions with
-  // target NAMES from the pruned snapshot. Step values are never included.
-  const planSummary = plan.steps.map((s) => {
+  return plan.steps.map((s) => {
     const was = prunedById.get(s.elementId);
     return `${s.action} ${was ? commandTargetName(was) : s.elementId}`;
   }).join("; ");
+}
+
+async function runPlanSteps(plan, { tabId, source, gen, seq, pruned }) {
+  const total = plan.steps.length;
+  const prunedById = new Map(pruned.elements.map((e) => [e.id, e]));
+  const planSummary = planSummaryOf(plan, pruned);
   const done = [];
   for (let i = 0; i < total; i++) {
     const step = plan.steps[i];
@@ -1427,7 +1499,7 @@ async function runPlanSteps(plan, { tabId, source, gen, seq, pruned }) {
   };
 }
 
-async function runPlannerCommand(rawText, source, gen, seq, localReason) {
+async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = {}) {
   const plannerApi = globalThis.SeeyablePlanner;
   const planApi = globalThis.SeeyablePlan;
   if (!plannerApi || !planApi) {
@@ -1443,7 +1515,10 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason) {
   if (!creds.token) return plannerFailureMessage({ code: "NO_TOKEN" }, localReason);
   voiceTabId = tab.id;
   setStatus("Planning…");
-  const ensured = await ensureCommandSnapshot(tab.id, gen, seq);
+  // Plans are made — and reviewed — against the LIVE page, never a cached
+  // copy: a person may have typed since the last snapshot, and a preview
+  // bound to a stale revision could only ever be refused at approval.
+  const ensured = await ensureCommandSnapshot(tab.id, gen, seq, { fresh: true });
   if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) {
     return { ok: false, discarded: true, message: "" };
   }
@@ -1514,7 +1589,7 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason) {
     }
     renderClarification({ kind: plan.action, target: plan.question, value: plan.value },
       plan.choices.map((c) => ({ elementId: c.elementId, label: c.label })),
-      { tabId: tab.id, session: live.documentSessionId, revision: live.revision, gen, seq });
+      { tabId: tab.id, session: live.documentSessionId, revision: live.revision, gen, seq, origin: "planner", requestText: rawText, source });
     return {
       ok: true, clarify: true,
       message: `“${plan.question}” — choose one of ${plan.choices.length}. Nothing was executed.`,
@@ -1523,90 +1598,447 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason) {
       contextOutcome: "clarification requested",
     };
   }
-  return runPlanSteps(plan, { tabId: tab.id, source, gen, seq, pruned });
+  // Issue #15: a validated step plan never runs directly. It becomes the
+  // one pending preview, bound to this request, tab, document, revision,
+  // and interaction; only an explicit approval runs it.
+  presentPlanPreview(plan, {
+    tabId: tab.id, session: live.documentSessionId, revision: live.revision,
+    semanticHash: live.semanticHash || null, gen, seq, pruned, source, requestText: rawText,
+  });
+  const n = plan.steps.length;
+  return {
+    ok: true, preview: true,
+    message: `${opts.edited ? "Replacement plan" : "Plan"} ready for review: ${n} step${n === 1 ? "" : "s"}. Nothing has changed on the page yet — approve, edit, or cancel it.${opts.edited ? " The earlier plan was discarded and can no longer run." : ""}`,
+    spoken: "Plan ready for review.",
+    contextSummary: planSummaryOf(plan, pruned),
+    contextOutcome: "previewed; awaiting review",
+  };
 }
 
-async function dispatchCommand(rawText, source) {
-  if (!voiceApi) return;
-  if (commandPending) {
-    setVoiceState("Voice: error — a command is already running; nothing was queued.", true);
-    return;
-  }
-  if (state.pending || state.acquiring) {
-    setVoiceState("Voice: error — another panel operation is in progress. Wait for it to finish, then send the command again.", true);
-    return;
-  }
-  const plannerApi = globalThis.SeeyablePlanner || null;
-  // Cached corrections resolve against the CURRENT sequence, so the cache
-  // is taken (consumed) before this command bumps it.
-  const correction = plannerApi ? takeCorrectionRequest(rawText) : null;
-  // A new command invalidates any pending clarification choices.
-  interactionSeq += 1;
-  clearClarification();
-  // Typed submission safely resolves any live recognition first:
-  // the speech session is cancelled and its utterance discarded.
-  if (source === "typed" && recognizer && recognizer.isActive()) recognizer.cancel();
+/* --- Plan review, voice review authority, undo (Issue #15) ------------------
+ * Every validated AI-generated step plan — including one resolved from a
+ * model clarification — waits here as ONE frozen preview before anything
+ * touches the page. The preview is rendered deterministically from the
+ * validated plan (never from model prose) and is bound to its request,
+ * tab, document session, revision, generation, and interaction. Approve,
+ * Edit, and Cancel close over that exact object: once it is replaced,
+ * edited, cancelled, superseded, or invalidated, its callbacks do nothing.
+ *
+ * Waiting for review is its own state (pendingPlan): the network lock
+ * (commandPending) is released so the review controls work, while manual
+ * execution stays blocked. Approval re-reads the live page and requires
+ * the reviewed session and revision; a changed page needs a fresh review
+ * — never a silent replan or substituted target. Approving a plan never
+ * approves a consequential step: the executor still holds it for its own
+ * single-action confirmation, and the sequence ends there.
+ *
+ * Voice review phrases resolve locally with zero model calls. Approval by
+ * voice is accepted only from the final result of the active recognition
+ * session that the user started (Start listening) while that exact plan
+ * or challenge was displayed, once, and never while synthesized speech
+ * is playing. Page content, model output, and speech feedback have no
+ * route into this decision. */
+let planSeq = 0;
+let planFocusReturn = null;
 
-  const resolved = voiceApi.resolveCommand(rawText);
-  if (resolved.kind === "empty") {
-    presentCommandHelp(source === "voice" ? "No command was heard. " : "No command was entered. ");
-    return;
-  }
-  // Local fast path (Issue #13): anchored click/fill resolved on-device
-  // against the current snapshot. No planner, no network, no guessing.
-  const commandsApi = globalThis.SeeyableCommands || null;
-  const local = resolved.kind === "unknown" && commandsApi ? commandsApi.parseLocalCommand(rawText) : null;
-  const isPageAction = Boolean(local && (local.kind === "click" || local.kind === "fill"));
-  const isCorrection = Boolean(correction && correction.valid);
-  // Issue #14: anything the fast path cannot shape goes to the planner
-  // instead of the old unsupported branch — compounds included. Cached
-  // corrections stay fully local (zero model calls).
-  const isPlanner = Boolean(plannerApi) && !isCorrection && resolved.kind === "unknown" && !isPageAction;
-  if (resolved.kind === "unknown" && !isPageAction && !isCorrection && !isPlanner) {
-    presentCommandHelp(local && local.reason ? `Unsupported command — ${local.reason}. ` : "Unsupported command. ");
-    return;
-  }
+function frozenCopy(value) {
+  const copy = JSON.parse(JSON.stringify(value));
+  const freeze = (v) => {
+    if (v && typeof v === "object") {
+      Object.freeze(v);
+      for (const key of Object.keys(v)) freeze(v[key]);
+    }
+    return v;
+  };
+  return freeze(copy);
+}
 
+const CONSEQUENTIAL_HINT = /\b(submit|pay|buy|purchase|checkout|delete|remove|send|publish|place order|confirm order)\b/i;
+function quotedValue(value) {
+  const text = String(value);
+  return text.length > 160 ? `“${text.slice(0, 160)}…” (${text.length} characters in total)` : `“${text}”`;
+}
+// Plain-English, deterministic step text from the validated plan and the
+// reviewed snapshot. Page labels are untrusted data and are only ever
+// set through textContent.
+function describePlanStep(step, element, elements) {
+  const name = element ? fullLabel(element, elements) : step.elementId;
+  const isProtected = Boolean(element && element.state && element.state.redacted);
+  if (step.action === "fill") {
+    if (isProtected) return { text: `Fill “${name}” with a protected value (hidden)` };
+    return { text: step.value === "" ? `Clear “${name}”` : `Fill “${name}” with ${quotedValue(step.value)}` };
+  }
+  if (step.action === "select") {
+    const options = element && element.state && Array.isArray(element.state.options) ? element.state.options : [];
+    const option = options.find((o) => o && o.value === step.value);
+    return { text: `Choose ${quotedValue(option ? option.label : step.value)} in “${name}”` };
+  }
+  if (step.action === "check") {
+    return { text: element && element.role === "radio" ? `Select “${name}”` : `Turn on “${name}”` };
+  }
+  if (step.action === "uncheck") return { text: `Turn off “${name}”` };
+  return {
+    text: `Click “${name}”`,
+    note: CONSEQUENTIAL_HINT.test(name) ? "This will stop and ask for its own approval in Safety." : null,
+  };
+}
+
+function clearPlanPreview() {
+  const had = pendingPlan !== null;
+  pendingPlan = null;
+  const box = $("planBox");
+  if (!box) return had;
+  const focusWasInside = box.contains(document.activeElement);
+  box.hidden = true;
+  $("planSteps").replaceChildren();
+  for (const id of ["btnApprovePlan", "btnEditPlan", "btnCancelPlan"]) $(id).onclick = null;
+  if (focusWasInside && planFocusReturn && document.contains(planFocusReturn) && typeof planFocusReturn.focus === "function") {
+    planFocusReturn.focus();
+  }
+  planFocusReturn = null;
+  if (typeof updateExecuteEnabled === "function") updateExecuteEnabled();
+  return had;
+}
+function closePlanEdit() {
+  const box = $("planEditBox");
+  if (!box || box.hidden) return false;
+  box.hidden = true;
+  $("planEditInput").value = "";
+  return true;
+}
+// Invalidates the preview AND any open edit. Returns whether anything
+// was discarded; callers decide what the status surface says.
+function discardPlanReview() {
+  const hadPlan = clearPlanPreview();
+  const hadEdit = closePlanEdit();
+  return hadPlan || hadEdit;
+}
+
+function presentPlanPreview(plan, binding) {
+  discardPlanReview();
+  const preview = frozenCopy({
+    id: ++planSeq,
+    plan,
+    pruned: binding.pruned,
+    tabId: binding.tabId,
+    session: binding.session,
+    revision: binding.revision,
+    semanticHash: binding.semanticHash || null,
+    gen: binding.gen,
+    seq: binding.seq,
+    source: binding.source,
+    requestText: binding.requestText || "",
+    // Validated alternatives of the clarification round this one-step
+    // plan came from (model-derived only), so "the other one" keeps
+    // working after approval. Null for ordinary and correction plans.
+    correction: binding.correction || null,
+  });
+  pendingPlan = preview;
+  const elements = state.snapshot && Array.isArray(state.snapshot.elements) ? state.snapshot.elements : preview.pruned.elements;
+  const list = $("planSteps");
+  list.replaceChildren();
+  for (const step of preview.plan.steps) {
+    const element = elements.find((e) => e && e.id === step.elementId)
+      || preview.pruned.elements.find((e) => e.id === step.elementId);
+    const described = describePlanStep(step, element, elements);
+    const item = document.createElement("li");
+    item.textContent = described.text;
+    if (described.note) {
+      const note = document.createElement("span");
+      note.className = "step-note";
+      note.textContent = ` ${described.note}`;
+      item.append(note);
+    }
+    list.append(item);
+  }
+  const n = preview.plan.steps.length;
+  $("planIntro").textContent = `${n} step${n === 1 ? "" : "s"}, in order. Nothing has changed on the page yet.`;
+  // Each control acts on THIS preview only; a later preview reassigns them.
+  $("btnApprovePlan").onclick = () => { void approvePendingPlan(preview, "manual"); };
+  $("btnEditPlan").onclick = () => openPlanEdit(preview);
+  $("btnCancelPlan").onclick = () => cancelPendingPlan(preview, "manual");
+  planFocusReturn = document.activeElement && document.contains(document.activeElement) ? document.activeElement : null;
+  $("planBox").hidden = false;
+  const title = $("planTitle");
+  if (title && typeof title.focus === "function") title.focus();
+  updateExecuteEnabled();
+  return preview;
+}
+
+function presentClarifiedPlan(choice, elementId, snapshot) {
+  const plannerApi = globalThis.SeeyablePlanner;
+  const planApi = globalThis.SeeyablePlan;
+  const step = { action: choice.action, elementId };
+  if (choice.action === "fill" || choice.action === "select") step.value = choice.value;
+  const plan = { version: "seeyable-plan-1", outcome: "steps", steps: [step] };
+  const validation = planApi ? planApi.validatePlan(plan, snapshot.elements) : { ok: false, errors: [{ code: "UNAVAILABLE" }] };
+  if (!plannerApi || !validation.ok) {
+    setStatus(`That choice cannot become a safe plan (${validation.errors[0].code}). Nothing was executed.`, true);
+    return;
+  }
+  presentPlanPreview(plan, {
+    tabId: choice.tabId, session: choice.session, revision: choice.revision,
+    semanticHash: snapshot.semanticHash || null, gen: choice.gen, seq: choice.seq,
+    pruned: plannerApi.pruneSnapshot(snapshot), source: choice.source, requestText: choice.requestText,
+    correction: {
+      candidateIds: choice.candidateIds,
+      candidateLabels: choice.candidateLabels,
+      action: choice.action,
+      value: choice.value,
+      chosenId: elementId,
+    },
+  });
+  setStatus("Plan ready for review: 1 step. Nothing has changed on the page yet — approve, edit, or cancel it.");
+}
+
+function previewStillBound(preview) {
+  return preview.gen === state.generation
+    && preview.seq === interactionSeq
+    && state.boundTabId === preview.tabId
+    && Boolean(state.snapshot)
+    && state.snapshot.documentSessionId === preview.session;
+}
+
+async function approvePendingPlan(preview, source) {
+  if (!preview || preview !== pendingPlan) {
+    // Obsolete callback: run nothing and leave any newer preview intact.
+    if (!pendingPlan) setStatus("That plan is no longer available — it was edited, cancelled, replaced, or the page changed. Nothing was executed.", true);
+    return;
+  }
+  if (commandPending || state.pending || state.acquiring) {
+    setStatus("Another operation is in progress. The plan is still waiting for review.", true);
+    return;
+  }
+  const valid = previewStillBound(preview);
+  clearPlanPreview(); // single use: consumed whatever happens next
+  if (!valid) {
+    setStatus("That plan expired — the tab, document, or request changed. Nothing was executed; send the request again.", true);
+    return;
+  }
+  interactionSeq += 1; // approval starts a new interaction; the preview's is over
   const gen = state.generation;
   const seq = interactionSeq;
   commandPending = true;
-  updateExecuteEnabled(); // command dispatch holds the shared panel lock
+  updateExecuteEnabled();
   updateVoiceControls();
-  setVoiceState(!isPageAction && !isPlanner && !isCorrection
-    ? (resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…")
-    : isPlanner ? "Voice: acting — planning…"
-    : isCorrection ? "Voice: acting — trying the other one…"
-    : `Voice: acting — ${local.kind === "click" ? "clicking" : "filling"} “${local.target}”…`);
+  setStatus("Approved — checking the page still matches what you reviewed…");
   let outcome = null;
   try {
-    if (resolved.kind === "show-tags") {
-      outcome = await runShowTags({ viaCommand: true });
-    } else if (!isPageAction && !isPlanner && !isCorrection) {
-      // Capture and retain the target tab now — even with no bound
-      // snapshot — so a mid-dispatch switch cannot retarget the
-      // command, and navigation/reload of that tab invalidates it.
-      const tab = state.boundTabId !== null ? { id: state.boundTabId } : await activeTab();
-      if (gen !== state.generation || seq !== interactionSeq) outcome = { ok: false, discarded: true, message: "" };
-      else if (!tab || tab.id === undefined) outcome = { ok: false, message: "No active tab." };
-      else {
-        voiceTabId = tab.id;
-        outcome = await runHideTags(tab.id, { viaCommand: true });
-      }
-    } else if (isCorrection) {
-      outcome = await runCorrectionCommand(correction, source, gen, seq);
-    } else if (isPlanner) {
-      outcome = await runPlannerCommand(rawText, source, gen, seq, local && local.reason);
-    } else {
-      outcome = await runPageActionCommand(local, source, gen, seq);
-    }
+    outcome = await runApprovedPlan(preview, source, gen, seq);
   } catch (err) {
-    outcome = { ok: false, message: `Command failed: ${err.message || err}` };
+    outcome = { ok: false, message: `Plan failed: ${err.message || err}` };
   } finally {
     commandPending = false;
     if (!(recognizer && recognizer.isActive())) voiceTabId = null;
     updateExecuteEnabled();
   }
+  finishCommandOutcome(outcome, { gen, seq, acting: true, fallbackSummary: "approved plan" });
+  cachePlannerCorrection(preview, outcome, gen, seq);
+}
 
+async function runApprovedPlan(preview, source, gen, seq) {
+  const planApi = globalThis.SeeyablePlan;
+  voiceTabId = preview.tabId;
+  const summary = planSummaryOf(preview.plan, preview.pruned);
+  const ensured = await ensureCommandSnapshot(preview.tabId, gen, seq, { fresh: true });
+  if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  if (ensured.error) return { ok: false, refused: true, message: `${ensured.error} Nothing was executed.`, contextSummary: summary, contextOutcome: "approval refused: page unreadable" };
+  const live = ensured.snapshot;
+  if (live.documentSessionId !== preview.session || live.revision !== preview.revision
+    || (preview.semanticHash && live.semanticHash !== preview.semanticHash)) {
+    return {
+      ok: false, refused: true,
+      message: "The page changed after you reviewed this plan. Nothing was executed — send the request again for a fresh review.",
+      contextSummary: summary,
+      contextOutcome: "approval refused: page changed since review",
+    };
+  }
+  const validation = planApi.validatePlan(preview.plan, live.elements);
+  if (!validation.ok) {
+    return {
+      ok: false, refused: true,
+      message: `The reviewed plan no longer fits the page (${validation.errors[0].code}). Nothing was executed — send the request again.`,
+      contextSummary: summary,
+      contextOutcome: "approval refused: plan no longer valid",
+    };
+  }
+  return runPlanSteps(preview.plan, { tabId: preview.tabId, source, gen, seq, pruned: preview.pruned });
+}
+
+/* A model-derived choice keeps its round's validated alternatives across
+ * review: once its preview is approved and actually attempted, the
+ * remaining alternatives are cached exactly like a local choice — bound
+ * to this tab, document, and the approval's interaction, single use.
+ * Resolving them later produces a NEW preview, never execution. */
+function cachePlannerCorrection(preview, outcome, gen, seq) {
+  const c = preview.correction;
+  if (!c || !outcome || outcome.discarded || outcome.refused) return;
+  if (gen !== state.generation || seq !== interactionSeq) return;
+  if (!Array.isArray(c.candidateIds) || c.candidateIds.length < 2) return;
+  const labels = new Map((c.candidateLabels || []).map((x) => [x.elementId, x.label]));
+  const alternatives = c.candidateIds.filter((id) => id !== c.chosenId)
+    .map((id) => ({ elementId: id, label: labels.get(id) || id }));
+  if (alternatives.length === 0) return;
+  pendingCorrection = {
+    origin: "planner",
+    candidates: alternatives,
+    action: c.action,
+    value: c.value,
+    tabId: preview.tabId,
+    session: preview.session,
+    seq,
+    chosenLabel: labels.get(c.chosenId) || c.chosenId,
+    prior: outcome.held ? "is waiting for approval" : outcome.ok ? "completed and verified" : "did not complete",
+    requestText: preview.requestText,
+    source: preview.source,
+  };
+}
+
+function cancelPendingPlan(preview, source) {
+  if (!preview || preview !== pendingPlan) {
+    if (!pendingPlan) setStatus("No plan is waiting for review. Nothing was cancelled.", true);
+    return;
+  }
+  const summary = planSummaryOf(preview.plan, preview.pruned);
+  const tabId = preview.tabId;
+  const session = preview.session;
+  clearPlanPreview();
+  recordPlannerContext(tabId, session, summary, "cancelled at review");
+  setStatus("Plan cancelled. Nothing was executed.");
+  settleVoiceAfterCommand();
+  if (source === "voice") speakFeedback("Plan cancelled.");
+}
+
+function openPlanEdit(preview) {
+  if (!preview || preview !== pendingPlan) {
+    if (!pendingPlan) setStatus("That plan is no longer available to edit. Send a new request.", true);
+    return;
+  }
+  if (commandPending || state.pending || state.acquiring) return;
+  const text = preview.requestText;
+  clearPlanPreview(); // the original is unusable from this moment
+  $("planEditInput").value = text;
+  $("planEditBox").hidden = false;
+  $("planEditInput").focus();
+  setStatus("Editing the plan. The earlier plan was discarded; nothing was executed.");
+  updateExecuteEnabled();
+}
+
+async function submitPlanEdit() {
+  const text = $("planEditInput").value;
+  if (!text.trim()) {
+    setStatus("Write the complete replacement request first. Nothing was executed.", true);
+    return;
+  }
+  closePlanEdit();
+  await dispatchCommand(text, "typed", { forcePlanner: true, edited: true });
+}
+$("btnSubmitEdit").addEventListener("click", () => { void submitPlanEdit(); });
+$("planEditInput").addEventListener("keydown", (event) => {
+  // IME-safe: Enter that confirms a composition must not submit.
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  void submitPlanEdit();
+});
+$("btnDiscardEdit").addEventListener("click", () => {
+  if (closePlanEdit()) setStatus("Edit discarded. Nothing was executed.");
+  updateExecuteEnabled();
+});
+
+// True only for the final result of the active session that the user
+// started while the given plan/challenge was displayed — once.
+function voiceReviewAuthorized(meta, kind, id) {
+  const ctx = listenContext;
+  if (!recognizer || !meta || meta.sessionId === undefined || meta.sessionId === null) return false;
+  if (!ctx || ctx.used || ctx.sessionId !== meta.sessionId || recognizer.sessionId !== meta.sessionId) return false;
+  if (speechOutput && speechOutput.isSpeaking()) return false;
+  const shown = kind === "plan" ? ctx.planId : ctx.challengeId;
+  if (shown === null || shown !== id) return false;
+  ctx.used = true;
+  return true;
+}
+
+function handleReviewCommand(review, source, meta) {
+  const done = (text, isError) => { setStatus(text, isError); settleVoiceAfterCommand(); updateVoiceControls(); };
+  if (review.kind === "approve-plan") {
+    if (!pendingPlan) return done("No plan is waiting for review. Nothing was approved.", true);
+    if (source === "voice" && !voiceReviewAuthorized(meta, "plan", pendingPlan.id)) {
+      return done("That approval was not accepted: start listening while this plan is shown, then say “Approve plan”. Nothing was executed; the plan is still waiting.", true);
+    }
+    settleVoiceAfterCommand();
+    void approvePendingPlan(pendingPlan, source === "voice" ? "voice" : "manual");
+    return;
+  }
+  if (review.kind === "cancel-plan") {
+    if (!pendingPlan) return done("No plan is waiting for review. Nothing was cancelled.", true);
+    cancelPendingPlan(pendingPlan, source);
+    return;
+  }
+  if (review.kind === "approve-action") {
+    // Consequential approval stays on its own authority: the Approve once
+    // button, or this phrase spoken in a user-started session bound to
+    // the exact challenge on screen. Typed text never approves it.
+    if (source !== "voice") return done("Use the Approve once button in Safety, or say “Approve this action” while listening. Nothing was approved.", true);
+    if (!state.confirmation) return done("No action is waiting for approval. Nothing was approved.", true);
+    if (!voiceReviewAuthorized(meta, "challenge", state.confirmation.challengeId)) {
+      return done("That approval was not accepted: start listening while this action is shown in Safety, then say “Approve this action”. Nothing was approved.", true);
+    }
+    settleVoiceAfterCommand();
+    void approveHeldChallenge(state.confirmation.challengeId);
+  }
+}
+
+/* Undo (Issue #15): asks the executor, over the trusted panel route, to
+ * restore the single last reversible change. The panel holds no undo
+ * data; the executor verifies the live page and reports names only. */
+async function runUndoCommand(source, gen, seq) {
+  const tab = state.boundTabId !== null ? { id: state.boundTabId } : await activeTab();
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  if (!tab || tab.id === undefined) return { ok: false, message: "No active tab." };
+  voiceTabId = tab.id;
+  const ensured = await ensureCommandSnapshot(tab.id, gen, seq);
+  if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  if (ensured.error) return { ok: false, message: ensured.error };
+  const session = ensured.snapshot.documentSessionId;
+  let response = null;
+  let transportError = null;
+  try {
+    response = await chrome.tabs.sendMessage(tab.id, { type: "SEEYABLE_UNDO_LAST", documentSessionId: session, source: source === "voice" ? "voice" : "manual" });
+  } catch (err) { transportError = err; }
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "", reached: true };
+  const base = { contextSummary: "undo last change" };
+  if (transportError) {
+    state.executorReady = false;
+    return { ...base, ok: false, message: "Undo transport failure — outcome unknown. Check the page before continuing.", contextOutcome: "transport failure" };
+  }
+  if (!response || typeof response.ok !== "boolean") {
+    state.executorReady = false;
+    return { ...base, ok: false, message: "The executor gave no usable answer to undo. Nothing was confirmed.", contextOutcome: "malformed response" };
+  }
+  const code = response.error && response.error.code;
+  if (response.ok || code === "UNDO_NOT_VERIFIED" || code === "ACTION_FAILED") {
+    await refreshAfterExecution(tab.id, gen, session); // the page may have changed
+  }
+  void fetchActionLog(tab.id);
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "", reached: true };
+  if (!response.ok) return { ...base, ok: false, message: response.error.message, contextOutcome: `undo refused: ${code}` };
+  const r = response.result || {};
+  const name = r.targetName || "the control";
+  const what = r.restoredTargetName
+    ? `“${r.restoredTargetName}” is selected again instead of “${name}”`
+    : `“${name}” is back to its previous ${r.undoneAction === "fill" ? "value" : r.undoneAction === "select" ? "choice" : "state"}`;
+  return {
+    ...base,
+    ok: true,
+    message: `Undid the last change: ${what} (verified). Only that change was reversed — earlier changes, and anything the page did in response, stay as they are.`,
+    spoken: `Undone: ${name}.`,
+    contextOutcome: "undone and verified",
+  };
+}
+
+/* One presentation for command outcomes, shared by dispatched commands
+ * and plan approval. */
+function finishCommandOutcome(outcome, { gen, seq, acting, fallbackSummary, fallbackSpoken, notePrefix }) {
   if (!outcome || outcome.discarded || gen !== state.generation || seq !== interactionSeq) {
     // The interaction moved on (tab/document change, cancellation):
     // never present or speak the late result as acting on this page.
@@ -1636,27 +2068,161 @@ async function dispatchCommand(rawText, source) {
     return;
   }
   discardMessage = null;
-  // Acting commands (fast path, planner, correction) append one bounded,
-  // value-free { summary, outcome } entry to the document-scoped planner
-  // context. Summaries come from separated structure (parsed action +
-  // target label, planned step names) — never the raw transcript.
-  // Discarded commands record nothing: their outcome is unknown.
-  if ((isPageAction || isPlanner || isCorrection) && state.snapshot && state.boundTabId !== null) {
+  // Acting commands (fast path, planner, correction, undo) append one
+  // bounded, value-free { summary, outcome } entry to the document-scoped
+  // planner context. Summaries come from separated structure (parsed
+  // action + target label, planned step names) — never the raw
+  // transcript. Discarded commands record nothing: their outcome is unknown.
+  if (acting && state.snapshot && state.boundTabId !== null) {
     recordPlannerContext(state.boundTabId, state.snapshot.documentSessionId,
-      outcome.contextSummary || (isPlanner ? "plan request" : isCorrection ? "correction request" : `${local.kind} ${local.target}`),
+      outcome.contextSummary || fallbackSummary,
       outcome.contextOutcome || (outcome.clarify ? "clarification requested" : outcome.ok ? "completed" : "failed"));
   }
-  setStatus(outcome.message, !outcome.ok);
+  setStatus(`${notePrefix || ""}${outcome.message}`, !outcome.ok);
   if (outcome.ok) {
     // A completed command is recovery from any prior recognition error.
     voiceErrorUnresolved = false;
     // Spoken success only after the page acknowledged the command,
     // and only once any active microphone has terminated.
-    const spoken = outcome.spoken || resolved.spoken;
+    const spoken = outcome.spoken || fallbackSpoken;
     if (spoken) speakFeedback(spoken);
   }
   settleVoiceAfterCommand();
   updateVoiceControls();
+}
+
+async function dispatchCommand(rawText, source, meta = {}) {
+  if (!voiceApi) return;
+  if (commandPending) {
+    setVoiceState("Voice: error — a command is already running; nothing was queued.", true);
+    return;
+  }
+  if (state.pending || state.acquiring) {
+    setVoiceState("Voice: error — another panel operation is in progress. Wait for it to finish, then send the command again.", true);
+    return;
+  }
+  // Review and undo phrases resolve locally before anything else, against
+  // what is on screen now; approval and cancellation run no model call.
+  const review = !meta.forcePlanner && voiceApi.resolveReviewCommand ? voiceApi.resolveReviewCommand(rawText) : null;
+  if (review && (review.kind === "approve-plan" || review.kind === "cancel-plan" || review.kind === "approve-action")) {
+    if (source === "typed" && recognizer && recognizer.isActive()) recognizer.cancel();
+    handleReviewCommand(review, source, meta);
+    return;
+  }
+  // Approval-like speech that is not an exact approval phrase never
+  // supersedes a plan under review: the plan stays, nothing runs, no
+  // planner call. This is retention only — it authorizes nothing.
+  if (!review && !meta.forcePlanner && pendingPlan && voiceApi.isApprovalLike && voiceApi.isApprovalLike(rawText)) {
+    if (source === "typed" && recognizer && recognizer.isActive()) recognizer.cancel();
+    setStatus("Not approved — that wording is not a supported approval, so nothing ran and the plan is still waiting. Say “Approve plan” (or “Approve”, “Go ahead”), “Cancel plan”, or “Edit plan: …”.", true);
+    settleVoiceAfterCommand();
+    updateVoiceControls();
+    return;
+  }
+  let text = rawText;
+  let forcePlanner = Boolean(meta.forcePlanner);
+  let edited = Boolean(meta.edited);
+  if (review && review.kind === "edit-plan") {
+    // "Edit plan: <request>" replaces the displayed plan's request. It is
+    // always planned and previewed again — never fast-pathed, never run.
+    if (!pendingPlan) {
+      setStatus("No plan is waiting to edit. Say or type the request on its own. Nothing was executed.", true);
+      settleVoiceAfterCommand();
+      return;
+    }
+    if (!review.replacement) {
+      setStatus("Say the complete replacement request after “Edit plan”. The current plan is still waiting for review.", true);
+      settleVoiceAfterCommand();
+      return;
+    }
+    text = review.replacement;
+    forcePlanner = true;
+    edited = true;
+  }
+  const isUndo = Boolean(review && review.kind === "undo");
+  const plannerApi = globalThis.SeeyablePlanner || null;
+  // Cached corrections resolve against the CURRENT sequence, so the cache
+  // is taken (consumed) before this command bumps it.
+  const correction = plannerApi && !forcePlanner && !isUndo ? takeCorrectionRequest(text) : null;
+  // A new command invalidates any pending clarification choices and any
+  // plan waiting for review (Issue #15: a superseding request).
+  interactionSeq += 1;
+  clearClarification();
+  const supersededPlan = discardPlanReview() && !edited;
+  // Typed submission safely resolves any live recognition first:
+  // the speech session is cancelled and its utterance discarded.
+  if (source === "typed" && recognizer && recognizer.isActive()) recognizer.cancel();
+
+  const resolved = forcePlanner || isUndo ? { kind: "unknown", normalized: voiceApi.normalizeCommandText(text) } : voiceApi.resolveCommand(text);
+  if (resolved.kind === "empty") {
+    presentCommandHelp(source === "voice" ? "No command was heard. " : "No command was entered. ");
+    return;
+  }
+  // Local fast path (Issue #13): anchored click/fill resolved on-device
+  // against the current snapshot. No planner, no network, no guessing.
+  const commandsApi = globalThis.SeeyableCommands || null;
+  const local = resolved.kind === "unknown" && commandsApi && !forcePlanner && !isUndo ? commandsApi.parseLocalCommand(text) : null;
+  const isPageAction = Boolean(local && (local.kind === "click" || local.kind === "fill"));
+  const isCorrection = Boolean(correction && correction.valid);
+  // Issue #14: anything the fast path cannot shape goes to the planner
+  // instead of the old unsupported branch — compounds included. Cached
+  // corrections stay fully local (zero model calls).
+  const isPlanner = Boolean(plannerApi) && !isUndo && !isCorrection && resolved.kind === "unknown" && !isPageAction;
+  if (resolved.kind === "unknown" && !isPageAction && !isCorrection && !isPlanner && !isUndo) {
+    presentCommandHelp(local && local.reason ? `Unsupported command — ${local.reason}. ` : "Unsupported command. ");
+    return;
+  }
+
+  const gen = state.generation;
+  const seq = interactionSeq;
+  commandPending = true;
+  updateExecuteEnabled(); // command dispatch holds the shared panel lock
+  updateVoiceControls();
+  setVoiceState(isUndo ? "Voice: acting — undoing the last change…"
+    : !isPageAction && !isPlanner && !isCorrection
+      ? (resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…")
+      : isPlanner ? (edited ? "Voice: acting — planning your edit…" : "Voice: acting — planning…")
+      : isCorrection ? "Voice: acting — trying the other one…"
+      : `Voice: acting — ${local.kind === "click" ? "clicking" : "filling"} “${local.target}”…`);
+  let outcome = null;
+  try {
+    if (resolved.kind === "show-tags") {
+      outcome = await runShowTags({ viaCommand: true });
+    } else if (isUndo) {
+      outcome = await runUndoCommand(source, gen, seq);
+    } else if (!isPageAction && !isPlanner && !isCorrection) {
+      // Capture and retain the target tab now — even with no bound
+      // snapshot — so a mid-dispatch switch cannot retarget the
+      // command, and navigation/reload of that tab invalidates it.
+      const tab = state.boundTabId !== null ? { id: state.boundTabId } : await activeTab();
+      if (gen !== state.generation || seq !== interactionSeq) outcome = { ok: false, discarded: true, message: "" };
+      else if (!tab || tab.id === undefined) outcome = { ok: false, message: "No active tab." };
+      else {
+        voiceTabId = tab.id;
+        outcome = await runHideTags(tab.id, { viaCommand: true });
+      }
+    } else if (isCorrection) {
+      outcome = await runCorrectionCommand(correction, source, gen, seq);
+    } else if (isPlanner) {
+      outcome = await runPlannerCommand(text, source, gen, seq, local && local.reason, { edited });
+    } else {
+      outcome = await runPageActionCommand(local, source, gen, seq);
+    }
+  } catch (err) {
+    outcome = { ok: false, message: `Command failed: ${err.message || err}` };
+  } finally {
+    commandPending = false;
+    if (!(recognizer && recognizer.isActive())) voiceTabId = null;
+    updateExecuteEnabled();
+  }
+
+  finishCommandOutcome(outcome, {
+    gen, seq,
+    acting: isPageAction || isPlanner || isCorrection || isUndo,
+    fallbackSummary: isPlanner ? "plan request" : isCorrection ? "correction request" : isUndo ? "undo last change" : local ? `${local.kind} ${local.target}` : "command",
+    fallbackSpoken: resolved.spoken,
+    notePrefix: supersededPlan ? "The earlier plan was discarded. " : "",
+  });
 }
 
 $("btnListen").addEventListener("click", async () => {
@@ -1680,7 +2246,15 @@ $("btnListen").addEventListener("click", async () => {
   voicePhase = "starting";
   voiceErrorUnresolved = false; // a new attempt supersedes the prior error presentation
   setVoiceState("Voice: starting the microphone…");
-  recognizer.start();
+  const started = recognizer.start();
+  // Voice review authority is bound to this user-started session and to
+  // what is on screen right now (Issue #15).
+  listenContext = started ? {
+    sessionId: recognizer.sessionId,
+    planId: pendingPlan ? pendingPlan.id : null,
+    challengeId: state.confirmation ? state.confirmation.challengeId : null,
+    used: false,
+  } : null;
   updateVoiceControls();
 });
 
@@ -2021,8 +2595,13 @@ const APPROVAL_STAGE_CODES = new Set([
   "UNTRUSTED_APPROVAL", "EXECUTION_PAUSED", "EXECUTION_STOPPED", "EXECUTION_BUSY",
 ]);
 
-$("btnApproveOnce").addEventListener("click", async () => {
-  if (!state.confirmation || state.pending) return;
+// The click and the bound voice phrase (Issue #15) share this one path:
+// it approves only the challenge it was given, and only while that exact
+// challenge is still the one displayed. Expiry, fingerprint binding,
+// consumption, and final-dispatch validation stay in the executor.
+async function approveHeldChallenge(expectedChallengeId) {
+  if (!state.confirmation || state.pending || commandPending) return;
+  if (!expectedChallengeId || state.confirmation.challengeId !== expectedChallengeId) return;
   const { challengeId, tabId } = state.confirmation;
   const gen = state.generation;
   const previousSession = state.snapshot ? state.snapshot.documentSessionId : null;
@@ -2083,6 +2662,9 @@ $("btnApproveOnce").addEventListener("click", async () => {
     updateExecuteEnabled();
   }
   void fetchActionLog(tabId);
+}
+$("btnApproveOnce").addEventListener("click", () => {
+  void approveHeldChallenge(state.confirmation && state.confirmation.challengeId);
 });
 
 $("btnCancelChallenge").addEventListener("click", async () => {
@@ -2156,7 +2738,11 @@ $("btnPauseExec").addEventListener("click", async () => {
     abortPlannerFetch();
     discardMessage = "execution was paused; pending page commands and choices were discarded.";
     pendingSpoken = null;
+    pendingCorrection = null;
     clearClarification();
+    if (discardPlanReview() && !commandPending) {
+      setStatus("Plan discarded — execution was paused. Nothing was executed, and Resume does not bring it back.", true);
+    }
   }
   await sendGateCommand(gateClosed ? "resume" : "pause");
 });

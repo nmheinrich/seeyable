@@ -68,6 +68,17 @@ function createExecutor(options) {
   let executionBusy = false;
   let logTargetName = null;
 
+  /* --- Undo record (Issue #15) ---
+   * At most ONE record: the last change this executor made in this
+   * document. It holds the live node reference and the complete live
+   * prior/post state captured immediately around the mutation — never
+   * snapshot or model data. It lives only in this closure: it is never
+   * logged, returned, persisted, or sent anywhere. A reversible record
+   * is replaced by the next executor change; a non-reversible or
+   * uncertain change replaces it with a barrier, so undo never skips
+   * backward past it. Sensitive targets are never captured. */
+  let lastChange = null;
+
   function sanitizeSource(source) {
     return ["manual", "voice", "mcp"].includes(source) ? source : "unknown";
   }
@@ -301,6 +312,119 @@ function createExecutor(options) {
   function ariaChecked(node) {
     const v = node.getAttribute && node.getAttribute("aria-checked");
     return v === "true" ? true : v === "mixed" ? "mixed" : v === "false" ? false : null;
+  }
+
+  /* --- Undo capture/restore helpers (Issue #15) --- */
+  function inputType(node) {
+    return ((node.getAttribute && node.getAttribute("type")) || "").toLowerCase();
+  }
+  // Native radio group: same name, same form owner, same tree. Members
+  // associated through the `form` attribute are included via form.elements.
+  function radioGroup(node) {
+    if (!node.name) return [node];
+    const pool = node.form
+      ? Array.from(node.form.elements || [])
+      : Array.from((node.getRootNode && node.getRootNode().querySelectorAll)
+        ? node.getRootNode().querySelectorAll("input") : []).filter((r) => !r.form);
+    return pool.filter((r) => r.tagName === "INPUT" && inputType(r) === "radio" && r.name === node.name);
+  }
+  function selectedOption(node) {
+    return node.selectedIndex >= 0 && node.options ? node.options[node.selectedIndex] || null : null;
+  }
+  // Dropdown state is recorded by MEANING, not just node identity: the
+  // option node, its index, and the value/label/text it had at capture
+  // time, plus the select's mode. Mutating an option node afterwards
+  // cannot rewrite this history. Values stay inside this closure.
+  function selectState(node) {
+    const option = selectedOption(node);
+    return {
+      option,
+      index: node.selectedIndex,
+      value: option ? option.value : null,
+      label: option ? option.label : null,
+      text: option ? option.text : null,
+      multiple: Boolean(node.multiple),
+    };
+  }
+  // The choice list's structure: every option's group, value, label, and
+  // text, in order. Availability is checked separately (and explicitly)
+  // for the restoration choice, exactly as forward select does.
+  function selectStructure(node) {
+    return JSON.stringify(Array.from(node.options || []).map((o) => {
+      const group = o.parentElement && o.parentElement.tagName === "OPTGROUP" ? o.parentElement.label : null;
+      return [group, o.value, o.label, o.text];
+    }));
+  }
+  function optionUnavailable(option) {
+    const group = option.parentElement && option.parentElement.tagName === "OPTGROUP" ? option.parentElement : null;
+    return Boolean(option.disabled || (group && group.disabled));
+  }
+  // Radio members by meaning: name, value, and accessible name at capture.
+  function radioMeaning(members) {
+    return JSON.stringify(members.map((m) => [m.name, m.value,
+      internals.computeAccessibleName ? internals.computeAccessibleName(m).name : ""]));
+  }
+  // Complete live state immediately before the mutation. Returns null
+  // when the action is not reversible here (protected field, multiselect).
+  function captureBefore(action, node, role) {
+    if (internals.sensitiveInfo(node).sensitive) return null;
+    if (action === "fill") return { kind: "value", prior: node.value };
+    if (action === "select") {
+      if (node.multiple) return null;
+      return { kind: "select", prior: selectState(node), structure: selectStructure(node) };
+    }
+    if (action === "check" || action === "uncheck") {
+      const type = node.tagName === "INPUT" ? inputType(node) : "";
+      if (type === "checkbox") return { kind: "checkbox", prior: Boolean(node.checked) };
+      if (type === "radio") {
+        const members = radioGroup(node);
+        return { kind: "radio", members, meaning: radioMeaning(members), prior: members.map((m) => Boolean(m.checked)) };
+      }
+      // An ARIA radio cannot be deselected by activating it again, and
+      // its group is page-defined: not representable, so not reversible.
+      if (role === "radio" || role === "menuitemradio") return null;
+      return { kind: "aria", prior: ariaChecked(node) };
+    }
+    return null;
+  }
+  function currentState(capture, node) {
+    if (capture.kind === "value") return node.value;
+    if (capture.kind === "select") return selectState(node);
+    if (capture.kind === "checkbox") return Boolean(node.checked);
+    if (capture.kind === "radio") return capture.members.map((m) => Boolean(m.checked));
+    return ariaChecked(node);
+  }
+  function sameState(capture, a, b) {
+    if (capture.kind === "radio") return a.length === b.length && a.every((v, i) => v === b[i]);
+    if (capture.kind === "select") {
+      return a.option === b.option && a.index === b.index && a.value === b.value
+        && a.label === b.label && a.text === b.text && a.multiple === b.multiple;
+    }
+    return a === b;
+  }
+  function priorState(capture) {
+    return capture.prior;
+  }
+  function setBarrier(action, targetName, reason) {
+    lastChange = { kind: "barrier", action, targetName: targetName || null, reason };
+  }
+  // After a verified mutation: record it only if the live state actually
+  // changed. A verified no-op leaves the earlier record in place — it
+  // changed nothing, so the last change is still the earlier one, and
+  // restoration re-verifies that record's post-state anyway.
+  function recordChange(action, elementId, descriptor, node, capture) {
+    const post = currentState(capture, node);
+    if (sameState(capture, priorState(capture), post)) return;
+    lastChange = {
+      kind: "reversible",
+      action,
+      elementId,
+      session: engine.sessionId,
+      node,
+      targetName: descriptor.name || null,
+      capture,
+      post,
+    };
   }
 
   async function executePipeline(request, approvalGrant) {
@@ -586,6 +710,11 @@ function createExecutor(options) {
     }
 
     // --- Perform exactly one activation path; never retry ---
+    // Undo capture happens here, after the last validation and
+    // immediately before the mutation, from the live node. Approved
+    // (consequential) actions are never reversible.
+    const undoCapture = isMutation && action !== "click" && !approvalGrant ? captureBefore(action, node, descriptor.role) : null;
+    let mutationDispatched = false;
     let result;
     try {
       if (action === "scroll_to") {
@@ -598,15 +727,18 @@ function createExecutor(options) {
         result = { element: descriptor };
       } else if (action === "click") {
         if (approvalGrant) approvalGrant.dispatched = true; // dispatch boundary
+        mutationDispatched = true;
         node.click();
         result = { dispatched: true };
       } else if (action === "fill") {
         if (approvalGrant) approvalGrant.dispatched = true; // dispatch boundary
+        mutationDispatched = true;
         setNativeValue(node, value, win);
         dispatchValueEvents(node, win);
         result = { dispatched: true }; // final retention verified after settling
       } else if (action === "select") {
         if (approvalGrant) approvalGrant.dispatched = true; // dispatch boundary
+        mutationDispatched = true;
         setNativeValue(node, value, win);
         dispatchValueEvents(node, win);
         result = { dispatched: true }; // final retention verified after settling
@@ -620,11 +752,13 @@ function createExecutor(options) {
           result = { dispatched: false, pendingDesired: desired, pendingNative: isNative, alreadyInDesiredState: true };
         } else {
           if (approvalGrant) approvalGrant.dispatched = true; // dispatch boundary
+          mutationDispatched = true;
           node.click();
           result = { dispatched: true, pendingDesired: desired, pendingNative: isNative };
         }
       }
     } catch (err) {
+      if (mutationDispatched) setBarrier(action, descriptor.name, "dispatch threw; outcome uncertain");
       return failure("ACTION_FAILED", `Action failed: ${err && err.message ? err.message : err}`, engine.getStatus(), "action dispatch threw");
     }
 
@@ -655,6 +789,7 @@ function createExecutor(options) {
         }
       }
       if (!retained) {
+        if (mutationDispatched) setBarrier(action, descriptor.name, "outcome not verified");
         return failureWithDiff(
           "ACTION_NOT_VERIFIED",
           action === "check" || action === "uncheck"
@@ -662,6 +797,10 @@ function createExecutor(options) {
             : "The requested value was not retained after settling; the page may have reset or overridden it.",
           postSnapshot, diff, diffUnavailableReason
         );
+      }
+      if (mutationDispatched) {
+        if (undoCapture) recordChange(action, elementId, descriptor, node, undoCapture);
+        else setBarrier(action, descriptor.name, approvalGrant ? "approved consequential action" : "not reversible here");
       }
       if (action === "fill") result = { verified: true };
       else if (action === "select") result = { verified: true, selectedValue: node.value };
@@ -673,6 +812,8 @@ function createExecutor(options) {
     }
 
     if (action === "click") {
+      // Clicks and their downstream page effects are never reversible.
+      setBarrier(action, descriptor.name, "click");
       const changed = diff ? (diff.added.length + diff.removed.length + diff.updated.length) > 0 : false;
       result = {
         dispatched: true,
@@ -699,13 +840,221 @@ function createExecutor(options) {
     };
   }
 
+  /* --- Undo (Issue #15) ----------------------------------------------------
+   * Restores the single last reversible change, through the same
+   * serialization and gate as execute(). The record must still describe
+   * the live page: same document, same original node at the same id,
+   * same accessible name, still safe to write, and the CURRENT state
+   * equal to the recorded post-action state. An intervening manual edit,
+   * changed choice, replaced node, or reshaped radio group refuses and
+   * retires the record — undo never overwrites what someone else did.
+   * The record is consumed before any asynchronous work, so a duplicate
+   * request cannot repeat it. Responses carry names, never values. */
+  function undoFailure(code, message, status) {
+    return { ...failure(code, message, status, "nothing was restored"), undo: true };
+  }
+  async function performUndo(record) {
+    const node = record.node;
+    const capture = record.capture;
+    const name = record.targetName || record.elementId;
+    const stale = (why) => undoFailure("UNDO_STALE", `Undo refused: “${name}” ${why}. Nothing was changed.`);
+    const conflict = (why) => undoFailure("UNDO_CONFLICT", `Undo refused: ${why} since Seeyable changed “${name}”. Nothing was overwritten.`);
+    const doc = node.ownerDocument;
+    const win = doc && doc.defaultView;
+    const admissionGeneration = gate.generation;
+    const preSnapshot = engine.snapshot();
+    // Restoration target for radios: the member that was checked before.
+    let priorMember = null;
+    // Live group identity AND meaning: same member nodes, all connected,
+    // in the same order, with the same name/value/accessible name.
+    function radioGroupIntact() {
+      const members = radioGroup(node);
+      return members.length === capture.members.length
+        && members.every((m, i) => m === capture.members[i] && m.isConnected)
+        && radioMeaning(members) === capture.meaning;
+    }
+    // Post-settle verification against the LIVE page, never history alone:
+    // the target must still be the same connected control at its id with
+    // the same name, the restored state must hold, and the group or list
+    // that gives that state its meaning must be unchanged.
+    function liveRestorationHolds() {
+      if (!node.isConnected) return false;
+      const resolved = engine.resolveNode(record.elementId);
+      if (resolved.status !== "ok" || resolved.node !== node) return false;
+      const liveName = internals.computeAccessibleName ? internals.computeAccessibleName(node).name : record.targetName;
+      if ((liveName || null) !== record.targetName) return false;
+      if (capture.kind === "radio" && !radioGroupIntact()) return false;
+      if (capture.kind === "select" && (node.multiple || selectStructure(node) !== capture.structure)) return false;
+      return sameState(capture, currentState(capture, node), priorState(capture));
+    }
+    function validate() {
+      if (record.session !== engine.sessionId) return stale("belongs to another document");
+      if (!node.isConnected) return stale("was removed or replaced");
+      const resolved = engine.resolveNode(record.elementId);
+      if (resolved.status !== "ok" || resolved.node !== node) return stale("is no longer the same control");
+      const liveName = internals.computeAccessibleName ? internals.computeAccessibleName(node).name : record.targetName;
+      if ((liveName || null) !== record.targetName) return stale("was relabelled");
+      if (!internals.isVisible(node, win)) return stale("is no longer visible");
+      if (effectiveDisabled(node)) return stale("is now disabled");
+      if (internals.sensitiveInfo(node).sensitive) return stale("is now a protected field");
+      if (capture.kind === "value" || capture.kind === "select") {
+        if (node.readOnly || (node.getAttribute && node.getAttribute("aria-readonly") === "true")) return stale("is now read-only");
+      }
+      if (isConsequentialControl(node, { name: liveName })) return stale("now looks consequential");
+      if (capture.kind === "radio" && !radioGroupIntact()) return conflict("the radio group changed");
+      if (capture.kind === "select") {
+        if (node.multiple) return stale("now allows several choices");
+        if (selectStructure(node) !== capture.structure) return conflict("its list of choices changed");
+      }
+      if (!sameState(capture, currentState(capture, node), record.post)) {
+        return conflict(capture.kind === "value" ? "the field was edited"
+          : capture.kind === "select" ? "the dropdown choice changed"
+          : "the control's state changed");
+      }
+      if (capture.kind === "select") {
+        const prior = capture.prior;
+        if (!prior.option) return undoFailure("UNDO_UNSUPPORTED", `Undo refused: “${name}” had no selected choice before, which cannot be restored safely. Nothing was changed.`);
+        // The structure check above already pins every option's value,
+        // label, and text; the restoration choice must also be the very
+        // same node at the very same position, and still available —
+        // forward select's disabled-option/optgroup rule, applied again.
+        if (!node.options || node.options[prior.index] !== prior.option
+          || prior.option.value !== prior.value || prior.option.label !== prior.label || prior.option.text !== prior.text) {
+          return conflict("its previous choice changed");
+        }
+        if (optionUnavailable(prior.option)) return stale("cannot return to its previous choice, which is now unavailable");
+      }
+      if (capture.kind === "radio") {
+        const index = capture.prior.indexOf(true);
+        if (index < 0) {
+          return undoFailure("UNDO_UNSUPPORTED", `Undo refused: no option in the “${name}” group was selected before, and clearing a radio group cannot be done safely. Nothing was changed.`);
+        }
+        priorMember = capture.members[index];
+        if (!priorMember.isConnected || !internals.isVisible(priorMember, win) || effectiveDisabled(priorMember)) {
+          return stale("cannot return to its previous option, which is no longer available");
+        }
+        const priorName = internals.computeAccessibleName ? internals.computeAccessibleName(priorMember).name : "";
+        if (isConsequentialControl(priorMember, { name: priorName })) return stale("cannot return to an option that looks consequential");
+      }
+      return null;
+    }
+    const early = validate();
+    if (early) return early;
+    scrollNode(node, win);
+    if (settleMs > 0) await sleep(Math.min(settleMs, 50));
+    // Synchronous final validation: nothing awaits between here and dispatch.
+    if (admissionGeneration !== gate.generation) {
+      return undoFailure("EXECUTION_CANCELLED", "Undo was cancelled by Stop or Pause before anything was restored. Resume does not revive it.");
+    }
+    if (gate.stopped || gate.paused) return undoFailure(gate.stopped ? "EXECUTION_STOPPED" : "EXECUTION_PAUSED", "The safety gate closed before anything was restored.");
+    const late = validate();
+    if (late) return late;
+    try {
+      if (capture.kind === "value") {
+        setNativeValue(node, capture.prior, win);
+        dispatchValueEvents(node, win);
+      } else if (capture.kind === "select") {
+        node.selectedIndex = capture.prior.index; // verified: same node, same meaning
+        dispatchValueEvents(node, win);
+      } else if (capture.kind === "radio") {
+        priorMember.click();
+      } else {
+        node.click(); // checkbox / ARIA toggle: one activation, as forward
+      }
+    } catch (err) {
+      setBarrier("undo", record.targetName, "undo dispatch threw; outcome uncertain");
+      return undoFailure("ACTION_FAILED", `Undo failed while restoring “${name}”; its state is uncertain. Check the page.`);
+    }
+    if (settleMs > 0) await sleep(settleMs);
+    let postSnapshot = null;
+    let diff = null;
+    let diffUnavailableReason = null;
+    try {
+      postSnapshot = engine.snapshot();
+      diff = internals.diffNormalized(internals.normalizeElements(preSnapshot.elements), internals.normalizeElements(postSnapshot.elements));
+    } catch (err) {
+      diffUnavailableReason = `post-undo snapshot unavailable: ${err && err.message ? err.message : err}`;
+    }
+    if (!liveRestorationHolds()) {
+      // Something was dispatched but the prior state does not hold on the
+      // live page (overridden, removed, replaced, regrouped, relabelled):
+      // the outcome is uncertain, so nothing earlier may be undone past
+      // it, and nothing is retried.
+      setBarrier("undo", record.targetName, "undo not verified");
+      return { ...failureWithDiff("UNDO_NOT_VERIFIED", `Undo was dispatched but “${name}” could not be verified back in its previous state on the live page — it may have been overridden, removed, replaced, or regrouped. Check the page.`, postSnapshot, diff, diffUnavailableReason), undo: true };
+    }
+    const restoredName = priorMember && priorMember !== node && internals.computeAccessibleName
+      ? internals.computeAccessibleName(priorMember).name || null : null;
+    return {
+      ok: true,
+      undo: true,
+      result: {
+        verified: true,
+        restored: true,
+        undoneAction: record.action,
+        elementId: record.elementId,
+        targetName: record.targetName,
+        restoredTargetName: restoredName,
+        scope: "last-change-only",
+      },
+      newSnapshotDiff: diff,
+      diffUnavailableReason,
+      documentSessionId: postSnapshot ? postSnapshot.documentSessionId : engine.sessionId,
+      revision: postSnapshot ? postSnapshot.revision : engine.getStatus().revision,
+    };
+  }
+
+  async function undoLastChange(request) {
+    const req = request || {};
+    const source = sanitizeSource(req.source);
+    if (gate.stopped) return undoFailure("EXECUTION_STOPPED", "Execution is stopped at the safety gate. Resume before undoing; nothing was changed.");
+    if (gate.paused) return undoFailure("EXECUTION_PAUSED", "Execution is paused at the safety gate. Resume before undoing; nothing was changed.");
+    if (typeof req.documentSessionId !== "string" || req.documentSessionId !== engine.sessionId) {
+      return undoFailure("WRONG_SESSION", "Undo was requested for another document. Nothing was changed.");
+    }
+    if (executionBusy) {
+      return undoFailure("EXECUTION_BUSY", "Another execution is in progress. Undo was not attempted; try again once it finishes.");
+    }
+    const record = lastChange;
+    if (!record) {
+      logEvent({ source, action: "undo", elementId: null, targetName: null, decision: "NOTHING_TO_UNDO" });
+      return undoFailure("NOTHING_TO_UNDO", "There is no change to undo in this page. Nothing was changed.");
+    }
+    if (record.kind === "barrier") {
+      logEvent({ source, action: "undo", elementId: null, targetName: record.targetName, decision: "UNDO_NOT_REVERSIBLE" });
+      const what = record.action === "click" ? `the click on “${record.targetName || "a control"}”`
+        : record.action === "undo" ? "the previous undo, whose outcome was uncertain"
+        : `the ${record.action} of “${record.targetName || "a control"}” (${record.reason})`;
+      return undoFailure("UNDO_NOT_REVERSIBLE", `The last action — ${what} — cannot be undone, and earlier changes are not undone past it. Nothing was changed.`);
+    }
+    // Atomic consumption before any asynchronous work: a duplicate or
+    // concurrent undo finds nothing to repeat.
+    lastChange = null;
+    executionBusy = true;
+    try {
+      const res = await performUndo(record);
+      logEvent({
+        source,
+        action: "undo",
+        elementId: record.elementId,
+        targetName: record.targetName,
+        decision: res.ok ? "verified" : (res.error && res.error.code) || "failed",
+      });
+      return res;
+    } finally {
+      executionBusy = false;
+    }
+  }
+
   /* --- Public surface -----------------------------------------------------
    * execute() is the only caller-facing action entry. approveChallenge,
    * cancelChallenge, and the gate controls are approval authority: in
    * production only content-script routing may call them, and only
    * after verifying the message came from the trusted side panel (see
    * content.js). They are not reachable from any execute() request
-   * field — forged `confirmed`/token fields are ignored by design. */
+   * field — forged `confirmed`/token fields are ignored by design.
+   * undoLastChange is routed the same trusted-panel-only way (Issue #15);
+   * it is not exposed to MCP. */
   function decisionFor(res) {
     if (res && res.confirmation) return "confirmation-required";
     if (res && res.ok) {
@@ -845,6 +1194,7 @@ function createExecutor(options) {
     execute,
     approveChallenge,
     cancelChallenge,
+    undoLastChange,
     stopExecution,
     pauseExecution,
     resumeExecution,

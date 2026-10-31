@@ -20,6 +20,8 @@
  *                                                     -> scroll validated node into view + ring
  *  - SEEYABLE_EXECUTE_ACTION { action, elementId, documentSessionId, revision, value }
  *                                                     -> single executor entry point (async response)
+ *  - SEEYABLE_UNDO_LAST { documentSessionId, source } -> restore the last reversible change
+ *                                                     (trusted side panel only; Issue #15)
  */
 
 console.info("[seeyable] content script ready:", location.href);
@@ -169,6 +171,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     try { sendResponse({ ok: true, ...getExecutor().cancelChallenge(message.challengeId) }); }
     catch (err) { fail(sendResponse, err); }
     return false;
+  }
+
+  if (message.type === "SEEYABLE_UNDO_LAST") {
+    // Undo (Issue #15) restores page state, so it takes the same
+    // trusted-panel-only route as approval. Only the document session
+    // and an audit label cross; the record itself never leaves the
+    // executor.
+    if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Undo"); return false; }
+    (async () => {
+      try { sendResponse(await getExecutor().undoLastChange({ documentSessionId: message.documentSessionId, source: message.source })); }
+      catch (err) { fail(sendResponse, err); }
+    })();
+    return true; // async sendResponse
   }
 
   if (message.type === "SEEYABLE_GATE_CONTROL") {

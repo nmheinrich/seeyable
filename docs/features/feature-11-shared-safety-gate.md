@@ -82,6 +82,16 @@ Approve/Cancel/Stop/Pause/Clear controls send these types — a voice
 transcript saying "approve" is dispatched only as a show/hide-tags
 command and can never reach this route.
 
+Amendment (Issue #15): one narrow voice route now exists. The exact
+phrase “Approve this action”, spoken in a recognition session the user
+started while that exact challenge was displayed, calls the same panel
+function as the Approve once button with that challenge ID — once, and
+never while synthesized speech is playing. Typed text, “approve plan”,
+page content, and model output still cannot approve a challenge, and the
+executor-side checks below are unchanged. Undo (`SEEYABLE_UNDO_LAST`)
+uses the same sender verification. See
+`docs/features/feature-15-plan-review-undo.md`.
+
 Inside the executor, approving a challenge:
 
 1. Checks existence, expiry (60 seconds, on an injectable clock;

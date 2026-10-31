@@ -35,6 +35,53 @@ function resolveCommand(text) {
   return { kind: "unknown", normalized };
 }
 
+/* Review and undo phrases (Issue #15). Exact normalized matches only —
+ * never substrings — so ordinary requests that merely contain "approve"
+ * or "undo" are not treated as review authority. "Edit plan" carries a
+ * complete replacement request, kept with its original casing. Whether
+ * a phrase may act (a plan or challenge is displayed, the utterance came
+ * from the active user-started session) is the panel's decision. */
+const REVIEW_PHRASES = {
+  "approve plan": "approve-plan",
+  "approve the plan": "approve-plan",
+  // Recognizer-tolerant aliases (headed finding: "approve plan" was heard
+  // as "approved plan"). Exact normalized phrases only; plan approval only.
+  "approved plan": "approve-plan",
+  "approved the plan": "approve-plan",
+  "approve": "approve-plan",
+  "approved": "approve-plan",
+  "go ahead": "approve-plan",
+  "cancel plan": "cancel-plan",
+  "cancel the plan": "cancel-plan",
+  "undo last change": "undo",
+  "undo the last change": "undo",
+  "approve this action": "approve-action",
+};
+const EDIT_PLAN = /^\s*edit (?:the )?plan\s*[:,.\-–—]?\s*(.*?)\s*$/i;
+
+function resolveReviewCommand(text) {
+  const normalized = normalizeCommandText(text);
+  if (REVIEW_PHRASES[normalized]) return { kind: REVIEW_PHRASES[normalized] };
+  const edit = EDIT_PLAN.exec(String(text == null ? "" : text));
+  if (edit) {
+    // Trailing punctuation stays: it may be part of a dictated value.
+    const replacement = edit[1].replace(/^[.!?,;:\s]+/, "").trim();
+    return { kind: "edit-plan", replacement };
+  }
+  return null;
+}
+
+/* Approval-LIKE speech: anything mentioning approval or "go ahead" that
+ * the exact matcher above did not accept ("do not approve", "approve
+ * later", "go ahead and submit", "approved plan and delete"). This grants
+ * nothing. It exists only so the panel can keep a pending plan and
+ * explain the supported choices instead of treating such speech as a new
+ * request. Authorization never consults this function. */
+const APPROVAL_LIKE = /\b(approv\w*|go ahead)\b/;
+function isApprovalLike(text) {
+  return APPROVAL_LIKE.test(normalizeCommandText(text));
+}
+
 function supportedPhrases() {
   return SUPPORTED_COMMANDS.map((c) => c.phrase);
 }
@@ -227,6 +274,8 @@ const SeeyableVoice = {
   SUPPORTED_COMMANDS,
   normalizeCommandText,
   resolveCommand,
+  resolveReviewCommand,
+  isApprovalLike,
   supportedPhrases,
   createSpeechOutput,
   createRecognitionController,

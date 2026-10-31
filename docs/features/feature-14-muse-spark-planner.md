@@ -304,5 +304,9 @@ recognition remains imperfect; clear pronunciation is needed for the demo.
 - Voice "fill" misrecognition (feel/Phil) is unchanged; the planner
   asks rather than guesses on unclear verbs, but reliable voice fill
   is still not established.
-- No plan preview/editing, voice approval, or undo — #15 owns those.
+- Plan preview/editing, voice approval, and undo were added by #15
+  (`docs/features/feature-15-plan-review-undo.md`): validated step plans
+  now wait for review instead of running at once, and model clarification
+  choices enter review. Step execution after approval is this pipeline,
+  unchanged.
   No #29 styling work was done.

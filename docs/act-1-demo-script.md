@@ -36,6 +36,10 @@ Do not approve submission during this acceptance run. No real personal data,
 external forms, payments, deletion, or publishing. No plan-preview, read-back,
 voice approval, or undo behavior is promised by this script.
 
+Note (2026-10-31, Issue #15): planned requests now show a review card and
+run only after “Approve plan” (click, typed, or spoken). This script's
+sentences are unchanged; whether to amend it is a Product Owner decision.
+
 Record each outcome separately. If clarification is needed, record it and the
 chosen target rather than describing the run as uninterrupted. A stopped,
 failed, or unverified step must not be reported as completed. Report typed and

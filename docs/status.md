@@ -20,6 +20,7 @@ the feature documents.
 | Planner, proxy | Complete and accepted — Product Owner confirmed full canonical Act 1 typed then spoken on the corrected implementation, 2026-10-31; recognition remains imperfect — `docs/features/feature-14-muse-spark-planner.md`; loopback proxy, shared plan schema, guarded sequential execution, cached corrections; stub-model plumbing verified |
 | Voice transcription spike (#12) | Timeboxed spike complete: INCONCLUSIVE / KEEP Web Speech — `docs/decision-voice-transcription.md`; zero provider takes; file-client mechanics verified offline (3/3); live comparison harness incomplete |
 | MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
+| Plan preview, confirmation, undo (#15) | Complete and accepted for the core mouse-free workflow — Product Owner confirmed genuine-microphone/model preview, voice edit, unsupported-approval retention, approval and last-change undo on 2026-10-31. Repeated Grace Hopper → Grasshopper recognition remains a limitation; supplementary headed safety probes are not claimed — `docs/features/feature-15-plan-review-undo.md` |
 | Planner fast path (#13) | Checkpoint ready: headed typed exact/fuzzy fill, held Submit/cancel, compound rejection, clarification/expiry, five-choice access, single-error display, and live-mic click (one counter increment) passed. Voice fill remains limited by fill/feel/Phil recognition; full voice acceptance is not claimed — `docs/features/feature-13-local-command-fast-path.md` |
 
 Issue #29 is parked to prioritize remaining functionality. Keep its current
@@ -37,6 +38,55 @@ requires no `debugger` permission; CDP remains debug-only via
 `apps/extension/manifest.debug.json`.
 
 ## Verification evidence
+
+- Issue #15 final headed acceptance (2026-10-31): after the approval-alias
+  correction, the Product Owner reported all five checks passed: initial
+  preview without mutation, voice edit to replacement preview, “approve later”
+  retaining the plan, an accepted plan-approval phrase executing the two
+  fills, and “Undo last change” restoring Short bio while Full name stayed.
+  This is human-reported genuine-model/microphone, mouse-free evidence.
+  Recognition repeatedly heard “Grasshopper” instead of “Grace Hopper”;
+  the workflow passed, but exact-name dictation accuracy is not claimed.
+  Supplementary headed probes (stale preview, held-action voice approval and
+  expiry, undo after manual edits, and adversarial option/radio changes) were
+  not included in this report; automated evidence for them stays separate.
+
+- Issue #15 headed finding (2026-10-31): the Product Owner's headed run
+  showed preview, edit, execution, and undo working, but Web Speech heard
+  “Approve plan” as “approved plan”, which superseded the preview. Plan
+  approval now also accepts the exact phrases “approved plan”, “approved
+  the plan”, “approve”, “approved”, and “go ahead” (plan only, same
+  session/preview binding, never a challenge), and unsupported
+  approval-like wording keeps the preview. Extension 279/279; shared 11/11,
+  proxy 15/15, MCP 11/11; headless stub-model typed E2E 32/32. Final voice
+  acceptance subsequently passed as recorded above.
+- Issue #15 review-finding corrections (2026-10-31): dropdown undo now
+  binds immutable option meaning, list structure, mode, and availability
+  (disabled option/optgroup refused, re-valued/relabelled options refused,
+  renamed current option detected); undo's final verification re-resolves
+  the live target and radio group (removed/replaced/regrouped restoration
+  targets report unverified with a barrier); model-derived “the other one”
+  corrections survive review and produce a new preview with no model call;
+  planning now reads the live page so a manual edit cannot leave a preview
+  bound to a stale revision (found in the headless run). Extension 274/274,
+  shared 11/11, proxy 15/15, MCP 11/11; headless stub-model typed E2E 31/31.
+  At that stage there was no genuine-model, genuine-microphone, or headed evidence;
+  the later core acceptance is recorded above.
+- Initial Issue #15 evidence (2026-10-31), automated and headless only;
+  headed acceptance was pending at this stage. `npm --prefix apps/extension test` 261/261 (231 prior — 12
+  planner tests updated to approve the preview first — plus 16 executor
+  undo, 13 panel review, 1 phrase test); shared 11/11, proxy 15/15, MCP
+  11/11. The acceptance flow (mis-speak → preview → “Edit plan: …” →
+  approve → undo Short bio only) passes with STUBBED recognition and a
+  STUBBED planner against the real content script and executor on the demo
+  survey. Headless Chrome with the real extension, real proxy, and a
+  SCRIPTED upstream (typed commands, no microphone): 21/21, including
+  stale-preview rejection, manual-edit undo refusal, Submit still held
+  after plan approval, and value-free proxy logs. Not genuine-model, not
+  genuine-microphone, not mouse-free headed evidence. Behavior change: every
+  AI plan now waits for review, so canonical Act 1 sentences each need
+  “Approve plan”; the script text is unchanged pending a Product Owner
+  decision.
 
 - Issue #14 genuine Muse Spark headed smoke checks — Product Owner confirmed
   on 2026-10-31, using the local demo survey and the keyed planner proxy:
