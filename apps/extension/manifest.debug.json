@@ -6,7 +6,7 @@
   "version": "0.1.0",
   "description": "Debug variant with debugger permission for CDP snapshot testing. Not for distribution.",
   "permissions": ["activeTab", "scripting", "sidePanel", "storage", "debugger", "tabs"],
-  "host_permissions": ["http://127.0.0.1:6123/*"],
+  "host_permissions": ["http://127.0.0.1:6123/*", "http://127.0.0.1:6124/*"],
   "background": {
     "service_worker": "background.js"
   },

@@ -155,6 +155,18 @@ function sensitiveInfo(el) {
   return { sensitive, filled };
 }
 
+function selectOptions(el) {
+  const list = [];
+  const opts = el.options ? Array.from(el.options) : [];
+  for (const o of opts) {
+    const group = o.parentElement && o.parentElement.tagName === "OPTGROUP" ? o.parentElement : null;
+    const entry = { label: cleanText(o.textContent), value: o.value };
+    if (Boolean(o.disabled) || Boolean(group && group.disabled)) entry.disabled = true;
+    list.push(entry);
+  }
+  return list;
+}
+
 function stateOf(el, role) {
   const state = {};
   const disabled = Boolean(el.disabled) || (el.getAttribute && el.getAttribute("aria-disabled") === "true");
@@ -187,6 +199,12 @@ function stateOf(el, role) {
     } else if (tag === "SELECT") {
       const opt = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
       if (opt) state.value = cleanText(opt.textContent);
+      // Native dropdown choices: visible labels, exact values, effective
+      // disabled state (direct or through a disabled optgroup). Sensitive
+      // selects take the redacted branch above and expose no options.
+      // Part of `state`, so option edits flow through normalization,
+      // the semantic hash, deltas, and checkForChanges unchanged.
+      state.options = selectOptions(el);
     } else if (type === "checkbox" || type === "radio") {
       // checked already conveys state.
     } else if (typeof el.value === "string" && el.value !== "") {

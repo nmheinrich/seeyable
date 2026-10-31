@@ -1,0 +1,9 @@
+{
+  "name": "seeyable-shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Seeyable shared contracts: plan JSON schema plus runtime validation for the planner proxy (Node) and the extension (browser mirror).",
+  "scripts": {
+    "test": "node --test tests/plan-schema.test.mjs tests/sync.test.mjs"
+  }
+}

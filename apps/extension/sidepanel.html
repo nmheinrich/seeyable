@@ -30,7 +30,7 @@
 
 <section class="card commands" aria-labelledby="commandHeading">
   <h1 id="commandHeading" class="hero-title">Ready when you are.</h1>
-  <p class="hero-copy">Say or type <strong>“show tags”</strong>, <strong>“hide tags”</strong>, <strong>“click …”</strong>, or <strong>“fill … with …”</strong>. Clicks and fills run locally through the same guarded executor as the panel — risky ones still pause for your approval.</p>
+  <p class="hero-copy">Say or type <strong>“show tags”</strong>, <strong>“hide tags”</strong>, <strong>“click …”</strong>, or <strong>“fill … with …”</strong>. Clicks and fills run locally through the same guarded executor as the panel — risky ones still pause for your approval. Anything beyond that is planned through the paired planner proxy, when available.</p>
 
   <button id="btnListen" type="button" class="btn-mic">
     <span class="mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span>
@@ -150,6 +150,25 @@
     <p id="bridgeStatus" class="status" role="status">Bridge: not connected.</p>
   </section>
 
+  <section class="exec" aria-labelledby="plannerHeading">
+    <h2 id="plannerHeading">Planner proxy (local)</h2>
+    <p class="sub">Pairs this browser with the loopback planner proxy on 127.0.0.1. Paste the runtime token the proxy printed; it is kept for this browser session only and never sent to webpages. Compound requests need this pairing; simple click/fill commands always run locally.</p>
+    <label class="field">
+      Pairing token
+      <input id="plannerToken" type="password" autocomplete="off" placeholder="token printed by the proxy">
+    </label>
+    <label class="field">
+      Planner port
+      <input id="plannerPort" type="text" inputmode="numeric" value="6124" autocomplete="off">
+    </label>
+    <div class="controls">
+      <button id="btnPlannerPair" type="button">Pair planner</button>
+      <button id="btnPlannerForget" type="button">Forget pairing</button>
+      <button id="btnPlannerStatus" type="button">Planner status</button>
+    </div>
+    <p id="plannerStatus" class="status" role="status">Planner: not paired.</p>
+  </section>
+
   <label class="highlight">
     Highlight target number (from latest DOM snapshot):
     <span class="highlight-row">
@@ -213,6 +232,8 @@
 <script src="lib/snapshot-cdp.js"></script>
 <script src="lib/voice-commands.js"></script>
 <script src="lib/command-resolver.js"></script>
+<script src="lib/plan-schema.js"></script>
+<script src="lib/planner.js"></script>
 <script src="lib/overlay.js"></script>
 <script src="sidepanel.js"></script>
 </body>

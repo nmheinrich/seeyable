@@ -1,6 +1,6 @@
 # Project Status and Pending Verification
 
-Last updated: 2026-10-30. This file records what is built, what has
+Last updated: 2026-10-31. This file records what is built, what has
 actually been verified, and what still needs a human with a headed
 browser. It is a status note, not a roadmap; scope decisions live in
 the feature documents.
@@ -17,7 +17,7 @@ the feature documents.
 | Voice front end and typed fallback | Complete and accepted — `docs/features/feature-10-voice-front-end.md` |
 | Shared executor safety gate | Complete and accepted — `docs/features/feature-11-shared-safety-gate.md` |
 | Plain Words product interface (#29) | Deferred by Product Owner on 2026-10-30; visually NOT accepted — `docs/features/feature-29-plain-words-interface.md` |
-| Planner, proxy | Not started |
+| Planner, proxy | Complete and accepted — Product Owner confirmed full canonical Act 1 typed then spoken on the corrected implementation, 2026-10-31; recognition remains imperfect — `docs/features/feature-14-muse-spark-planner.md`; loopback proxy, shared plan schema, guarded sequential execution, cached corrections; stub-model plumbing verified |
 | Voice transcription spike (#12) | Timeboxed spike complete: INCONCLUSIVE / KEEP Web Speech — `docs/decision-voice-transcription.md`; zero provider takes; file-client mechanics verified offline (3/3); live comparison harness incomplete |
 | MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
 | Planner fast path (#13) | Checkpoint ready: headed typed exact/fuzzy fill, held Submit/cancel, compound rejection, clarification/expiry, five-choice access, single-error display, and live-mic click (one counter increment) passed. Voice fill remains limited by fill/feel/Phil recognition; full voice acceptance is not claimed — `docs/features/feature-13-local-command-fast-path.md` |
@@ -38,15 +38,55 @@ requires no `debugger` permission; CDP remains debug-only via
 
 ## Verification evidence
 
-- Extension test suite: `npm --prefix apps/extension test` — 190/190
-  (159 prior plus 10 #13 resolver unit tests and 21 #13 page-action
-  dispatch tests: exact/fuzzy/weak matching, verbatim fills,
-  compound/negation rejection with zero sends, duplicate-context
-  clarification and expiry, disabled/sensitive/pause honesty, held
-  confirmation, voice dispatch-once, cancellation/tab-change
-  discard, the #13 ownership correction, plus the headed-feedback
-  correction: single-error presentation with no pill and complete
-  clarification sets). MCP server suite:
+- Issue #14 genuine Muse Spark headed smoke checks — Product Owner confirmed
+  on 2026-10-31, using the local demo survey and the keyed planner proxy:
+  typed request filled Full name = Ada Lovelace and Short bio = Engineer,
+  both verified; typed Nickname = Pioneer followed by Submit held for human
+  approval and Cancel prevented submission; spoken request heard as
+  "put Grace Hopper in full name and scientist in bio" filled both fields.
+  Pause during planning discarded the request, replaced stale Planning text
+  with a single main-status discard outcome, and Resume restored availability
+  without field changes or replay (final headed retest passed).
+  Local fast-path "Click updates" offered Email/SMS choices; choosing SMS and
+  then "No, the other one" selected the remaining target. This last check is
+  local resolver/correction evidence, not an additional model-planning run.
+  An earlier voice attempt was misrecognized ("grasshopper" and mangled field
+  wording); clearer speech succeeded. Speech recognition remains a limitation.
+  These are human-reported headed results, distinct from automated/stub tests.
+  First exact-script Act 1 run: sentences 1, 3, 4 passed; sentence 2
+  failed at step 1 (OPTION_NOT_FOUND — the planner saw no dropdown
+  choices). After the option-metadata fix, the Product Owner reran sentence 2:
+  "Completed 4 steps, all verified: Your role; Email updates; SMS updates;
+  Monthly digest." All four sentences have individually passed, across the
+  initial run and rerun. The Product Owner subsequently confirmed a complete
+  ordered typed run followed by a spoken run on the final implementation:
+  both passed on 2026-10-31. Issue #14 is accepted. Recognition remains
+  imperfect and requires clear speech for the demo. Live repair, broader plan
+  quality, and measured model latency have not been established.
+
+- Extension test suite: `npm --prefix apps/extension test` — 231/231
+  (190 prior plus 33 #14 planner tests plus 8 select-options tests:
+  prune/redaction/cap, proxy client auth/timeout/codes,
+  correction-phrase exactness, context bounds, fast-path zero proxy
+  calls, unpaired help, sequential fresh-revision execution,
+  failure/unverified/vanished/renamed stops, held step with single
+  approval and no continuation, invented-id rejection, planner
+  clarify/unsupported, slow-model invalidation, cached corrections,
+  pairing UI, context travel and reset, mangled-verb ask-not-guess,
+  value-free history, body-deadline and cancel classification,
+  cancel-during-body lock release, status auth-vs-connection errors,
+  upstream status diagnostics, pause-discard status/chip,
+  resume-no-replay, obsolete-after-resume ownership, engine option
+  capture + redaction + hash invalidation, prune option bounds and
+  omission, exact-value panel dispatch, changed/vanished/disabled/
+  ambiguous option stops). Shared contract suite:
+  `npm --prefix packages/shared test` — 11/11. Proxy suite:
+  `npm --prefix apps/planner-proxy test` — 15/15.
+  Planner-proxy suite: `npm --prefix apps/planner-proxy test` — 14/14
+  (stub upstream, no credentials). Stub-model headless E2E 13/13 (real proxy +
+  extension, scripted upstream — plumbing evidence, NOT live-AI
+  evidence). Genuine-model headed smoke evidence is recorded below.
+  MCP server suite:
   `npm --prefix apps/mcp-server test` — 11/11 (bridge auth,
   correlation, failure handling, atomic single-auth,
   shutdown-with-live-clients, and ping/pong regressions).
@@ -168,8 +208,9 @@ requires no `debugger` permission; CDP remains debug-only via
   confirmed audibly in the headed session. Typed show/hide browser evidence
   is on the demo survey, not a fresh Google Forms run for this feature.
 - Feature #11's local headed acceptance checks passed. Real consequential
-  actions on live websites were not tested. Planner/MCP callers remain
-  synthetic test callers; no live planner, proxy, or MCP transport exists.
+  actions on live websites were not tested. MCP callers remain synthetic
+  test callers. Issue #14 planner callers now have Product Owner-confirmed
+  genuine-model evidence on the local demo survey, recorded below.
 - Headless Chrome 156 evidence for issue #29 (`/tmp/spike-run/plain-evidence/`):
   word-first pass — product surface with Developer view closed,
   word tags placed clear of controls and rendered text (labels and

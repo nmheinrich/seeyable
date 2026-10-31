@@ -53,7 +53,12 @@ Issue #13 (planner fast path: deterministic local click/fill resolver on the
 shared executor) is checkpoint ready: headed typed-command checks and a live
 voice click producing exactly one counter increment passed. Voice fill remains
 limited by fill/feel/Phil recognition; full voice acceptance is not claimed.
-No AI planner was built.
+Issue #14 (Muse Spark planner via planner-proxy: loopback proxy holding the
+Model API key, shared plan contract, pruned snapshots, guarded sequential
+execution, cached corrections) is complete and accepted: the Product Owner
+confirmed the full canonical Act 1 script typed then spoken on 2026-10-31,
+including the dropdown fix. Recognition remains imperfect; clear speech
+is needed. #15 (plan preview/editing, voice approval, undo) is future work.
 See docs/status.md for verification evidence.
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

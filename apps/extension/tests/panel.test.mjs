@@ -11,6 +11,8 @@ const html = readFileSync(join(here, "../sidepanel.html"), "utf8");
 const panelJs = readFileSync(join(here, "../sidepanel.js"), "utf8");
 const voiceJs = readFileSync(join(here, "../lib/voice-commands.js"), "utf8");
 const commandsJs = readFileSync(join(here, "../lib/command-resolver.js"), "utf8");
+const planSchemaJs = readFileSync(join(here, "../lib/plan-schema.js"), "utf8");
+const plannerJs = readFileSync(join(here, "../lib/planner.js"), "utf8");
 const overlayJs = readFileSync(join(here, "../lib/overlay.js"), "utf8");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tick = async () => { await sleep(0); await sleep(0); await sleep(0); };
@@ -26,6 +28,20 @@ const el = (id, name, extra = {}) => ({
   id, role: "textbox", name, nameSource: "label", question: null, questionCertain: false,
   state: {}, actionable: true, tag: "input", cssPath: "input", ...extra,
 });
+
+function makeSessionStorage(initial = {}) {
+  const data = { ...initial };
+  return {
+    get: async (keys) => {
+      if (keys === undefined) return { ...data };
+      if (typeof keys === "string") return { [keys]: data[keys] };
+      if (Array.isArray(keys)) return Object.fromEntries(keys.map((k) => [k, data[k]]));
+      return { ...data };
+    },
+    set: async (obj) => { Object.assign(data, obj); },
+    remove: async (keys) => { for (const k of [].concat(keys)) delete data[k]; },
+  };
+}
 
 function makePanel(sendImpl, opts = {}) {
   const dom = new JSDOM(html, { url: "chrome-extension://test/sidepanel.html", runScripts: "dangerously", pretendToBeVisual: true });
@@ -59,11 +75,16 @@ function makePanel(sendImpl, opts = {}) {
       getURL: (path) => `chrome-extension://test/${path}`,
     },
     permissions: { contains: async () => false },
-    storage: { local: { get: async () => { calls.storage += 1; return {}; }, set: async () => { calls.storage += 1; } } },
+    storage: {
+      local: { get: async () => { calls.storage += 1; return {}; }, set: async () => { calls.storage += 1; } },
+      session: makeSessionStorage(opts.session),
+    },
   };
   if (!win.navigator.clipboard) Object.defineProperty(win.navigator, "clipboard", { value: { writeText: async () => {} } });
   win.eval(voiceJs);
   win.eval(commandsJs); // local click/fill resolver (Issue #13)
+  win.eval(planSchemaJs); // shared plan contract mirror (Issue #14)
+  win.eval(plannerJs); // prune + proxy client + correction phrases (Issue #14)
   win.eval(overlayJs); // shared word-first label builder used by the panel
   win.eval(panelJs);
   const doc = win.document;
@@ -868,7 +889,8 @@ test("page-action: voice cancellation during held execution discards without rep
   release({ ok: true, result: { verified: true }, newSnapshotDiff: null, documentSessionId: "doc-A", revision: 1 });
   await tick(); await tick();
   assert.equal(panel.calls.execute, 1, "no replay after cancellation");
-  assert.match(panel.$("voiceState").textContent, /cancelled/);
+  assert.match(panel.$("status").textContent, /cancelled/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 
@@ -883,7 +905,8 @@ test("page-action: tab change during held execution discards honestly without re
   release({ ok: true, result: { verified: true }, newSnapshotDiff: null, documentSessionId: "doc-A", revision: 1 });
   await tick(); await tick();
   assert.equal(panel.calls.execute, 1, "exactly one dispatch, never replayed");
-  assert.match(panel.$("voiceState").textContent, /result was discarded/);
+  assert.match(panel.$("status").textContent, /result was discarded/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 
@@ -911,8 +934,9 @@ test("page-action: cancel during held execution revokes the late challenge; no a
   const cancels = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_CANCEL_CHALLENGE");
   assert.equal(cancels.length, 1, "the late challenge is revoked through the trusted cancel route");
   assert.equal(cancels[0].msg.challengeId, "ch-late");
-  assert.match(panel.$("voiceState").textContent, /cancelled/);
-  assert.match(panel.$("voiceState").textContent, /may already have reached the page/, "honest about possible dispatch");
+  assert.match(panel.$("status").textContent, /cancelled/);
+  assert.match(panel.$("status").textContent, /may already have reached the page/, "honest about possible dispatch");
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   assert.deepEqual(speech.spoken, [], "no approval prompt is spoken for a cancelled command");
   panel.dom.window.close();
 });
@@ -951,7 +975,8 @@ test("page-action: Pause/Resume during snapshot acquisition dispatches nothing",
   releaseSnap();
   await tick(); await tick();
   assert.equal(panel.calls.execute, 0, "the older command must never revive after Resume");
-  assert.match(panel.$("voiceState").textContent, /paused/);
+  assert.match(panel.$("status").textContent, /paused/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 
@@ -974,7 +999,8 @@ test("page-action: Stop/Resume during snapshot acquisition dispatches nothing", 
   releaseSnap();
   await tick(); await tick();
   assert.equal(panel.calls.execute, 0, "Stop permanently invalidates the pending command");
-  assert.match(panel.$("voiceState").textContent, /stopped/);
+  assert.match(panel.$("status").textContent, /stopped/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 
@@ -1045,7 +1071,8 @@ test("page-action: command lock spans the post-action refresh; late refresh cann
   await tick(); await tick();
   assert.equal(panel.calls.execute, 1, "no replay");
   assert.equal(panel.$("targetSelect").options.length, 1, "the late refresh cannot restore the old tab's targets");
-  assert.match(panel.$("voiceState").textContent, /discarded/);
+  assert.match(panel.$("status").textContent, /discarded/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 
@@ -1188,7 +1215,8 @@ test("commands: tab change during dispatch discards the outcome and speaks no su
   release();
   await tick(); await tick();
   assert.deepEqual(speech.spoken, [], "discarded outcomes are never spoken as success");
-  assert.match(panel.$("voiceState").textContent, /discarded/);
+  assert.match(panel.$("status").textContent, /discarded/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 
@@ -1241,8 +1269,9 @@ test("voice: cancel during a held command acknowledgment suppresses speech and p
   instances[0].fireEnd();
   await tick();
   assert.deepEqual(speech.spoken, [], "a cancelled interaction never speaks its late acknowledgment");
-  assert.match(panel.$("voiceState").textContent, /cancelled/);
-  assert.match(panel.$("voiceState").textContent, /may still have taken effect/);
+  assert.match(panel.$("status").textContent, /cancelled/);
+  assert.match(panel.$("status").textContent, /may still have taken effect/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 
@@ -1290,7 +1319,8 @@ test("commands: hide without a bound snapshot retains tab ownership; reload inva
   release();
   await tick(); await tick();
   assert.deepEqual(speech.spoken, [], "reloaded tab: late hide acknowledgment is not spoken");
-  assert.match(panel.$("voiceState").textContent, /discarded/);
+  assert.match(panel.$("status").textContent, /discarded/);
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
 

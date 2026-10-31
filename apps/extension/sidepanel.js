@@ -463,6 +463,59 @@ $("btnBridgeStatus").addEventListener("click", async () => {
   }
 });
 
+/* --- Planner proxy pairing (Issue #14) -------------------------------------
+ * Same transient-token discipline as the bridge: the token is sent only to
+ * the loopback proxy as a Bearer credential, kept in chrome.storage.session,
+ * and the input is cleared after pairing. It is never logged, never copied
+ * into snapshot output, and never sent to a webpage. */
+function setPlannerStatus(text, isError) {
+  const el = $("plannerStatus");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle("error", Boolean(isError));
+}
+async function plannerCredentials() {
+  const stored = await chrome.storage.session.get(["plannerToken", "plannerPort"]);
+  const port = Number(stored.plannerPort || 6124);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { token: "", port: 0, baseUrl: "" };
+  }
+  return { token: stored.plannerToken || "", port, baseUrl: `http://127.0.0.1:${port}` };
+}
+$("btnPlannerPair").addEventListener("click", async () => {
+  const token = $("plannerToken").value.trim();
+  const port = Number($("plannerPort").value.trim());
+  if (!token) { setPlannerStatus("Planner: paste the pairing token the proxy printed, then pair.", true); return; }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) { setPlannerStatus("Planner: port must be 1–65535.", true); return; }
+  try {
+    await chrome.storage.session.set({ plannerToken: token, plannerPort: port });
+    $("plannerToken").value = "";
+    setPlannerStatus(`Planner: paired on 127.0.0.1:${port}. Ask for status to confirm the model and key.`);
+  } catch (err) {
+    setPlannerStatus(`Planner: pairing failed: ${err.message || err}`, true);
+  }
+});
+$("btnPlannerForget").addEventListener("click", async () => {
+  try {
+    await chrome.storage.session.remove(["plannerToken", "plannerPort"]);
+    $("plannerToken").value = "";
+    setPlannerStatus("Planner: pairing discarded.");
+  } catch (err) {
+    setPlannerStatus(`Planner: forget failed: ${err.message || err}`, true);
+  }
+});
+$("btnPlannerStatus").addEventListener("click", async () => {
+  try {
+    const plannerApi = globalThis.SeeyablePlanner;
+    if (!plannerApi) throw new Error("Planner support is unavailable in this panel. Reload the extension.");
+    const creds = await plannerCredentials();
+    const res = await plannerApi.fetchProxyStatus({ baseUrl: creds.baseUrl, token: creds.token });
+    setPlannerStatus(`Planner: model ${res.model}; API key ${res.keyConfigured ? "configured" : "MISSING — set MODEL_API_KEY for the proxy"}.`, !res.keyConfigured);
+  } catch (err) {
+    setPlannerStatus(`Planner: status failed: ${err.message || err}`, true);
+  }
+});
+
 $("btnCopy").addEventListener("click", async () => {
   await navigator.clipboard.writeText(lastJson);
   setStatus("Copied snapshot JSON to clipboard.");
@@ -664,6 +717,13 @@ let interactionSeq = 0; // bumped whenever a voice/command interaction is invali
 let voiceTabId = null;
 let discardMessage = null; // why the latest interaction was invalidated, if stated
 let pendingSpoken = null;  // feedback held until the microphone has terminated
+let plannerAbortController = null; // aborts the in-flight planner fetch on invalidation
+function abortPlannerFetch() {
+  if (plannerAbortController) {
+    try { plannerAbortController.abort(); } catch { /* already settled */ }
+    plannerAbortController = null;
+  }
+}
 
 const speechOutput = voiceApi
   ? voiceApi.createSpeechOutput({ speechSynthesis: window.speechSynthesis, SpeechSynthesisUtterance: window.SpeechSynthesisUtterance })
@@ -754,6 +814,7 @@ const recognizer = voiceApi
 
 function cancelVoiceInteraction(reason) {
   interactionSeq += 1;
+  abortPlannerFetch();
   voicePhase = "idle";
   voiceErrorUnresolved = false; // intentional cancellation is not a recognition failure
   discardMessage = reason || null;
@@ -850,31 +911,40 @@ function commandTargetName(element) {
 function presentPipelineOutcome(action, name, result) {
   // UI-neutral outcome shaping shared by direct and clarified dispatch.
   // Names are labels; fill values never appear in any message or speech.
-  const past = action === "click" ? "Clicked" : "Filled";
+  const VERBS = {
+    click: ["Click", "Clicked"],
+    fill: ["Fill", "Filled"],
+    select: ["Select", "Selected"],
+    check: ["Check", "Checked"],
+    uncheck: ["Uncheck", "Unchecked"],
+    scroll_to: ["Scroll to", "Scrolled to"],
+    read: ["Read", "Read"],
+  };
+  const [pending, past] = VERBS[action] || ["Run", "Ran"];
   if (result.outcome === "held") {
     // Held means nothing ran yet: never past-tense the action.
-    const pending = action === "click" ? "Click" : "Fill";
     return {
       ok: true,
       message: `${pending} on “${name}” is waiting for your approval in the Safety section. Nothing was executed.`,
       spoken: "Waiting for your approval.",
+      contextOutcome: "held for approval",
     };
   }
   if (result.outcome === "completed") {
     const response = result.response;
     if (!response.ok) {
-      return { ok: false, message: `Could not ${action} ${name}: ${response.error.code} — ${response.error.message}` };
+      return { ok: false, message: `Could not ${action} ${name}: ${response.error.code} — ${response.error.message}`, contextOutcome: `failed: ${response.error.code}` };
     }
     const detail = describeOutcome(response);
     if (detail.startsWith("Completed and verified") || detail.startsWith("Already in the desired state")) {
-      return { ok: true, message: `${past} ${name}. ${detail} ${executionDiffLine(response)}`, spoken: `${past} ${name}.` };
+      return { ok: true, message: `${past} ${name}. ${detail} ${executionDiffLine(response)}`, spoken: `${past} ${name}.`, contextOutcome: "completed" };
     }
-    return { ok: true, message: `${past} ${name}, but ${detail} ${executionDiffLine(response)}`, spoken: "That may not have finished. Check the page." };
+    return { ok: true, message: `${past} ${name}, but ${detail} ${executionDiffLine(response)}`, spoken: "That may not have finished. Check the page.", contextOutcome: "completed unverified" };
   }
   if (result.outcome === "transport") {
-    return { ok: false, message: `Transport failure — outcome unknown. Nothing about ${name} is implied.` };
+    return { ok: false, message: `Transport failure — outcome unknown. Nothing about ${name} is implied.`, contextOutcome: "transport failure" };
   }
-  return { ok: false, message: "The executor gave no usable answer. Nothing was confirmed." };
+  return { ok: false, message: "The executor gave no usable answer. Nothing was confirmed.", contextOutcome: "malformed response" };
 }
 
 async function runPageActionCommand(local, source, gen, seq) {
@@ -890,7 +960,7 @@ async function runPageActionCommand(local, source, gen, seq) {
   const snapshot = ensured.snapshot;
   const matched = globalThis.SeeyableCommands.matchTarget(snapshot.elements, local.target);
   if (matched.status === "none") {
-    return { ok: false, message: `No confident match for “${local.target}”. Nothing was executed.` };
+    return { ok: false, message: `No confident match for “${local.target}”. Nothing was executed.`, contextOutcome: "no match" };
   }
   if (matched.status === "ambiguous") {
     renderClarification(local, matched.candidates, {
@@ -900,6 +970,7 @@ async function runPageActionCommand(local, source, gen, seq) {
       ok: true, clarify: true,
       message: `“${local.target}” matches ${matched.candidates.length} controls. Choose one — nothing was executed.`,
       spoken: `${matched.candidates.length} matches. Choose one.`,
+      contextSummary: `${local.kind} ${local.target}`,
     };
   }
   const request = {
@@ -919,7 +990,9 @@ async function runPageActionCommand(local, source, gen, seq) {
     // challenge; the dispatch itself may still have reached the page.
     return { ok: false, discarded: true, message: "", reached: true };
   }
-  return presentPipelineOutcome(local.kind, commandTargetName(matched.element), result);
+  const presented = presentPipelineOutcome(local.kind, commandTargetName(matched.element), result);
+  presented.contextSummary = `${local.kind} ${local.target}`; // parsed structure only; local.value never retained
+  return presented;
 }
 
 let clarifySeq = 0; // identity for each clarification round; obsolete callbacks stay inert
@@ -937,6 +1010,7 @@ function renderClarification(local, candidates, binding) {
     value: local.value,
     clarId: ++clarifySeq,
     candidateIds: candidates.map((c) => c.elementId),
+    candidateLabels: candidates.map((c) => ({ elementId: c.elementId, label: c.label })),
   };
   pendingClarification = clarification;
   $("clarifyPrompt").textContent = `“${local.target}” matches ${candidates.length} controls. Choose one:`;
@@ -986,7 +1060,7 @@ async function runClarifiedChoice(elementId, clarification) {
     elementId,
     documentSessionId: choice.session,
     revision: choice.revision,
-    value: choice.action === "fill" ? choice.value : undefined,
+    value: (choice.action === "fill" || choice.action === "select") ? choice.value : undefined,
     source: "manual", // a deliberate panel choice by the human operator
   };
   const gen = state.generation;
@@ -1010,11 +1084,446 @@ async function runClarifiedChoice(elementId, clarification) {
     setStatus(presented.message, !presented.ok);
     settleVoiceAfterCommand();
     if (presented.ok && presented.spoken) speakFeedback(presented.spoken);
+    cacheCorrectionAlternatives(choice, elementId, result);
   } finally {
     commandPending = false;
     updateExecuteEnabled();
     updateVoiceControls();
   }
+}
+
+/* --- Planner commands (Issue #14) ------------------------------------------
+ * Anything beyond the #13 fast-path grammar is planned by the local
+ * planner proxy (Muse Spark via Chat Completions) and executed step by
+ * step through the SAME guarded pipeline: same request contract, same
+ * confirmation controller, same locks, no replay. The proxy plans only;
+ * the panel validates every plan against the LIVE snapshot, re-snapshots
+ * after every step, and stops on any failure, unverified outcome, stale
+ * identity, or held consequential step. Model output is never authority.
+ *
+ * Cached corrections ("no, the other one") resolve locally from validated
+ * clarification alternatives with zero model calls. */
+
+/* Bounded conversation context for the planner: structured { summary,
+ * outcome } entries built from separated action/target/outcome parts —
+ * raw transcripts are never retained because values can hide anywhere
+ * in free text. Document-scoped, values never included. Reset whenever
+ * the tab or document session changes. */
+let plannerContextKey = null;
+let plannerContextEntries = [];
+function plannerContextFor(tabId, session) {
+  const key = `${tabId} ${session}`;
+  if (plannerContextKey !== key) {
+    plannerContextKey = key;
+    plannerContextEntries = [];
+  }
+  return plannerContextEntries;
+}
+function recordPlannerContext(tabId, session, summary, outcome) {
+  if (tabId === null || tabId === undefined || !session) return;
+  const plannerApi = globalThis.SeeyablePlanner;
+  if (!plannerApi) return;
+  plannerContextEntries = plannerApi.appendContext(plannerContextFor(tabId, session), summary, outcome);
+}
+
+/* Cached correction alternatives from the last validated clarification
+ * round. Single use, bound to tab/session/sequence: any newer command,
+ * tab/document change, cancellation, or Pause/Stop invalidates it. */
+let pendingCorrection = null;
+function cacheCorrectionAlternatives(choice, chosenId, result) {
+  pendingCorrection = null;
+  if (!choice || !result) return;
+  if (result.outcome !== "completed" && result.outcome !== "held") return;
+  if (!Array.isArray(choice.candidateIds) || choice.candidateIds.length < 2) return;
+  const labels = new Map((choice.candidateLabels || []).map((c) => [c.elementId, c.label]));
+  const alternatives = choice.candidateIds
+    .filter((id) => id !== chosenId)
+    .map((id) => ({ elementId: id, label: labels.get(id) || id }));
+  if (alternatives.length === 0) return;
+  let prior = "ran";
+  if (result.outcome === "held") prior = "is waiting for approval";
+  else if (result.response && !result.response.ok) prior = `failed (${result.response.error.code})`;
+  else if (result.response && result.response.result && result.response.result.verified === true) prior = "completed and verified";
+  else if (result.response && result.response.result && result.response.result.alreadyInDesiredState) prior = "was already done";
+  else prior = "ran but is unverified";
+  pendingCorrection = {
+    candidates: alternatives,
+    action: choice.action,
+    value: choice.value,
+    tabId: choice.tabId,
+    session: choice.session,
+    seq: choice.seq,
+    chosenLabel: labels.get(chosenId) || chosenId,
+    prior,
+  };
+}
+function takeCorrectionRequest(rawText) {
+  const plannerApi = globalThis.SeeyablePlanner;
+  if (!plannerApi || !plannerApi.isCorrectionRequest(rawText)) return null;
+  const entry = pendingCorrection;
+  pendingCorrection = null; // consumed whether usable or not; a new choice re-caches
+  if (!entry) return { valid: false };
+  const snapshot = state.snapshot;
+  if (entry.seq !== interactionSeq || !snapshot || state.boundTabId !== entry.tabId
+    || snapshot.documentSessionId !== entry.session || !Array.isArray(entry.candidates)) {
+    return { valid: false };
+  }
+  const usable = entry.candidates.filter((c) => snapshot.elements.some((e) => e && e.id === c.elementId));
+  if (usable.length === 0) return { valid: false };
+  return { valid: true, entry: { ...entry, candidates: usable } };
+}
+
+async function runCorrectionCommand(correction, source, gen, seq) {
+  const entry = correction.entry;
+  const tab = state.boundTabId !== null ? { id: state.boundTabId } : await activeTab();
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  if (!tab || tab.id === undefined || tab.id !== entry.tabId) {
+    return { ok: false, message: "The correction belongs to another tab. Nothing was executed." };
+  }
+  voiceTabId = tab.id;
+  const ensured = await ensureCommandSnapshot(tab.id, gen, seq);
+  if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) {
+    return { ok: false, discarded: true, message: "" };
+  }
+  if (ensured.error) return { ok: false, message: ensured.error };
+  const snapshot = ensured.snapshot;
+  if (snapshot.documentSessionId !== entry.session) {
+    return { ok: false, message: "The page changed since that choice. Nothing was executed; send the command again." };
+  }
+  const usable = entry.candidates.filter((c) => snapshot.elements.some((e) => e && e.id === c.elementId));
+  if (usable.length === 0) {
+    return { ok: false, message: "The alternative is no longer on the page. Nothing was executed." };
+  }
+  const priorNote = `Earlier choice “${entry.chosenLabel}” ${entry.prior}.`;
+  if (usable.length > 1) {
+    renderClarification({ kind: entry.action, target: `the other one (was “${entry.chosenLabel}”)`, value: entry.value },
+      usable, { tabId: tab.id, session: snapshot.documentSessionId, revision: snapshot.revision, gen, seq });
+    return {
+      ok: true, clarify: true,
+      message: `${priorNote} ${usable.length} alternatives remain — choose one. Nothing was executed.`,
+      spoken: `${usable.length} alternatives. Choose one.`,
+      contextSummary: `correction choice (${usable.length} alternatives)`,
+      contextOutcome: "correction offered choices",
+    };
+  }
+  const target = snapshot.elements.find((e) => e.id === usable[0].elementId);
+  const request = {
+    action: entry.action,
+    elementId: usable[0].elementId,
+    documentSessionId: snapshot.documentSessionId,
+    revision: snapshot.revision,
+    value: (entry.action === "fill" || entry.action === "select") ? entry.value : undefined,
+    source: source === "voice" ? "voice" : "manual",
+  };
+  const result = await runExecutionPipeline(tab.id, request, gen, seq);
+  if (gen !== state.generation || seq !== interactionSeq) {
+    return { ok: false, discarded: true, message: "", reached: true };
+  }
+  const presented = presentPipelineOutcome(entry.action, commandTargetName(target), result);
+  return {
+    ...presented,
+    message: `${priorNote} Alternative “${usable[0].label}”: ${presented.message.charAt(0).toLowerCase()}${presented.message.slice(1)}`,
+    contextSummary: `correction to ${usable[0].label}`,
+    contextOutcome: presented.ok ? "correction ran alternative" : "correction failed",
+  };
+}
+
+function plannerFailureMessage(err, localReason) {
+  const code = err && err.code;
+  if (code === "NO_TOKEN" || code === "UNREACHABLE") {
+    const prefix = localReason ? `Unsupported command — ${localReason}. ` : "Unsupported command. ";
+    return {
+      ok: false,
+      message: `${prefix}Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>". `
+        + "Anything beyond that needs the planner proxy: start it with `node apps/planner-proxy/server.mjs` and paste its token into the Developer view.",
+    };
+  }
+  if (code === "NO_API_KEY") return { ok: false, message: `Planner unavailable: ${err.message}` };
+  if (code === "PLAN_INVALID") {
+    return { ok: false, message: "The planner could not produce a safe plan. Nothing was executed. Try rephrasing or pick a target manually." };
+  }
+  if (code === "TIMEOUT" || code === "MODEL_TIMEOUT") {
+    return { ok: false, message: "The planner did not answer in time. Nothing was executed." };
+  }
+  if (code === "MODEL_AUTH" || code === "MODEL_FORBIDDEN" || code === "MODEL_NOT_FOUND"
+    || code === "MODEL_RATE_LIMITED" || code === "MODEL_UNAVAILABLE" || code === "MODEL_ERROR") {
+    // Upstream HTTP failures: the proxy composed a safe, status-bearing
+    // message (codes above are the complete known set — nothing else
+    // passes through verbatim). Nothing was planned, let alone run.
+    return { ok: false, message: `${err.message} Nothing was executed.` };
+  }
+  if (code === "BAD_PROXY" || code === "PROXY_ERROR" || code === "BAD_REQUEST" || code === "BODY_TOO_LARGE") {
+    return { ok: false, message: "The planner request failed. Nothing was executed." };
+  }
+  return { ok: false, message: `Planner failed: ${(err && err.message) || err}` };
+}
+
+function planStopMessage(done, total, reason) {
+  // Names only, never values: done holds accessible names of verified steps.
+  const progress = done.length === 0
+    ? "Nothing was executed."
+    : `Completed ${done.length} of ${total} first: ${done.join("; ")}.`;
+  return `Stopped: ${reason}. ${progress} Check the page before continuing.`;
+}
+
+// Select steps revalidate against CURRENT dropdown choices immediately
+// before dispatch. The executor's exact-value check stays final, but the
+// panel stops earlier with a planning-level explanation when the planned
+// choice vanished, is disabled, turned ambiguous, or the list changed at
+// all since planning. Pruned options are clipped and capped, so the live
+// list is canonicalized through the same projection before the
+// changed-compare; the exact-match checks use the full live list.
+// Elements without option metadata skip these checks. Value-free.
+function selectStopReason(step, i, total, was, target) {
+  const liveOpts = target && target.state && Array.isArray(target.state.options) ? target.state.options : null;
+  if (!liveOpts) return null;
+  const at = `step ${i + 1}/${total}`;
+  const matches = liveOpts.filter((o) => o && o.value === step.value);
+  if (matches.length === 0) {
+    return {
+      message: `step ${i + 1} targets a dropdown choice that is no longer listed`,
+      contextOutcome: `stopped: option gone at ${at}`,
+    };
+  }
+  if (matches[0].disabled === true) {
+    return {
+      message: `step ${i + 1} targets a dropdown choice that is now disabled`,
+      contextOutcome: `stopped: option disabled at ${at}`,
+    };
+  }
+  if (matches.length > 1 || liveOpts.some((o) => o && o !== matches[0] && o.label === matches[0].label)) {
+    return {
+      message: `step ${i + 1} targets a dropdown label that matches more than one choice — say which one`,
+      contextOutcome: `stopped: option ambiguous at ${at}`,
+    };
+  }
+  const prunedOpts = was && was.state && Array.isArray(was.state.options) ? was.state.options : null;
+  const canonicalize = globalThis.SeeyablePlanner && globalThis.SeeyablePlanner.pruneSelectOptions;
+  if (prunedOpts && typeof canonicalize === "function") {
+    const liveCanon = canonicalize(liveOpts);
+    const prunedCanon = { options: prunedOpts, omitted: (was.state && was.state.optionsOmitted) || 0 };
+    if (JSON.stringify(liveCanon) !== JSON.stringify(prunedCanon)) {
+      return {
+        message: `step ${i + 1} targets a dropdown whose options changed since planning`,
+        contextOutcome: `stopped: options changed at ${at}`,
+      };
+    }
+  }
+  return null;
+}
+
+async function runPlanSteps(plan, { tabId, source, gen, seq, pruned }) {
+  const total = plan.steps.length;
+  const prunedById = new Map(pruned.elements.map((e) => [e.id, e]));
+  // Value-free plan summary for retained context: validated actions with
+  // target NAMES from the pruned snapshot. Step values are never included.
+  const planSummary = plan.steps.map((s) => {
+    const was = prunedById.get(s.elementId);
+    return `${s.action} ${was ? commandTargetName(was) : s.elementId}`;
+  }).join("; ");
+  const done = [];
+  for (let i = 0; i < total; i++) {
+    const step = plan.steps[i];
+    if (gen !== state.generation || seq !== interactionSeq) {
+      return { ok: false, discarded: true, message: "", reached: done.length > 0 };
+    }
+    const live = state.snapshot;
+    if (!live || state.boundTabId !== tabId || live.documentSessionId !== pruned.documentSessionId) {
+      return { ok: false, discarded: true, message: "", reached: done.length > 0 };
+    }
+    const target = live.elements.find((e) => e && e.id === step.elementId);
+    const was = prunedById.get(step.elementId);
+    if (!target) {
+      return {
+        ok: false,
+        message: planStopMessage(done, total, `step ${i + 1} targets ${step.elementId}, which is no longer on the page`),
+        contextSummary: planSummary,
+        contextOutcome: `stopped: target gone at step ${i + 1}/${total}`,
+      };
+    }
+    if (!was || was.name !== target.name || was.role !== target.role || (was.question || null) !== (target.question || null)) {
+      return {
+        ok: false,
+        message: planStopMessage(done, total, `step ${i + 1} (“${commandTargetName(was)}”) changed since planning`),
+        contextSummary: planSummary,
+        contextOutcome: `stopped: target changed at step ${i + 1}/${total}`,
+      };
+    }
+    if (step.action === "select" && typeof step.value === "string") {
+      const optionStop = selectStopReason(step, i, total, was, target);
+      if (optionStop) {
+        return {
+          ok: false,
+          message: planStopMessage(done, total, optionStop.message),
+          contextSummary: planSummary,
+          contextOutcome: optionStop.contextOutcome,
+        };
+      }
+    }
+    setStatus(`Step ${i + 1} of ${total}: ${step.action} ${commandTargetName(target)}…`);
+    const request = {
+      action: step.action,
+      elementId: step.elementId,
+      documentSessionId: live.documentSessionId,
+      revision: live.revision,
+      value: step.value,
+      source: source === "voice" ? "voice" : "manual",
+    };
+    const result = await runExecutionPipeline(tabId, request, gen, seq);
+    if (gen !== state.generation || seq !== interactionSeq) {
+      return { ok: false, discarded: true, message: "", reached: true };
+    }
+    if (result.outcome === "discarded") return { ok: false, discarded: true, message: "", reached: true };
+    if (result.outcome === "held") {
+      // The sequence pauses here: the human decides on THIS step alone in
+      // the Safety gate. Later steps are dropped, never auto-continued —
+      // one approval runs one action, and re-issue replays nothing.
+      const presented = presentPipelineOutcome(step.action, commandTargetName(target), result);
+      const rest = total - i - 1;
+      return {
+        ok: true, held: true,
+        message: `${presented.message} Step ${i + 1} of ${total} is held; ${
+          rest === 0 ? "it was the last step." : `${rest} later step${rest === 1 ? " was" : "s were"} not run — send the command again to continue after deciding.`}`,
+        spoken: presented.spoken,
+        contextSummary: planSummary,
+        contextOutcome: `held at step ${i + 1}/${total}`,
+      };
+    }
+    if (result.outcome === "transport" || result.outcome === "malformed") {
+      return {
+        ok: false,
+        message: planStopMessage(done, total, `step ${i + 1} could not reach the executor`),
+        contextSummary: planSummary,
+        contextOutcome: `stopped: transport at step ${i + 1}/${total}`,
+      };
+    }
+    const response = result.response;
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: planStopMessage(done, total, `step ${i + 1} failed: ${response.error.code} — ${response.error.message}`),
+        contextSummary: planSummary,
+        contextOutcome: `stopped: ${response.error.code} at step ${i + 1}/${total}`,
+      };
+    }
+    const detail = describeOutcome(response);
+    if (detail.startsWith("Completed and verified") || detail.startsWith("Already in the desired state")) {
+      done.push(commandTargetName(target));
+      continue;
+    }
+    return {
+      ok: false,
+      message: planStopMessage(done, total, `step ${i + 1} could not be verified: ${detail}`),
+      contextSummary: planSummary,
+      contextOutcome: `stopped: unverified at step ${i + 1}/${total}`,
+    };
+  }
+  return {
+    ok: true,
+    message: `Completed ${total} step${total === 1 ? "" : "s"}, all verified: ${done.join("; ")}.`,
+    spoken: plan.say || `Done. ${total} step${total === 1 ? "" : "s"} completed.`,
+    contextSummary: planSummary,
+    contextOutcome: `completed ${total}/${total} verified`,
+  };
+}
+
+async function runPlannerCommand(rawText, source, gen, seq, localReason) {
+  const plannerApi = globalThis.SeeyablePlanner;
+  const planApi = globalThis.SeeyablePlan;
+  if (!plannerApi || !planApi) {
+    return { ok: false, message: "Planner support is unavailable in this panel. Reload the extension." };
+  }
+  const tab = state.boundTabId !== null ? { id: state.boundTabId } : await activeTab();
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  if (!tab || tab.id === undefined) return { ok: false, message: "No active tab." };
+  // Fail fast when unpaired: no snapshot, no tab messages — the same
+  // help as the old unsupported branch plus the pairing hint.
+  const creds = await plannerCredentials();
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  if (!creds.token) return plannerFailureMessage({ code: "NO_TOKEN" }, localReason);
+  voiceTabId = tab.id;
+  setStatus("Planning…");
+  const ensured = await ensureCommandSnapshot(tab.id, gen, seq);
+  if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) {
+    return { ok: false, discarded: true, message: "" };
+  }
+  if (ensured.error) return { ok: false, message: ensured.error };
+  const snapshot = ensured.snapshot;
+  let pruned;
+  try {
+    pruned = plannerApi.pruneSnapshot(snapshot);
+  } catch (err) {
+    return { ok: false, message: `Could not prepare the page for planning: ${err.message || err}` };
+  }
+  const context = plannerContextFor(tab.id, snapshot.documentSessionId).slice();
+  plannerAbortController = new AbortController();
+  let payload;
+  try {
+    payload = await plannerApi.requestPlan({
+      baseUrl: creds.baseUrl,
+      token: creds.token,
+      transcript: rawText,
+      snapshot: pruned,
+      context,
+      signal: plannerAbortController.signal,
+    });
+  } catch (err) {
+    plannerAbortController = null;
+    if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+    return plannerFailureMessage(err, localReason);
+  }
+  plannerAbortController = null;
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  // Defensive re-validation against the LIVE snapshot: only ids present
+  // right now, in this document, may run — never the plan's word alone.
+  const live = state.snapshot;
+  if (!live || state.boundTabId !== tab.id || live.documentSessionId !== snapshot.documentSessionId) {
+    return { ok: false, discarded: true, message: "" };
+  }
+  if (payload.documentSessionId !== snapshot.documentSessionId || payload.revision !== snapshot.revision) {
+    return {
+      ok: false,
+      message: "The plan was made for a different page state. Nothing was executed; send the command again.",
+      contextSummary: "plan request",
+      contextOutcome: "plan binding mismatch",
+    };
+  }
+  const validation = planApi.validatePlan(payload.plan, live.elements);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      message: `The planner returned an unsafe plan (${validation.errors[0].code}). Nothing was executed. Try rephrasing.`,
+      contextSummary: "plan request",
+      contextOutcome: "plan rejected by panel validation",
+    };
+  }
+  const plan = payload.plan;
+  if (plan.outcome === "unsupported") {
+    // The model-written reason is NOT retained: it may echo request
+    // content. The category alone is the useful history.
+    return { ok: false, message: `No safe plan: ${plan.reason}`, contextSummary: "unsupported request", contextOutcome: "unsupported request" };
+  }
+  if (plan.outcome === "clarify") {
+    if (!plan.choices) {
+      return {
+        ok: true, clarify: true,
+        message: `${plan.question} Nothing was executed.`,
+        contextSummary: "clarify request",
+        contextOutcome: "clarification requested",
+      };
+    }
+    renderClarification({ kind: plan.action, target: plan.question, value: plan.value },
+      plan.choices.map((c) => ({ elementId: c.elementId, label: c.label })),
+      { tabId: tab.id, session: live.documentSessionId, revision: live.revision, gen, seq });
+    return {
+      ok: true, clarify: true,
+      message: `“${plan.question}” — choose one of ${plan.choices.length}. Nothing was executed.`,
+      spoken: `${plan.choices.length} matches. Choose one.`,
+      contextSummary: `clarify request (${plan.choices.length} choices)`,
+      contextOutcome: "clarification requested",
+    };
+  }
+  return runPlanSteps(plan, { tabId: tab.id, source, gen, seq, pruned });
 }
 
 async function dispatchCommand(rawText, source) {
@@ -1027,6 +1536,10 @@ async function dispatchCommand(rawText, source) {
     setVoiceState("Voice: error — another panel operation is in progress. Wait for it to finish, then send the command again.", true);
     return;
   }
+  const plannerApi = globalThis.SeeyablePlanner || null;
+  // Cached corrections resolve against the CURRENT sequence, so the cache
+  // is taken (consumed) before this command bumps it.
+  const correction = plannerApi ? takeCorrectionRequest(rawText) : null;
   // A new command invalidates any pending clarification choices.
   interactionSeq += 1;
   clearClarification();
@@ -1044,7 +1557,12 @@ async function dispatchCommand(rawText, source) {
   const commandsApi = globalThis.SeeyableCommands || null;
   const local = resolved.kind === "unknown" && commandsApi ? commandsApi.parseLocalCommand(rawText) : null;
   const isPageAction = Boolean(local && (local.kind === "click" || local.kind === "fill"));
-  if (resolved.kind === "unknown" && !isPageAction) {
+  const isCorrection = Boolean(correction && correction.valid);
+  // Issue #14: anything the fast path cannot shape goes to the planner
+  // instead of the old unsupported branch — compounds included. Cached
+  // corrections stay fully local (zero model calls).
+  const isPlanner = Boolean(plannerApi) && !isCorrection && resolved.kind === "unknown" && !isPageAction;
+  if (resolved.kind === "unknown" && !isPageAction && !isCorrection && !isPlanner) {
     presentCommandHelp(local && local.reason ? `Unsupported command — ${local.reason}. ` : "Unsupported command. ");
     return;
   }
@@ -1054,14 +1572,16 @@ async function dispatchCommand(rawText, source) {
   commandPending = true;
   updateExecuteEnabled(); // command dispatch holds the shared panel lock
   updateVoiceControls();
-  setVoiceState(!isPageAction
+  setVoiceState(!isPageAction && !isPlanner && !isCorrection
     ? (resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…")
+    : isPlanner ? "Voice: acting — planning…"
+    : isCorrection ? "Voice: acting — trying the other one…"
     : `Voice: acting — ${local.kind === "click" ? "clicking" : "filling"} “${local.target}”…`);
   let outcome = null;
   try {
     if (resolved.kind === "show-tags") {
       outcome = await runShowTags({ viaCommand: true });
-    } else if (!isPageAction) {
+    } else if (!isPageAction && !isPlanner && !isCorrection) {
       // Capture and retain the target tab now — even with no bound
       // snapshot — so a mid-dispatch switch cannot retarget the
       // command, and navigation/reload of that tab invalidates it.
@@ -1072,6 +1592,10 @@ async function dispatchCommand(rawText, source) {
         voiceTabId = tab.id;
         outcome = await runHideTags(tab.id, { viaCommand: true });
       }
+    } else if (isCorrection) {
+      outcome = await runCorrectionCommand(correction, source, gen, seq);
+    } else if (isPlanner) {
+      outcome = await runPlannerCommand(rawText, source, gen, seq, local && local.reason);
     } else {
       outcome = await runPageActionCommand(local, source, gen, seq);
     }
@@ -1088,20 +1612,40 @@ async function dispatchCommand(rawText, source) {
     // never present or speak the late result as acting on this page.
     // A request that already reached the executor may still have run;
     // say so instead of implying cancellation reversed it.
-    voicePhase = recognizer && recognizer.isActive() ? "finishing" : "idle";
     const reason = discardMessage;
     discardMessage = null;
     pendingSpoken = null;
     const late = outcome && outcome.reached
       ? " It may already have reached the page, so check page state before continuing."
       : "";
-    setVoiceState(reason
-      ? `Voice: idle — ${reason}${late}`
-      : `Voice: idle — the tab or document changed while the command was running; its result was discarded.${late}`, true);
+    // One authoritative surface for the discard outcome: #status presents
+    // it (never the late result, never a success claim), replacing any
+    // obsolete planning/progress text ("Planning…", "Step 2 of 4…").
+    // #voiceState reports microphone lifecycle only via the shared
+    // settling helper, so the two role="status" regions never announce
+    // the same outcome twice. The status write re-renders the chip,
+    // which shows Paused while the executor gate is closed. Dispatch is
+    // single-flight — every command entry holds commandPending and every
+    // status-writing panel operation is locked out until it settles — so
+    // this write cannot overwrite a newer command's status.
+    setStatus(reason
+      ? `Command discarded — ${reason}${late}`
+      : `Command discarded — the tab or document changed while it was running; its result was discarded.${late}`, true);
+    settleVoiceAfterCommand();
     updateVoiceControls();
     return;
   }
   discardMessage = null;
+  // Acting commands (fast path, planner, correction) append one bounded,
+  // value-free { summary, outcome } entry to the document-scoped planner
+  // context. Summaries come from separated structure (parsed action +
+  // target label, planned step names) — never the raw transcript.
+  // Discarded commands record nothing: their outcome is unknown.
+  if ((isPageAction || isPlanner || isCorrection) && state.snapshot && state.boundTabId !== null) {
+    recordPlannerContext(state.boundTabId, state.snapshot.documentSessionId,
+      outcome.contextSummary || (isPlanner ? "plan request" : isCorrection ? "correction request" : `${local.kind} ${local.target}`),
+      outcome.contextOutcome || (outcome.clarify ? "clarification requested" : outcome.ok ? "completed" : "failed"));
+  }
   setStatus(outcome.message, !outcome.ok);
   if (outcome.ok) {
     // A completed command is recovery from any prior recognition error.
@@ -1609,6 +2153,7 @@ $("btnPauseExec").addEventListener("click", async () => {
     // choice must never dispatch after Resume. Resume restores
     // availability only; it revives nothing.
     interactionSeq += 1;
+    abortPlannerFetch();
     discardMessage = "execution was paused; pending page commands and choices were discarded.";
     pendingSpoken = null;
     clearClarification();

@@ -32,7 +32,7 @@ executor, a planner, or tests without layout changes.
 | `questionSource` | `fieldset-legend`, `group-aria`, `group-heading`, `container-heading`, `section-heading`, or `null` |
 | `questionCertain` | `true` only for standards-based group relationships (legend, named ARIA group). Proximity inferences are `false` |
 | `context` | Human-readable combination of question, heading, group, form, and landmark |
-| `state` | Applicable `checked`, `selected`, `disabled`, `expanded`, `pressed`, `required`, `readonly`, `invalid`; plus `value` for non-sensitive fields, or `redacted` + `filled` for protected fields (raw sensitive values are never emitted) |
+| `state` | Applicable `checked`, `selected`, `disabled`, `expanded`, `pressed`, `required`, `readonly`, `invalid`; plus `value` for non-sensitive fields, or `redacted` + `filled` for protected fields (raw sensitive values are never emitted). Native `<select>` elements also carry `options`: the full `[{ label, value, disabled? }]` choice list with effective disabled state (direct or via a disabled `optgroup`); sensitive selects stay redacted and expose no options. Option edits are part of `state`, so they flow through normalization, the semantic hash, deltas, and invalidation unchanged |
 | `actionable` | Eligible for future execution: visible and neither disabled nor read-only |
 | `actionableReason` | `null`, `"disabled"`, or `"readonly"` |
 | `inViewport` | Whether the control intersects the viewport. Offscreen controls remain in the snapshot |

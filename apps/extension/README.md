@@ -26,7 +26,9 @@ and a redacted action log. It contains no planner or MCP server.
 
 The panel is a product surface: identity and tag state, current status,
 voice/typed commands (`show tags`, `hide tags`, `click <target>`,
-`fill <target> with <value>`), and the
+`fill <target> with <value>`, plus planner-routed compound requests
+when the local planner proxy in `apps/planner-proxy` is running and
+paired), and the
 Safety section (confirmation, Stop/Pause/Resume, gate status) are
 always visible. Diagnostic tools — snapshot buttons, JSON copy/download,
 tag visibility buttons, highlight-by-number, manual single-action

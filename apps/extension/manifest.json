@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "description": "Captures labelled snapshots of page controls (DOM/ARIA) for accessibility evaluation.",
   "permissions": ["activeTab", "scripting", "sidePanel", "storage", "tabs"],
-  "host_permissions": ["http://127.0.0.1:6123/*"],
+  "host_permissions": ["http://127.0.0.1:6123/*", "http://127.0.0.1:6124/*"],
   "background": {
     "service_worker": "background.js"
   },

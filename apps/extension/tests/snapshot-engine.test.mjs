@@ -305,3 +305,56 @@ test("roles: role=img and other non-interactive roles are excluded even with nam
   assert.ok(byName(snap, "Real field"));
   assert.ok(byName(snap, "Real action"));
 });
+
+/* Issue #14: native-dropdown option metadata for select planning */
+test("options: select exposes labels, exact values, and effective disabled state", () => {
+  const { engine } = load(`<form>
+    <label for="role">Your role</label>
+    <select id="role" name="role">
+      <option value="">Choose…</option>
+      <option value="designer">Designer</option>
+      <option value="pm">Product manager</option>
+      <option value="legacy" disabled>Legacy (disabled)</option>
+      <optgroup label="Old" disabled><option value="archived">Archived</option></optgroup>
+      <optgroup label="New"><option value="contractor">Contractor</option></optgroup>
+    </select>
+  </form>`);
+  const snap = engine.snapshot();
+  const role = byName(snap, "Your role");
+  assert.equal(role.role, "combobox");
+  assert.deepEqual(role.state.options, [
+    { label: "Choose…", value: "" },
+    { label: "Designer", value: "designer" },
+    { label: "Product manager", value: "pm" },
+    { label: "Legacy (disabled)", value: "legacy", disabled: true },
+    { label: "Archived", value: "archived", disabled: true },
+    { label: "Contractor", value: "contractor" },
+  ]);
+});
+
+test("options: sensitive selects stay redacted with no option metadata", () => {
+  const { engine } = load(`<form>
+    <label for="cc">Card number</label>
+    <select id="cc" name="card-number">
+      <option value="visa">Visa</option><option value="mc">Mastercard</option>
+    </select>
+  </form>`);
+  const snap = engine.snapshot();
+  const cc = byName(snap, "Card number");
+  assert.equal(cc.state.redacted, true);
+  assert.equal(cc.state.options, undefined);
+  assert.ok(!JSON.stringify(snap).includes("Mastercard"), "sensitive option labels must not leak");
+});
+
+test("options: option edits change the semantic hash and invalidate the snapshot", () => {
+  const { engine, doc } = load(`<form><label for="r">Role</label><select id="r"><option value="a">A</option></select></form>`);
+  const before = engine.snapshot();
+  doc.querySelector("#r").insertAdjacentHTML("beforeend", `<option value="b">B</option>`);
+  const check = engine.checkForChanges();
+  assert.equal(check.changed, true);
+  assert.ok(check.revision > before.revision);
+  assert.ok(check.delta.updated.some((u) => u.changedFields.includes("state")), "option edits surface as state changes");
+  engine.snapshot();
+  doc.querySelector('option[value="b"]').disabled = true;
+  assert.equal(engine.checkForChanges().changed, true, "disabling an option invalidates too");
+});
