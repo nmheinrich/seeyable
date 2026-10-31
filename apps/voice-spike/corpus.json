@@ -1,0 +1,34 @@
+{
+  "note": "PROVISIONAL corpus for Issue #12. No canonical Act 1 script was found in the repository or issue body; these sentences were authored for this spike from the issue's category list. Canonical-script validation is PENDING. All content is fictional. The submission sentence is audio test content only — never authorization to submit a page, and test audio must not enter the production command dispatcher.",
+  "recording": "16 kHz mono WAV preferred. Same speaker, same room, same mic for all takes. Three repetitions per sentence per provider where feasible. Name files <id>-take<N>.wav.",
+  "sentences": [
+    {
+      "id": "s1-multi",
+      "category": "multiple survey answers",
+      "reference": "I visit weekly. Cleanliness is excellent, parking was good, and staff were okay.",
+      "critical": ["weekly", "cleanliness", "excellent", "parking", "good", "staff", "okay"]
+    },
+    {
+      "id": "s2-correction",
+      "category": "correction to the staff rating",
+      "reference": "No, actually staff were great, not just okay.",
+      "critical": ["no", "staff", "great", "not", "okay"]
+    },
+    {
+      "id": "s3-dictation",
+      "category": "read-back and comment dictation",
+      "reference": "For my comment, write: the lobby was bright and check-in took five minutes.",
+      "critical": ["comment", "lobby", "bright", "check-in", "five", "minutes"]
+    },
+    {
+      "id": "s4-review",
+      "category": "review and submission wording",
+      "reference": "Review my answers, then submit the survey.",
+      "critical": ["review", "answers", "submit", "survey"]
+    }
+  ],
+  "controls": [
+    { "id": "c1-show", "category": "current-product control", "reference": "show tags", "critical": ["show", "tags"] },
+    { "id": "c2-hide", "category": "current-product control", "reference": "hide tags", "critical": ["hide", "tags"] }
+  ]
+}

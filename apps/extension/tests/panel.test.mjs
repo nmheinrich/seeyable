@@ -10,6 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, "../sidepanel.html"), "utf8");
 const panelJs = readFileSync(join(here, "../sidepanel.js"), "utf8");
 const voiceJs = readFileSync(join(here, "../lib/voice-commands.js"), "utf8");
+const commandsJs = readFileSync(join(here, "../lib/command-resolver.js"), "utf8");
 const overlayJs = readFileSync(join(here, "../lib/overlay.js"), "utf8");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tick = async () => { await sleep(0); await sleep(0); await sleep(0); };
@@ -62,6 +63,7 @@ function makePanel(sendImpl, opts = {}) {
   };
   if (!win.navigator.clipboard) Object.defineProperty(win.navigator, "clipboard", { value: { writeText: async () => {} } });
   win.eval(voiceJs);
+  win.eval(commandsJs); // local click/fill resolver (Issue #13)
   win.eval(overlayJs); // shared word-first label builder used by the panel
   win.eval(panelJs);
   const doc = win.document;
@@ -595,6 +597,458 @@ test("voice: interim never dispatches; final dispatches once despite duplicate c
   panel.dom.window.close();
 });
 
+/* --- Issue #13: local page-action commands ---------------------------------- */
+function pageActionImpl(snapshot, onExecute) {
+  return async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot };
+    if (msg.type === "SEEYABLE_EXECUTE_ACTION") {
+      if (onExecute) return onExecute(msg.request);
+      return {
+        ok: true, result: { verified: true },
+        newSnapshotDiff: { added: [], removed: [], updated: [] },
+        documentSessionId: snapshot.documentSessionId, revision: snapshot.revision,
+      };
+    }
+    if (msg.type === "SEEYABLE_CANCEL_CHALLENGE") return { ok: true };
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    throw new Error("unexpected " + msg.type);
+  };
+}
+function sendTyped(panel, text) {
+  panel.$("commandInput").value = text;
+  panel.$("btnSendCommand").click();
+}
+
+test("page-action: typed click exact match executes once through the shared contract", async () => {
+  const snapshot = snap([el("el-1", "Full name"), el("el-2", "Work email")]);
+  const speech = makeSpeechMock();
+  const panel = makePanel(pageActionImpl(snapshot), { speech });
+  panel.win.fetch = async () => { throw new Error("network used by local resolution"); };
+  sendTyped(panel, "click Full name");
+  await tick(); await tick();
+  const execs = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION");
+  assert.equal(execs.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(execs[0].msg.request)), {
+    action: "click", elementId: "el-1", documentSessionId: "doc-A", revision: 1, source: "manual",
+  });
+  assert.match(panel.$("status").textContent, /Clicked Full name\. Completed and verified/);
+  assert.deepEqual(speech.spoken, ["Clicked Full name."]);
+  panel.dom.window.close();
+});
+
+test("page-action: typed fill preserves the value verbatim and never surfaces it", async () => {
+  const snapshot = snap([el("el-7", "Short bio", { role: "textbox" })]);
+  const speech = makeSpeechMock();
+  const panel = makePanel(pageActionImpl(snapshot), { speech });
+  sendTyped(panel, "fill Short bio with Ada Lovelace, Esq.!");
+  await tick(); await tick();
+  const execs = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION");
+  assert.equal(execs.length, 1);
+  assert.equal(JSON.parse(JSON.stringify(execs[0].msg.request)).value, "Ada Lovelace, Esq.!");
+  for (const text of [panel.$("status").textContent, panel.$("voiceState").textContent, speech.spoken.join(" ")]) {
+    assert.ok(!text.includes("Ada"), "fill values stay out of status, voice state, and speech");
+  }
+  assert.deepEqual(speech.spoken, ["Filled Short bio."]);
+  panel.dom.window.close();
+});
+
+test("page-action: clear fuzzy executes; weak matches execute nothing", async () => {
+  const snapshot = snap([el("el-1", "Full name"), el("el-2", "Work email")]);
+  const panel = makePanel(pageActionImpl(snapshot));
+  sendTyped(panel, "click ful name");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1);
+  sendTyped(panel, "click banana phone");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1, "weak match dispatches nothing");
+  assert.match(panel.$("status").textContent, /No confident match/);
+  panel.dom.window.close();
+});
+
+test("page-action: duplicate Continue clarifies; choice executes with stored binding", async () => {
+  const snapshot = snap([
+    el("el-10", "Continue", { question: "Shipping address", questionCertain: true, role: "button" }),
+    el("el-11", "Continue", { question: "Payment method", questionCertain: true, role: "button" }),
+  ]);
+  const panel = makePanel(pageActionImpl(snapshot));
+  sendTyped(panel, "click Continue");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 0, "ambiguity executes nothing");
+  assert.equal(panel.$("clarifyBox").hidden, false);
+  const buttons = [...panel.$("clarifyChoices").querySelectorAll("button")];
+  assert.equal(buttons.length, 2);
+  assert.match(buttons[0].textContent, /Shipping address/);
+  assert.match(buttons[1].textContent, /Payment method/);
+  buttons[1].click();
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1);
+  const req = JSON.parse(JSON.stringify(panel.calls.send.find((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION").msg.request));
+  assert.deepEqual(req, { action: "click", elementId: "el-11", documentSessionId: "doc-A", revision: 1, source: "manual" });
+  assert.equal(panel.$("clarifyBox").hidden, true);
+  panel.dom.window.close();
+});
+
+test("page-action: five exact matches are all reachable; option 5 dispatches its id once", async () => {
+  const snapshot = snap(["1", "2", "3", "4", "5"].map((n, i) =>
+    el(`el-${i + 1}`, n, { question: "How satisfied are you?", questionCertain: true, role: "radio" })));
+  const panel = makePanel(pageActionImpl(snapshot));
+  sendTyped(panel, "click How satisfied are you");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 0, "ambiguity executes nothing");
+  assert.match(panel.$("clarifyPrompt").textContent, /matches 5 controls/, "the prompt states the complete set");
+  const buttons = [...panel.$("clarifyChoices").querySelectorAll("button")];
+  assert.equal(buttons.length, 5, "no exact match is discarded to meet a cap");
+  assert.match(buttons[4].textContent, /5 — How satisfied are you\?/, "words and context lead");
+  assert.match(buttons[4].textContent, /\(#5\)$/, "the internal number is secondary");
+  buttons[4].click();
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1);
+  const req = JSON.parse(JSON.stringify(panel.calls.send.find((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION").msg.request));
+  assert.equal(req.elementId, "el-5", "the fifth option sends its own snapshot id");
+  panel.dom.window.close();
+});
+
+test("page-action: compound, negated, and incomplete commands send nothing", async () => {
+  const snapshot = snap([el("el-1", "Full name")]);
+  const panel = makePanel(pageActionImpl(snapshot));
+  for (const text of ["click Continue and submit", "don't click Full name", "never fill bio with x", "click", "fill Full name", "fill Full name with", "tap Full name"]) {
+    sendTyped(panel, text);
+    await tick();
+  }
+  assert.equal(panel.calls.send.length, 0, "rejected parses never touch the tab");
+  assert.equal(panel.calls.execute, 0);
+  assert.match(panel.$("status").textContent, /Supported commands/);
+  panel.dom.window.close();
+});
+
+test("page-action: disabled exact match is rejected by the executor, not redirected", async () => {
+  const snapshot = snap([
+    el("el-5", "Save draft", { role: "button", state: { disabled: true }, actionable: false }),
+    el("el-6", "Save draft copy", { role: "button" }),
+  ]);
+  const panel = makePanel(pageActionImpl(snapshot, () => ({
+    ok: false, error: { code: "TARGET_DISABLED", message: "Target el-5 is disabled." },
+    newSnapshotDiff: null, diffUnavailableReason: "rejected before dispatch",
+    documentSessionId: "doc-A", revision: 1,
+  })));
+  sendTyped(panel, "click Save draft");
+  await tick(); await tick();
+  const execs = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION");
+  assert.equal(execs.length, 1);
+  assert.equal(JSON.parse(JSON.stringify(execs[0].msg.request)).elementId, "el-5");
+  assert.match(panel.$("status").textContent, /Could not click Save draft: TARGET_DISABLED/);
+  panel.dom.window.close();
+});
+
+test("page-action: consequential click is held for human approval", async () => {
+  const snapshot = snap([el("el-20", "Submit survey", { role: "button" })]);
+  const speech = makeSpeechMock();
+  const panel = makePanel(pageActionImpl(snapshot, () => ({
+    ok: false,
+    error: { code: "CONFIRMATION_REQUIRED", message: "Approval required." },
+    confirmation: {
+      challengeId: "ch-1", elementId: "el-20", action: "click", targetName: "Submit survey",
+      consequence: "This submits the form.", expiresAt: "2099-01-01T00:00:00.000Z",
+    },
+    diffUnavailableReason: "awaiting human confirmation",
+    documentSessionId: "doc-A", revision: 1,
+  })), { speech });
+  sendTyped(panel, "click Submit survey");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1, "one held request, zero activations");
+  assert.equal(panel.$("confirmBox").hidden, false);
+  assert.equal(panel.doc.activeElement.id, "confirmTitle", "focus moves to the confirmation heading, never Approve");
+  assert.match(panel.$("status").textContent, /waiting for your approval/);
+  assert.deepEqual(speech.spoken, ["Waiting for your approval."]);
+  panel.dom.window.close();
+});
+
+test("page-action: stale clarification choices expire without executing", async () => {
+  const snapshot = snap([
+    el("el-10", "Continue", { question: "Shipping", questionCertain: true, role: "button" }),
+    el("el-11", "Continue", { question: "Payment", questionCertain: true, role: "button" }),
+  ]);
+  const panel = makePanel(pageActionImpl(snapshot));
+  sendTyped(panel, "click Continue");
+  await tick(); await tick();
+  const stale = [...panel.$("clarifyChoices").querySelectorAll("button")];
+  for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 }); // tab change invalidates
+  await tick();
+  assert.equal(panel.$("clarifyBox").hidden, true);
+  stale[0].click(); // detached button: the guard must still hold
+  await tick();
+  assert.equal(panel.calls.execute, 0);
+  assert.match(panel.$("status").textContent, /expired/);
+  panel.dom.window.close();
+});
+
+test("page-action: a newer command invalidates pending clarification", async () => {
+  const snapshot = snap([
+    el("el-10", "Continue", { question: "Shipping", questionCertain: true, role: "button" }),
+    el("el-11", "Continue", { question: "Payment", questionCertain: true, role: "button" }),
+  ]);
+  const panel = makePanel(pageActionImpl(snapshot));
+  sendTyped(panel, "click Continue");
+  await tick(); await tick();
+  const stale = [...panel.$("clarifyChoices").querySelectorAll("button")];
+  sendTyped(panel, "click banana phone"); // newer command supersedes
+  await tick(); await tick();
+  stale[0].click();
+  await tick();
+  assert.equal(panel.calls.execute, 0);
+  assert.match(panel.$("status").textContent, /expired/);
+  panel.dom.window.close();
+});
+
+test("page-action: voice final dispatches click once; duplicate finals dispatch once", async () => {
+  const snapshot = snap([el("el-1", "Full name")]);
+  const speech = makeSpeechMock();
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const panel = makePanel(pageActionImpl(snapshot), { speech, speechRecognition: FakeRecognition });
+  panel.$("btnListen").click();
+  await tick();
+  instances[0].fireStart();
+  instances[0].fireResult("click Full name", true);
+  instances[0].fireResult("click Full name", true);
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1);
+  const req = JSON.parse(JSON.stringify(panel.calls.send.find((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION").msg.request));
+  assert.equal(req.source, "voice");
+  assert.deepEqual(speech.spoken, [], "no spoken feedback while recognition is still active");
+  instances[0].fireEnd();
+  assert.deepEqual(speech.spoken, ["Clicked Full name."]);
+  panel.dom.window.close();
+});
+
+test("page-action: sensitive fill is blocked by the executor; value stays out of messages", async () => {
+  const snapshot = snap([el("el-5", "Account PIN", { role: "textbox" })]);
+  const speech = makeSpeechMock();
+  const panel = makePanel(pageActionImpl(snapshot, () => ({
+    ok: false, error: { code: "SENSITIVE_FIELD", message: "Target el-5 is a protected field; writes are blocked in this milestone." },
+    newSnapshotDiff: null, diffUnavailableReason: "rejected before dispatch",
+    documentSessionId: "doc-A", revision: 1,
+  })), { speech });
+  sendTyped(panel, "fill Account PIN with 1234");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1);
+  assert.match(panel.$("status").textContent, /Could not fill Account PIN: SENSITIVE_FIELD/);
+  assert.ok(!panel.$("status").textContent.includes("1234"), "rejected value is not echoed");
+  assert.deepEqual(speech.spoken, [], "failures are not spoken as success");
+  panel.dom.window.close();
+});
+
+test("page-action: paused executor surfaces honestly through commands", async () => {
+  const snapshot = snap([el("el-1", "Full name")]);
+  const panel = makePanel(pageActionImpl(snapshot, () => ({
+    ok: false, error: { code: "EXECUTION_PAUSED", message: "Execution is paused." },
+    newSnapshotDiff: null, diffUnavailableReason: "paused",
+    documentSessionId: "doc-A", revision: 1,
+  })));
+  sendTyped(panel, "click Full name");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1, "one attempt, no replay around the pause");
+  assert.match(panel.$("status").textContent, /EXECUTION_PAUSED/);
+  panel.dom.window.close();
+});
+
+test("page-action: voice cancellation during held execution discards without replay", async () => {
+  const snapshot = snap([el("el-1", "Full name")]);
+  const speech = makeSpeechMock();
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  let release;
+  const held = new Promise((res) => { release = res; });
+  const panel = makePanel(pageActionImpl(snapshot, () => held), { speech, speechRecognition: FakeRecognition });
+  panel.$("btnListen").click();
+  await tick();
+  instances[0].fireStart();
+  instances[0].fireResult("click Full name", true);
+  await tick();
+  assert.equal(panel.calls.execute, 1);
+  panel.$("btnCancelListen").click(); // invalidates the in-flight interaction
+  release({ ok: true, result: { verified: true }, newSnapshotDiff: null, documentSessionId: "doc-A", revision: 1 });
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1, "no replay after cancellation");
+  assert.match(panel.$("voiceState").textContent, /cancelled/);
+  panel.dom.window.close();
+});
+
+test("page-action: tab change during held execution discards honestly without replay", async () => {
+  const snapshot = snap([el("el-1", "Full name")]);
+  let release;
+  const held = new Promise((res) => { release = res; });
+  const panel = makePanel(pageActionImpl(snapshot, () => held));
+  sendTyped(panel, "click Full name");
+  await tick();
+  for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 });
+  release({ ok: true, result: { verified: true }, newSnapshotDiff: null, documentSessionId: "doc-A", revision: 1 });
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1, "exactly one dispatch, never replayed");
+  assert.match(panel.$("voiceState").textContent, /result was discarded/);
+  panel.dom.window.close();
+});
+
+test("page-action: cancel during held execution revokes the late challenge; no approval appears", async () => {
+  const snapshot = snap([el("el-20", "Submit survey", { role: "button" })]);
+  let release;
+  const held = new Promise((res) => { release = res; });
+  const speech = makeSpeechMock();
+  const panel = makePanel(pageActionImpl(snapshot, () => held), { speech });
+  sendTyped(panel, "click Submit survey");
+  await tick();
+  assert.equal(panel.calls.execute, 1);
+  panel.$("btnCancelListen").click(); // cancel while the executor holds the request
+  release({
+    ok: false,
+    error: { code: "CONFIRMATION_REQUIRED", message: "Approval required." },
+    confirmation: {
+      challengeId: "ch-late", elementId: "el-20", action: "click", targetName: "Submit survey",
+      consequence: "This submits the form.", expiresAt: "2099-01-01T00:00:00.000Z",
+    },
+    documentSessionId: "doc-A", revision: 1,
+  });
+  await tick(); await tick();
+  assert.equal(panel.$("confirmBox").hidden, true, "cancelled command must never become approvable");
+  const cancels = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_CANCEL_CHALLENGE");
+  assert.equal(cancels.length, 1, "the late challenge is revoked through the trusted cancel route");
+  assert.equal(cancels[0].msg.challengeId, "ch-late");
+  assert.match(panel.$("voiceState").textContent, /cancelled/);
+  assert.match(panel.$("voiceState").textContent, /may already have reached the page/, "honest about possible dispatch");
+  assert.deepEqual(speech.spoken, [], "no approval prompt is spoken for a cancelled command");
+  panel.dom.window.close();
+});
+
+function gateImpl(snapshot, gateState) {
+  const inner = pageActionImpl(snapshot);
+  return async (t, msg) => {
+    if (msg.type === "SEEYABLE_GATE_CONTROL") {
+      if (msg.command === "stop") { gateState.stopped = true; gateState.paused = false; }
+      else if (msg.command === "pause") { gateState.paused = true; gateState.stopped = false; }
+      else { gateState.paused = false; gateState.stopped = false; }
+      return { ok: true, gate: { ...gateState } };
+    }
+    return inner(t, msg);
+  };
+}
+
+test("page-action: Pause/Resume during snapshot acquisition dispatches nothing", async () => {
+  let releaseSnap;
+  const heldSnap = new Promise((res) => { releaseSnap = res; });
+  const snapshot = snap([el("el-1", "Full name")]);
+  const gateState = { paused: false, stopped: false };
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") { await heldSnap; return { ok: true, snapshot }; }
+    return gateImpl(snapshot, gateState)(t, msg);
+  });
+  sendTyped(panel, "click Full name"); // no bound snapshot: acquisition starts
+  await tick();
+  assert.equal(panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_SNAPSHOT_DOM").length, 1);
+  panel.$("btnPauseExec").click();
+  await tick();
+  assert.equal(panel.$("btnPauseExec").textContent, "Resume");
+  panel.$("btnPauseExec").click(); // Resume restores availability only
+  await tick();
+  assert.equal(panel.$("btnPauseExec").textContent, "Pause");
+  releaseSnap();
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 0, "the older command must never revive after Resume");
+  assert.match(panel.$("voiceState").textContent, /paused/);
+  panel.dom.window.close();
+});
+
+test("page-action: Stop/Resume during snapshot acquisition dispatches nothing", async () => {
+  let releaseSnap;
+  const heldSnap = new Promise((res) => { releaseSnap = res; });
+  const snapshot = snap([el("el-1", "Full name")]);
+  const gateState = { paused: false, stopped: false };
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") { await heldSnap; return { ok: true, snapshot }; }
+    return gateImpl(snapshot, gateState)(t, msg);
+  });
+  sendTyped(panel, "click Full name");
+  await tick();
+  panel.$("btnStopExec").click();
+  await tick();
+  assert.equal(panel.$("btnPauseExec").textContent, "Resume", "stopped gate offers Resume");
+  panel.$("btnPauseExec").click();
+  await tick();
+  releaseSnap();
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 0, "Stop permanently invalidates the pending command");
+  assert.match(panel.$("voiceState").textContent, /stopped/);
+  panel.dom.window.close();
+});
+
+test("page-action: obsolete clarification callback cannot cross-wire a newer round", async () => {
+  const snapshot = snap([
+    el("el-1", "Email", { question: "Account", questionCertain: true }),
+    el("el-2", "Email", { question: "Recovery", questionCertain: true }),
+    el("el-3", "Comment", { question: "Visit", questionCertain: true }),
+    el("el-4", "Comment", { question: "Staff", questionCertain: true }),
+  ]);
+  const panel = makePanel(pageActionImpl(snapshot));
+  sendTyped(panel, "fill Email with first");
+  await tick(); await tick();
+  const oldButtons = [...panel.$("clarifyChoices").querySelectorAll("button")];
+  assert.equal(oldButtons.length, 2);
+  sendTyped(panel, "fill Comment with second"); // newer round supersedes the Email choices
+  await tick(); await tick();
+  assert.equal(panel.$("clarifyBox").hidden, false);
+  assert.match(panel.$("clarifyPrompt").textContent, /Comment/);
+  oldButtons[0].click(); // obsolete Email callback while Comment round is pending
+  await tick();
+  assert.equal(panel.calls.execute, 0, "an obsolete choice executes nothing");
+  assert.equal(panel.$("clarifyBox").hidden, false, "the newer clarification stays visible");
+  assert.match(panel.$("clarifyPrompt").textContent, /Comment/, "the newer clarification is unaltered");
+  const current = [...panel.$("clarifyChoices").querySelectorAll("button")];
+  assert.equal(current.length, 2);
+  current[0].click(); // the valid current choice still works with ITS target and value
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1);
+  const req = JSON.parse(JSON.stringify(panel.calls.send.find((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION").msg.request));
+  assert.deepEqual(req, { action: "fill", elementId: "el-3", documentSessionId: "doc-A", revision: 1, value: "second", source: "manual" });
+  panel.dom.window.close();
+});
+
+test("page-action: command lock spans the post-action refresh; late refresh cannot reorder state", async () => {
+  const rev1 = snap([el("el-1", "Full name")], 1);
+  const rev2 = snap([el("el-1", "Full name")], 2);
+  let releaseRefresh;
+  const heldRefresh = new Promise((res) => { releaseRefresh = res; });
+  let snapshots = 0;
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
+      snapshots += 1;
+      if (snapshots === 1) return { ok: true, snapshot: rev1 };
+      await heldRefresh;
+      return { ok: true, snapshot: rev2 };
+    }
+    if (msg.type === "SEEYABLE_EXECUTE_ACTION") {
+      return { ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 1 };
+    }
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    throw new Error("unexpected " + msg.type);
+  });
+  sendTyped(panel, "click Full name");
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1, "command dispatched while its refresh is held");
+  assert.equal(panel.$("btnSendCommand").disabled, true, "Send stays disabled through the refresh");
+  // A second command during the held refresh: the disabled Send click is
+  // dropped, and the Enter path hits the dispatch guard — nothing queues.
+  panel.$("commandInput").value = "click Full name";
+  panel.$("btnSendCommand").click();
+  panel.$("commandInput").dispatchEvent(new panel.win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(panel.calls.execute, 1, "exactly one dispatch until refresh completes");
+  assert.match(panel.$("voiceState").textContent, /already running/);
+  for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 }); // tab change before release
+  releaseRefresh();
+  await tick(); await tick();
+  assert.equal(panel.calls.execute, 1, "no replay");
+  assert.equal(panel.$("targetSelect").options.length, 1, "the late refresh cannot restore the old tab's targets");
+  assert.match(panel.$("voiceState").textContent, /discarded/);
+  panel.dom.window.close();
+});
+
 test("commands: unknown, negated, and empty input execute nothing and list supported commands", async () => {
   const panel = makePanel(tagImpl, { speech: makeSpeechMock() });
   for (const text of ["don't show tags", "delete the page", "show tags please", ""]) {
@@ -605,7 +1059,23 @@ test("commands: unknown, negated, and empty input execute nothing and list suppo
   assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0);
   assert.equal(tagCalls(panel, "SEEYABLE_HIDE_TAGS"), 0);
   assert.equal(panel.calls.execute, 0);
-  assert.match(panel.$("voiceState").textContent, /Supported commands: "show tags" and "hide tags"/);
+  assert.match(panel.$("status").textContent, /Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>"/);
+  panel.dom.window.close();
+});
+
+test("commands: typed unsupported input shows one error; voice stays idle; no error pill", async () => {
+  const panel = makePanel(tagImpl, { speech: makeSpeechMock() });
+  panel.$("commandInput").value = "delete the page";
+  panel.$("btnSendCommand").click();
+  await tick();
+  assert.match(panel.$("status").textContent, /Unsupported command/, "the one authoritative error message");
+  assert.ok(panel.$("status").classList.contains("error"), "the error is styled as an error");
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "no duplicate voice failure for typed input");
+  assert.equal(panel.$("stateChip").textContent, "Ready", "available for the next command; the failure stays visible in status");
+  assert.ok(!panel.$("stateChip").textContent.includes("Needs attention"), "no error pill");
+  assert.equal(panel.calls.execute, 0);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0);
+  assert.equal(tagCalls(panel, "SEEYABLE_HIDE_TAGS"), 0);
   panel.dom.window.close();
 });
 
@@ -734,7 +1204,8 @@ test("speech feedback: mute prevents speech; failed commands never speak success
   panel.$("btnSendCommand").click();
   await tick(); await tick();
   assert.deepEqual(speech.spoken, [], "muted and failed outcomes produce no spoken success");
-  assert.match(panel.$("voiceState").textContent, /error/i);
+  assert.match(panel.$("status").textContent, /error|failed|Could not/i, "the failure surfaces once, in status");
+  assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "no duplicate voice failure");
   panel.$("btnStopSpeech").click();
   assert.ok(speech.cancels() >= 1, "Stop speech cancels synthesis");
   panel.dom.window.close();
@@ -1161,7 +1632,8 @@ test("surface: cancelled listening never reads as a live microphone, even after 
   selectTarget(panel, "el-1");
   panel.$("btnExecute").click();
   await tick(); await tick();
-  assert.equal(panel.$("stateChip").textContent, "× Needs attention", "failed execution surfaces as an error state");
+  assert.match(panel.$("execResult").textContent, /ACTION_FAILED/, "the failure stays visible in its result surface");
+  assert.equal(panel.$("stateChip").textContent, "Ready", "available for the next command; no error pill hides the failure");
   assert.equal(panel.dom.window.document.body.dataset.voice, "idle", "failure must not leave a stale Listening phase");
   panel.dom.window.close();
 });
@@ -1184,7 +1656,7 @@ test("surface: verified completion, unverified dispatch, and gate states read ho
   panel.dom.window.close();
 });
 
-test("surface: denied recognition shows Needs attention while the microphone stays idle", async () => {
+test("surface: denied recognition stays visible and recoverable with no error pill", async () => {
   const speech = makeSpeechMock();
   const { FakeRecognition, instances } = makeRecognitionClass();
   const panel = makePanel(tagImpl, { speech, speechRecognition: FakeRecognition });
@@ -1193,9 +1665,11 @@ test("surface: denied recognition shows Needs attention while the microphone sta
   assert.equal(panel.$("stateChip").textContent, "Starting");
   instances[0].fireError("not-allowed");
   await tick();
-  assert.match(panel.$("voiceState").textContent, /Microphone access was denied/);
-  assert.equal(panel.$("stateChip").textContent, "× Needs attention", "unresolved denial surfaces as an error state");
+  assert.match(panel.$("voiceState").textContent, /Microphone access was denied/, "the denial stays visible in the voice surface");
+  assert.ok(panel.$("voiceState").classList.contains("error"));
+  assert.equal(panel.$("stateChip").textContent, "Ready", "available; the failure is the visible message, not a pill");
   assert.equal(panel.dom.window.document.body.dataset.voice, "idle", "an error is not an active microphone");
+  assert.equal(panel.$("btnListen").disabled, false, "a new attempt can recover immediately");
   panel.dom.window.close();
 });
 
@@ -1203,12 +1677,14 @@ test("surface: voice-error presentation clears on recovery, cancellation stays R
   const speech = makeSpeechMock();
   const { FakeRecognition, instances } = makeRecognitionClass();
   const panel = makePanel(tagImpl, { speech, speechRecognition: FakeRecognition });
-  // Denial, then a new start attempt clears the error presentation.
+  // Denial stays visible in the voice surface with no pill; a new
+  // start attempt supersedes the error presentation.
   panel.$("btnListen").click();
   await tick();
   instances[0].fireError("not-allowed");
   await tick();
-  assert.equal(panel.$("stateChip").textContent, "× Needs attention");
+  assert.match(panel.$("voiceState").textContent, /Microphone access was denied/);
+  assert.equal(panel.$("stateChip").textContent, "Ready");
   panel.$("btnListen").click();
   await tick();
   assert.equal(panel.$("stateChip").textContent, "Starting", "a new attempt supersedes the prior error");
@@ -1216,9 +1692,9 @@ test("surface: voice-error presentation clears on recovery, cancellation stays R
   // terminated session must stay ignored; only the new session counts.
   instances[1].fireError("not-allowed");
   await tick();
-  assert.equal(panel.$("stateChip").textContent, "× Needs attention");
+  assert.match(panel.$("voiceState").textContent, /Microphone access was denied/);
   instances[1].fireStart();
-  assert.equal(panel.$("stateChip").textContent, "× Needs attention", "onstart from a terminated session is ignored");
+  assert.match(panel.$("voiceState").textContent, /Microphone access was denied/, "onstart from a terminated session is ignored");
   panel.$("btnListen").click();
   await tick();
   instances[2].fireStart();
@@ -1226,7 +1702,7 @@ test("surface: voice-error presentation clears on recovery, cancellation stays R
   // Denial on the live session, then a successful typed command clears it.
   instances[2].fireError("not-allowed");
   await tick();
-  assert.equal(panel.$("stateChip").textContent, "× Needs attention");
+  assert.match(panel.$("voiceState").textContent, /Microphone access was denied/);
   panel.$("commandInput").value = "show tags";
   panel.$("btnSendCommand").click();
   await tick(); await tick(); await tick();

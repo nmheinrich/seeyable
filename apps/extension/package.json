@@ -4,7 +4,7 @@
   "private": true,
   "description": "Seeyable MV3 extension. Tests use Node's built-in runner with jsdom.",
   "scripts": {
-    "test": "node --test tests/snapshot-engine.test.mjs tests/overlay.test.mjs tests/executor.test.mjs tests/safety-gate.test.mjs tests/content-gate.test.mjs tests/panel.test.mjs tests/bridge-client.test.mjs tests/voice.test.mjs lib/snapshot-cdp.test.mjs"
+    "test": "node --test tests/snapshot-engine.test.mjs tests/overlay.test.mjs tests/executor.test.mjs tests/safety-gate.test.mjs tests/content-gate.test.mjs tests/panel.test.mjs tests/bridge-client.test.mjs tests/voice.test.mjs tests/command-resolver.test.mjs lib/snapshot-cdp.test.mjs"
   },
   "devDependencies": {
     "jsdom": "^24.1.0"

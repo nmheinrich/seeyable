@@ -30,7 +30,7 @@
 
 <section class="card commands" aria-labelledby="commandHeading">
   <h1 id="commandHeading" class="hero-title">Ready when you are.</h1>
-  <p class="hero-copy">Say or type <strong>“show tags”</strong> or <strong>“hide tags”</strong> — the only two commands that work today. Tag commands never run page actions.</p>
+  <p class="hero-copy">Say or type <strong>“show tags”</strong>, <strong>“hide tags”</strong>, <strong>“click …”</strong>, or <strong>“fill … with …”</strong>. Clicks and fills run locally through the same guarded executor as the panel — risky ones still pause for your approval.</p>
 
   <button id="btnListen" type="button" class="btn-mic">
     <span class="mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span>
@@ -58,6 +58,11 @@
     <button id="btnTryShow" type="button" class="chip-btn">Show tags</button>
     <button id="btnTryHide" type="button" class="chip-btn">Hide tags</button>
   </p>
+
+  <div id="clarifyBox" class="clarify" hidden>
+    <p id="clarifyPrompt" class="status" role="status"></p>
+    <div id="clarifyChoices" class="controls"></div>
+  </div>
 
   <button id="btnViewTargets" type="button" class="view-targets">View page targets ↓</button>
 
@@ -207,6 +212,7 @@
 
 <script src="lib/snapshot-cdp.js"></script>
 <script src="lib/voice-commands.js"></script>
+<script src="lib/command-resolver.js"></script>
 <script src="lib/overlay.js"></script>
 <script src="sidepanel.js"></script>
 </body>

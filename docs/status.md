@@ -18,7 +18,9 @@ the feature documents.
 | Shared executor safety gate | Complete and accepted — `docs/features/feature-11-shared-safety-gate.md` |
 | Plain Words product interface (#29) | Deferred by Product Owner on 2026-10-30; visually NOT accepted — `docs/features/feature-29-plain-words-interface.md` |
 | Planner, proxy | Not started |
+| Voice transcription spike (#12) | Timeboxed spike complete: INCONCLUSIVE / KEEP Web Speech — `docs/decision-voice-transcription.md`; zero provider takes; file-client mechanics verified offline (3/3); live comparison harness incomplete |
 | MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
+| Planner fast path (#13) | Checkpoint ready: headed typed exact/fuzzy fill, held Submit/cancel, compound rejection, clarification/expiry, five-choice access, single-error display, and live-mic click (one counter increment) passed. Voice fill remains limited by fill/feel/Phil recognition; full voice acceptance is not claimed — `docs/features/feature-13-local-command-fast-path.md` |
 
 Issue #29 is parked to prioritize remaining functionality. Keep its current
 uncommitted implementation; do not resume visual refinements without a new
@@ -36,11 +38,15 @@ requires no `debugger` permission; CDP remains debug-only via
 
 ## Verification evidence
 
-- Extension test suite: `npm --prefix apps/extension test` — 159/159
-  (147 prior plus twelve #28 bridge-client lifecycle regressions run
-  against the real client file in a VM, incl. heartbeat health,
-  restore-once semantics, identical-repeat preservation, and
-  credential/port replacement). MCP server suite:
+- Extension test suite: `npm --prefix apps/extension test` — 190/190
+  (159 prior plus 10 #13 resolver unit tests and 21 #13 page-action
+  dispatch tests: exact/fuzzy/weak matching, verbatim fills,
+  compound/negation rejection with zero sends, duplicate-context
+  clarification and expiry, disabled/sensitive/pause honesty, held
+  confirmation, voice dispatch-once, cancellation/tab-change
+  discard, the #13 ownership correction, plus the headed-feedback
+  correction: single-error presentation with no pill and complete
+  clarification sets). MCP server suite:
   `npm --prefix apps/mcp-server test` — 11/11 (bridge auth,
   correlation, failure handling, atomic single-auth,
   shutdown-with-live-clients, and ping/pong regressions).
@@ -212,7 +218,7 @@ requires no `debugger` permission; CDP remains debug-only via
   approval (real 320–420 px widths, actual 200% zoom, system dark
   theme, OS forced-colors, reduced motion, keyboard-only flows,
   long-name/error readability).
-- Planner/MCP remain separate future work.
+- Planner and the full MCP action toolset remain separate future work; #28's snapshot/highlight bridge is accepted.
 
 ## Known limitations to keep in mind
 

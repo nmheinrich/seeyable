@@ -1,0 +1,10 @@
+{
+  "name": "seeyable-voice-spike",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Issue #12 spike harness (offline; no dependencies).",
+  "scripts": {
+    "test": "node --test tests/transcribe-file.test.mjs"
+  }
+}

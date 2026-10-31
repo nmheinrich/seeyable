@@ -46,6 +46,14 @@ requested. Issue #28 (early local MCP bridge smoke test: stdio server,
 loopback bridge, tab-explicit snapshot/highlight tools) is complete and
 accepted. Product Owner confirmed explicit disconnect/re-pair and stale-target
 rejection after the headed snapshot/highlight and idle checks passed.
+Issue #12's timeboxed transcription spike is complete with an INCONCLUSIVE /
+KEEP Web Speech decision. No provider comparison was run; the isolated file
+client has offline tests only, and the live comparison harness is incomplete.
+Issue #13 (planner fast path: deterministic local click/fill resolver on the
+shared executor) is checkpoint ready: headed typed-command checks and a live
+voice click producing exactly one counter increment passed. Voice fill remains
+limited by fill/feel/Phil recognition; full voice acceptance is not claimed.
+No AI planner was built.
 See docs/status.md for verification evidence.
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

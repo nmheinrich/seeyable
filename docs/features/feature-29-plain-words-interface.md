@@ -67,10 +67,13 @@ rendering without synthesis.
   are only real ones: Ready, Starting/Listening/Finishing (voice
   phase), Acting/Working (an operation owns the panel), Held —
   nothing sent, Done (verified completion), Paused/Stopped, and
-  errors (unresolved voice errors show “Needs attention” while the
-  microphone phase stays idle).
+  errors (failures stay visible as the persistent message in
+  their own surface — command errors in status, recognition
+  errors in the voice area — next to a chip that truthfully
+  reports availability; there is no error pill).
 - **Command hero (reference composition)**: “Ready when you are.”
-  heading, brief truthful copy (only “show tags”/“hide tags” work),
+  heading, brief truthful copy (show/hide tags plus local click/fill
+  grammar added by #13; voice fill has a known recognition limitation),
   a substantial black microphone pill (local inline SVG mic symbol,
   “Start listening”), compact voice-state/transcript lines, small
   Stop/Cancel listening buttons (enabled only while recognition is

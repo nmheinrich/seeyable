@@ -216,14 +216,16 @@ function selectedTargetId() {
 
 /* --- Product surface (presentation only) -----------------------------------
  * renderState derives the visible status chip and voice phase from the
- * panel's current DOM text and ownership flags. It never touches
- * ownership, locks, requests, or approval authority. */
+ * panel's current activity and ownership flags. It never touches
+ * ownership, locks, requests, or approval authority. The chip reports
+ * activity and availability only: failures stay visible as the
+ * persistent, styled, announced message in their own surface, next
+ * to a chip that truthfully says the panel is ready for the next
+ * command. There is no error pill. */
 function renderState() {
   const chip = $("stateChip");
   if (chip) {
-    const statusEl = $("status");
     const execText = $("execResult") ? $("execResult").textContent : "";
-    const voice = $("voiceState") ? $("voiceState").textContent : "";
     let cls = "";
     let label = "Ready";
     if (state.confirmation) { label = "\u25B2 Held \u2014 nothing sent"; cls = "is-held"; }
@@ -233,12 +235,6 @@ function renderState() {
     else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
     else if (voicePhase === "finishing") { label = "Finishing"; cls = "is-listening"; }
     else if (gateClosed) { label = /paused/i.test(($("gateStatus") || {}).textContent || "") ? "Paused" : "Stopped"; cls = "is-error"; }
-    else if ((statusEl && statusEl.classList.contains("error"))
-      || ($("execStatus") && $("execStatus").classList.contains("error"))
-      || (/^Failed/.test(execText))
-      || (($("confirmStatus") && $("confirmStatus").classList.contains("error"))
-        && !/^Completed and verified/.test(execText))
-      || voiceErrorUnresolved) { label = "\u00D7 Needs attention"; cls = "is-error"; }
     else if (/^Completed and verified/.test(execText)) { label = "\u25A0 Done"; cls = "is-success"; }
     chip.className = "chip" + (cls ? " " + cls : "");
     chip.textContent = label;
@@ -319,6 +315,7 @@ function renderPageLine() {
 function invalidateExecution(reason) {
   state.generation += 1;
   cancelVoiceInteraction();
+  clearClarification();
   const tagsChip = $("tagsChip");
   if (tagsChip) tagsChip.textContent = "Tags: unknown";
   if (state.confirmation) {
@@ -642,11 +639,13 @@ $("btnHighlight").addEventListener("click", async () => {
   await highlightElementId(`el-${num}`);
 });
 
-/* --- Voice and typed commands (Feature #10) --------------------------------
- * One dispatcher for voice and typed input. Commands only show/hide
- * tags through the shared flows above — never the executor. Nothing is
- * stored or logged: transcripts live only in the visible transcript
- * line until replaced or invalidated. */
+/* --- Voice and typed commands (Features #10, #13) ---------------------------
+ * One dispatcher for voice and typed input. Tag commands use the
+ * shared show/hide flows; anchored click/fill commands resolve
+ * locally (lib/command-resolver.js) and execute through the SAME
+ * single-execution pipeline as manual execution — never a second
+ * executor. Nothing is stored or logged: transcripts live only in
+ * the visible transcript line until replaced or invalidated. */
 const voiceApi = globalThis.SeeyableVoice || null;
 let commandPending = false;
 // Presentation-only mirror of the recognition lifecycle. This is the
@@ -769,9 +768,253 @@ function cancelVoiceInteraction(reason) {
 }
 
 function presentCommandHelp(prefix) {
-  const message = `${prefix}Supported commands: "show tags" and "hide tags".`;
-  setVoiceState(`Voice: error — ${message}`, true);
+  // One authoritative command-error message, announced once: the
+  // status surface carries it. The voice area keeps only microphone
+  // truth, so typed failures are never duplicated as voice failures.
+  const message = `${prefix}Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>".`;
   setStatus(message, true);
+  settleVoiceAfterCommand();
+}
+
+// After a command completes, the voice area reports only whether the
+// microphone is still winding down. Command outcomes — success or
+// failure — live in the status surface; recognition errors keep
+// their own distinct voice-area presentation via onError.
+function settleVoiceAfterCommand() {
+  if (recognizer && recognizer.isActive()) {
+    voicePhase = "finishing";
+    setVoiceState("Voice: finishing — waiting for the microphone to close…");
+  } else {
+    voicePhase = "idle";
+    setVoiceState("Voice: idle.");
+  }
+}
+
+/* --- Local page-action commands (Issue #13) -----------------------------------
+ * Typed and voice click/fill commands resolve on-device against the
+ * current production snapshot and execute through the SAME pipeline
+ * as manual execution (runExecutionPipeline): same request contract,
+ * same confirmation controller, same locks, no replay. No planner,
+ * no model, no network beyond the tab message channel.
+ *
+ * Clarification choices are bound to tab, document session, revision,
+ * element, generation, interaction sequence, and their own round
+ * identity: each choice button closes over its immutable request, and
+ * an obsolete callback from a superseded round executes nothing and
+ * leaves any newer clarification untouched. Anything newer — another
+ * command, a tab/document change, cancellation, Pause/Stop —
+ * invalidates them, and a choice never refreshes or substitutes a
+ * new target. */
+let pendingClarification = null;
+
+function clearClarification() {
+  pendingClarification = null;
+  const box = $("clarifyBox");
+  if (box) box.hidden = true;
+  const choices = $("clarifyChoices");
+  if (choices) choices.replaceChildren();
+}
+
+async function ensureCommandSnapshot(tabId, gen, seq) {
+  // Reuse is allowed only under the established freshness contract:
+  // a snapshot bound to this exact tab with the executor ready.
+  if (state.snapshot && state.boundTabId === tabId && state.executorReady) {
+    return { snapshot: state.snapshot };
+  }
+  const myOp = ++state.opSeq; // supersedes any earlier acquisition
+  state.opTabId = tabId;
+  try {
+    const { snapshot, viaContentScript } = await fetchSnapshot(tabId);
+    if (gen !== state.generation || seq !== interactionSeq || myOp !== state.opSeq) {
+      return { discarded: true };
+    }
+    bindSnapshot(tabId, snapshot, viaContentScript);
+    showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${snapshot.url || ""}`);
+    lastKind = "dom-aria";
+    if (!viaContentScript) {
+      return { error: "The page is not ready for commands. Reload the tab and send the command again." };
+    }
+    return { snapshot };
+  } catch (err) {
+    if (gen !== state.generation || seq !== interactionSeq || myOp !== state.opSeq) return { discarded: true };
+    return { error: `Could not read the page: ${err.message || err}` };
+  } finally {
+    if (myOp === state.opSeq) state.opTabId = null;
+  }
+}
+
+function commandTargetName(element) {
+  return (element && (element.name || element.role || element.id)) || "that control";
+}
+
+function presentPipelineOutcome(action, name, result) {
+  // UI-neutral outcome shaping shared by direct and clarified dispatch.
+  // Names are labels; fill values never appear in any message or speech.
+  const past = action === "click" ? "Clicked" : "Filled";
+  if (result.outcome === "held") {
+    // Held means nothing ran yet: never past-tense the action.
+    const pending = action === "click" ? "Click" : "Fill";
+    return {
+      ok: true,
+      message: `${pending} on “${name}” is waiting for your approval in the Safety section. Nothing was executed.`,
+      spoken: "Waiting for your approval.",
+    };
+  }
+  if (result.outcome === "completed") {
+    const response = result.response;
+    if (!response.ok) {
+      return { ok: false, message: `Could not ${action} ${name}: ${response.error.code} — ${response.error.message}` };
+    }
+    const detail = describeOutcome(response);
+    if (detail.startsWith("Completed and verified") || detail.startsWith("Already in the desired state")) {
+      return { ok: true, message: `${past} ${name}. ${detail} ${executionDiffLine(response)}`, spoken: `${past} ${name}.` };
+    }
+    return { ok: true, message: `${past} ${name}, but ${detail} ${executionDiffLine(response)}`, spoken: "That may not have finished. Check the page." };
+  }
+  if (result.outcome === "transport") {
+    return { ok: false, message: `Transport failure — outcome unknown. Nothing about ${name} is implied.` };
+  }
+  return { ok: false, message: "The executor gave no usable answer. Nothing was confirmed." };
+}
+
+async function runPageActionCommand(local, source, gen, seq) {
+  const tab = state.boundTabId !== null ? { id: state.boundTabId } : await activeTab();
+  if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
+  if (!tab || tab.id === undefined) return { ok: false, message: "No active tab." };
+  voiceTabId = tab.id;
+  const ensured = await ensureCommandSnapshot(tab.id, gen, seq);
+  if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) {
+    return { ok: false, discarded: true, message: "" };
+  }
+  if (ensured.error) return { ok: false, message: ensured.error };
+  const snapshot = ensured.snapshot;
+  const matched = globalThis.SeeyableCommands.matchTarget(snapshot.elements, local.target);
+  if (matched.status === "none") {
+    return { ok: false, message: `No confident match for “${local.target}”. Nothing was executed.` };
+  }
+  if (matched.status === "ambiguous") {
+    renderClarification(local, matched.candidates, {
+      tabId: tab.id, session: snapshot.documentSessionId, revision: snapshot.revision, gen, seq,
+    });
+    return {
+      ok: true, clarify: true,
+      message: `“${local.target}” matches ${matched.candidates.length} controls. Choose one — nothing was executed.`,
+      spoken: `${matched.candidates.length} matches. Choose one.`,
+    };
+  }
+  const request = {
+    action: local.kind,
+    elementId: matched.element.id,
+    documentSessionId: snapshot.documentSessionId,
+    revision: snapshot.revision,
+    value: local.kind === "fill" ? local.value : undefined,
+    // Audit label only, never authority: typed input is a human at the
+    // panel ("manual"); transcripts arrive as "voice".
+    source: source === "voice" ? "voice" : "manual",
+  };
+  const result = await runExecutionPipeline(tab.id, request, gen, seq);
+  if (gen !== state.generation || seq !== interactionSeq) {
+    // Cancelled, superseded, or moved to another document while the
+    // executor held the request. The pipeline already revoked any late
+    // challenge; the dispatch itself may still have reached the page.
+    return { ok: false, discarded: true, message: "", reached: true };
+  }
+  return presentPipelineOutcome(local.kind, commandTargetName(matched.element), result);
+}
+
+let clarifySeq = 0; // identity for each clarification round; obsolete callbacks stay inert
+
+function renderClarification(local, candidates, binding) {
+  clearClarification();
+  // Each choice button closes over THIS clarification object — its own
+  // request, value, and allowed candidate IDs. A newer command replaces
+  // pendingClarification, and any callback from the older round then
+  // finds its object is no longer current and does nothing: targets
+  // and values from different commands can never be combined.
+  const clarification = {
+    ...binding,
+    action: local.kind,
+    value: local.value,
+    clarId: ++clarifySeq,
+    candidateIds: candidates.map((c) => c.elementId),
+  };
+  pendingClarification = clarification;
+  $("clarifyPrompt").textContent = `“${local.target}” matches ${candidates.length} controls. Choose one:`;
+  const box = $("clarifyChoices");
+  for (const candidate of candidates) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = candidate.label;
+    button.addEventListener("click", () => runClarifiedChoice(candidate.elementId, clarification));
+    box.append(button);
+  }
+  $("clarifyBox").hidden = false;
+}
+
+async function runClarifiedChoice(elementId, clarification) {
+  const choice = clarification || pendingClarification;
+  if (!choice || choice !== pendingClarification) {
+    // Obsolete callback from a superseded clarification round: execute
+    // nothing, and leave the newer clarification visible and valid.
+    // Only when nothing is pending at all is the round truly expired.
+    if (!pendingClarification) {
+      setStatus("That choice expired — the tab, document, or command changed. Send the command again.", true);
+    }
+    return;
+  }
+  clearClarification();
+  if (commandPending || state.pending || state.acquiring) {
+    setStatus("Another operation is in progress. Send the command again after it finishes.", true);
+    return;
+  }
+  const snapshot = state.snapshot;
+  const valid = choice
+    && choice.gen === state.generation
+    && choice.seq === interactionSeq
+    && snapshot && state.boundTabId === choice.tabId
+    && snapshot.documentSessionId === choice.session
+    && snapshot.revision === choice.revision
+    && Array.isArray(choice.candidateIds) && choice.candidateIds.includes(elementId)
+    && Array.isArray(snapshot.elements) && snapshot.elements.some((e) => e && e.id === elementId);
+  if (!valid) {
+    setStatus("That choice expired — the tab, document, or command changed. Send the command again.", true);
+    return;
+  }
+  const element = snapshot.elements.find((e) => e.id === elementId);
+  const request = {
+    action: choice.action,
+    elementId,
+    documentSessionId: choice.session,
+    revision: choice.revision,
+    value: choice.action === "fill" ? choice.value : undefined,
+    source: "manual", // a deliberate panel choice by the human operator
+  };
+  const gen = state.generation;
+  commandPending = true;
+  updateExecuteEnabled();
+  updateVoiceControls();
+  try {
+    const result = await runExecutionPipeline(choice.tabId, request, gen, choice.seq);
+    if (gen !== state.generation) {
+      setStatus("The tab or document changed while the action was running. Its response was discarded; verify page state before acting again.", true);
+      return;
+    }
+    if (choice.seq !== interactionSeq) {
+      // Cancelled or superseded while the executor held the request.
+      // The pipeline already revoked any late challenge; the dispatch
+      // itself may still have reached the page.
+      setStatus("The choice was cancelled or superseded while running. Its response was discarded; it may already have reached the page, so check page state before continuing.", true);
+      return;
+    }
+    const presented = presentPipelineOutcome(choice.action, commandTargetName(element), result);
+    setStatus(presented.message, !presented.ok);
+    settleVoiceAfterCommand();
+    if (presented.ok && presented.spoken) speakFeedback(presented.spoken);
+  } finally {
+    commandPending = false;
+    updateExecuteEnabled();
+    updateVoiceControls();
+  }
 }
 
 async function dispatchCommand(rawText, source) {
@@ -784,6 +1027,9 @@ async function dispatchCommand(rawText, source) {
     setVoiceState("Voice: error — another panel operation is in progress. Wait for it to finish, then send the command again.", true);
     return;
   }
+  // A new command invalidates any pending clarification choices.
+  interactionSeq += 1;
+  clearClarification();
   // Typed submission safely resolves any live recognition first:
   // the speech session is cancelled and its utterance discarded.
   if (source === "typed" && recognizer && recognizer.isActive()) recognizer.cancel();
@@ -793,8 +1039,13 @@ async function dispatchCommand(rawText, source) {
     presentCommandHelp(source === "voice" ? "No command was heard. " : "No command was entered. ");
     return;
   }
-  if (resolved.kind === "unknown") {
-    presentCommandHelp("Unsupported command. ");
+  // Local fast path (Issue #13): anchored click/fill resolved on-device
+  // against the current snapshot. No planner, no network, no guessing.
+  const commandsApi = globalThis.SeeyableCommands || null;
+  const local = resolved.kind === "unknown" && commandsApi ? commandsApi.parseLocalCommand(rawText) : null;
+  const isPageAction = Boolean(local && (local.kind === "click" || local.kind === "fill"));
+  if (resolved.kind === "unknown" && !isPageAction) {
+    presentCommandHelp(local && local.reason ? `Unsupported command — ${local.reason}. ` : "Unsupported command. ");
     return;
   }
 
@@ -803,12 +1054,14 @@ async function dispatchCommand(rawText, source) {
   commandPending = true;
   updateExecuteEnabled(); // command dispatch holds the shared panel lock
   updateVoiceControls();
-  setVoiceState(resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…");
+  setVoiceState(!isPageAction
+    ? (resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…")
+    : `Voice: acting — ${local.kind === "click" ? "clicking" : "filling"} “${local.target}”…`);
   let outcome = null;
   try {
     if (resolved.kind === "show-tags") {
       outcome = await runShowTags({ viaCommand: true });
-    } else {
+    } else if (!isPageAction) {
       // Capture and retain the target tab now — even with no bound
       // snapshot — so a mid-dispatch switch cannot retarget the
       // command, and navigation/reload of that tab invalidates it.
@@ -819,6 +1072,8 @@ async function dispatchCommand(rawText, source) {
         voiceTabId = tab.id;
         outcome = await runHideTags(tab.id, { viaCommand: true });
       }
+    } else {
+      outcome = await runPageActionCommand(local, source, gen, seq);
     }
   } catch (err) {
     outcome = { ok: false, message: `Command failed: ${err.message || err}` };
@@ -831,33 +1086,32 @@ async function dispatchCommand(rawText, source) {
   if (!outcome || outcome.discarded || gen !== state.generation || seq !== interactionSeq) {
     // The interaction moved on (tab/document change, cancellation):
     // never present or speak the late result as acting on this page.
+    // A request that already reached the executor may still have run;
+    // say so instead of implying cancellation reversed it.
     voicePhase = recognizer && recognizer.isActive() ? "finishing" : "idle";
     const reason = discardMessage;
     discardMessage = null;
     pendingSpoken = null;
+    const late = outcome && outcome.reached
+      ? " It may already have reached the page, so check page state before continuing."
+      : "";
     setVoiceState(reason
-      ? `Voice: idle — ${reason}`
-      : "Voice: idle — the tab or document changed while the command was running; its result was discarded.", true);
+      ? `Voice: idle — ${reason}${late}`
+      : `Voice: idle — the tab or document changed while the command was running; its result was discarded.${late}`, true);
     updateVoiceControls();
     return;
   }
   discardMessage = null;
-  voicePhase = recognizer && recognizer.isActive() ? "finishing" : "idle";
   setStatus(outcome.message, !outcome.ok);
   if (outcome.ok) {
     // A completed command is recovery from any prior recognition error.
     voiceErrorUnresolved = false;
-    // While recognition is still winding down, say so — the
-    // microphone has not closed yet and must not be reported idle.
-    setVoiceState(recognizer && recognizer.isActive()
-      ? "Voice: finishing — waiting for the microphone to close…"
-      : "Voice: idle.");
     // Spoken success only after the page acknowledged the command,
     // and only once any active microphone has terminated.
-    speakFeedback(resolved.spoken);
-  } else {
-    setVoiceState(`Voice: error — ${outcome.message}`, true);
+    const spoken = outcome.spoken || resolved.spoken;
+    if (spoken) speakFeedback(spoken);
   }
+  settleVoiceAfterCommand();
   updateVoiceControls();
 }
 
@@ -1012,6 +1266,84 @@ async function refreshAfterExecution(tabId, gen, previousSession) {
   }
 }
 
+/* --- Shared single-execution pipeline ----------------------------------------
+ * One orchestration for manual panel execution AND local voice/typed
+ * commands (Issue #13). Sends exactly one SEEYABLE_EXECUTE_ACTION and
+ * routes every outcome — discard, transport failure, malformed,
+ * held-for-confirmation, completed — through the same confirmation
+ * controller, refresh, and log fetch. Returns a UI-neutral outcome;
+ * each caller presents it in its own surface.
+ *
+ * The caller owns the operation lock (state.pending for manual,
+ * commandPending for commands) across the whole call, INCLUDING the
+ * post-action snapshot refresh.
+ *
+ * ownerSeq carries command interaction ownership: commands pass the
+ * interaction sequence captured at dispatch; manual execution passes
+ * null (voice cancellation must not discard a manual run). Ownership
+ * is rechecked before applying results, creating confirmation,
+ * refreshing, or returning anything presentable. A late challenge
+ * for a cancelled command is revoked through the trusted cancel
+ * route and never becomes approvable. */
+async function runExecutionPipeline(tabId, request, gen, ownerSeq = null) {
+  let response = null;
+  let transportError = null;
+  try {
+    response = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_EXECUTE_ACTION", request });
+  } catch (err) {
+    transportError = err;
+  }
+  if (gen !== state.generation) {
+    // Tab/document changed while in flight. The action may already have
+    // been sent and may finish; report that honestly, but never let the
+    // late response overwrite current state or authorize anything.
+    return { outcome: "discarded" };
+  }
+  if (ownerSeq !== null && ownerSeq !== interactionSeq) {
+    // The owning command was cancelled or superseded while awaiting
+    // the executor. Revoke a late-created challenge so it can never
+    // be approved here; anything already dispatched may still have
+    // taken effect, which the caller reports honestly.
+    if (response && !response.ok && response.error && response.error.code === "CONFIRMATION_REQUIRED" && response.confirmation) {
+      try {
+        await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_CANCEL_CHALLENGE", challengeId: response.confirmation.challengeId });
+      } catch { /* revocation is best-effort; the challenge also expires */ }
+      void fetchActionLog(tabId);
+      return { outcome: "discarded", revoked: true };
+    }
+    return { outcome: "discarded" };
+  }
+  if (transportError) {
+    state.executorReady = false; // require a successful refresh/snapshot to re-enable
+    return { outcome: "transport", transportError };
+  }
+  if (!response || typeof response.ok !== "boolean") {
+    state.executorReady = false;
+    return { outcome: "malformed" };
+  }
+  if (!response.ok && response.error && response.error.code === "CONFIRMATION_REQUIRED" && response.confirmation) {
+    // A held action, not an ordinary failure: nothing ran, the reviewed
+    // request stays fixed, and no snapshot refresh (or replay) follows.
+    // The human decides in the Safety gate section.
+    showConfirmation(response.confirmation, tabId);
+    void fetchActionLog(tabId);
+    return { outcome: "held", response };
+  }
+  if (ownerSeq !== null && ownerSeq !== interactionSeq) return { outcome: "discarded" };
+  // Fresh snapshot from the same captured tab; the caller's result
+  // presentation is preserved. Refresh runs before returning so the
+  // caller's lock covers it; failures mark execution disabled.
+  await refreshAfterExecution(tabId, gen, request.documentSessionId);
+  void fetchActionLog(tabId);
+  return { outcome: "completed", response };
+}
+
+function executionDiffLine(response) {
+  return response.newSnapshotDiff
+    ? `Diff: +${response.newSnapshotDiff.added.length} added, -${response.newSnapshotDiff.removed.length} removed, ${response.newSnapshotDiff.updated.length} updated.`
+    : `Diff unavailable: ${response.diffUnavailableReason || "not provided"}.`;
+}
+
 $("btnExecute").addEventListener("click", async () => {
   if (state.pending) return; // duplicate dispatch guard (rapid click / Enter)
   if (state.acquiring) { setExecStatus("A snapshot acquisition is in progress. Wait for it to finish, review the snapshot, then execute.", true); return; }
@@ -1038,77 +1370,34 @@ $("btnExecute").addEventListener("click", async () => {
   state.pending = true;
   updateExecuteEnabled();
   setExecStatus(`Executing ${action} on ${elementId}…`);
-  let response = null;
-  let transportError = null;
   try {
-    response = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_EXECUTE_ACTION", request });
-  } catch (err) {
-    transportError = err;
-  }
-  if (gen !== state.generation) {
-    // Tab/document changed while in flight. The action may already have
-    // been sent and may finish; report that honestly, but never let the
-    // late response overwrite current state or authorize anything.
-    state.pending = false;
-    setExecStatus("The tab or document changed while the action was running. It may have completed on the page, but its response was discarded. Take a fresh snapshot and verify page state before acting again.", true);
-    updateExecuteEnabled();
-    return;
-  }
-
-  if (transportError) {
-    renderExecution([
-      `Transport failure: ${transportError.message || transportError}`,
-      "The request may or may not have reached the page; nothing about the outcome is implied.",
-      "Execution is paused. Refresh the snapshot, verify page state, then intentionally execute again.",
-    ], null);
-    setExecStatus("Transport failure — outcome unknown. Execution paused until you refresh the snapshot.", true);
-    state.pending = false;
-    state.executorReady = false; // require a successful refresh/snapshot to re-enable
-    updateExecuteEnabled();
-    return;
-  }
-  if (!response || typeof response.ok !== "boolean") {
-    renderExecution(["Malformed executor response. Outcome unknown; refresh the snapshot before any further action."], null);
-    setExecStatus("Malformed executor response. Execution paused.", true);
-    state.pending = false;
-    state.executorReady = false;
-    updateExecuteEnabled();
-    return;
-  }
-
-  if (!response.ok && response.error && response.error.code === "CONFIRMATION_REQUIRED" && response.confirmation) {
-    // A held action, not an ordinary failure: nothing ran, the reviewed
-    // request stays fixed, and no snapshot refresh (or replay) follows.
-    // The human decides in the Safety gate section.
-    renderExecution([
-      "Confirmation required — nothing was executed. Review the pending action in the Safety gate section, then Approve once or Cancel.",
-      `Diff unavailable: ${response.diffUnavailableReason || "awaiting human confirmation"}.`,
-    ], response);
-    setExecStatus("Confirmation required. Nothing was executed.", false);
-    showConfirmation(response.confirmation, tabId);
-    state.pending = false;
-    updateExecuteEnabled();
-    void fetchActionLog(tabId);
-    return;
-  }
-
-  const diffLine = response.newSnapshotDiff
-    ? `Diff: +${response.newSnapshotDiff.added.length} added, -${response.newSnapshotDiff.removed.length} removed, ${response.newSnapshotDiff.updated.length} updated.`
-    : `Diff unavailable: ${response.diffUnavailableReason || "not provided"}.`;
-  renderExecution([describeOutcome(response), diffLine], response);
-  setExecStatus(describeOutcome(response), !response.ok);
-  updateExecuteEnabled();
-
-  // Fresh snapshot from the same captured tab; result above is preserved.
-  // The operation lock is held through this refresh and released only
-  // afterward, on success, failure, or invalidation alike.
-  try {
-    await refreshAfterExecution(tabId, gen, request.documentSessionId);
+    const result = await runExecutionPipeline(tabId, request, gen);
+    if (result.outcome === "discarded") {
+      setExecStatus("The tab or document changed while the action was running. It may have completed on the page, but its response was discarded. Take a fresh snapshot and verify page state before acting again.", true);
+    } else if (result.outcome === "transport") {
+      renderExecution([
+        `Transport failure: ${result.transportError.message || result.transportError}`,
+        "The request may or may not have reached the page; nothing about the outcome is implied.",
+        "Execution is paused. Refresh the snapshot, verify page state, then intentionally execute again.",
+      ], null);
+      setExecStatus("Transport failure — outcome unknown. Execution paused until you refresh the snapshot.", true);
+    } else if (result.outcome === "malformed") {
+      renderExecution(["Malformed executor response. Outcome unknown; refresh the snapshot before any further action."], null);
+      setExecStatus("Malformed executor response. Execution paused.", true);
+    } else if (result.outcome === "held") {
+      renderExecution([
+        "Confirmation required — nothing was executed. Review the pending action in the Safety gate section, then Approve once or Cancel.",
+        `Diff unavailable: ${result.response.diffUnavailableReason || "awaiting human confirmation"}.`,
+      ], result.response);
+      setExecStatus("Confirmation required. Nothing was executed.", false);
+    } else {
+      renderExecution([describeOutcome(result.response), executionDiffLine(result.response)], result.response);
+      setExecStatus(describeOutcome(result.response), !result.response.ok);
+    }
   } finally {
     state.pending = false;
     updateExecuteEnabled();
   }
-  void fetchActionLog(tabId);
 });
 
 $("targetSelect").addEventListener("change", () => {
@@ -1306,10 +1595,24 @@ async function sendGateCommand(command) {
 $("btnStopExec").addEventListener("click", async () => {
   // Executor Stop also silences voice: no late transcript may start
   // another command after stopping. "Stop listening" is separate.
+  // Pending command preparation and clarification die here too — the
+  // executor cannot revoke a request it never received, so panel-side
+  // ownership invalidates the older command permanently.
   cancelVoiceInteraction("execution was stopped; listening and any pending voice interaction were discarded.");
+  clearClarification();
   await sendGateCommand("stop");
 });
 $("btnPauseExec").addEventListener("click", async () => {
+  if (!gateClosed) {
+    // Pause permanently invalidates undispatched panel-side work the
+    // same way: a command still acquiring its snapshot or awaiting a
+    // choice must never dispatch after Resume. Resume restores
+    // availability only; it revives nothing.
+    interactionSeq += 1;
+    discardMessage = "execution was paused; pending page commands and choices were discarded.";
+    pendingSpoken = null;
+    clearClarification();
+  }
   await sendGateCommand(gateClosed ? "resume" : "pause");
 });
 

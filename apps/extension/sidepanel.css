@@ -190,6 +190,24 @@ body[data-voice="listening"] .try-label { color: #C9D6E2; }
 }
 .request-row #btnSendCommand:hover:not(:disabled) { background: var(--text); }
 
+/* Clarification choices: plain stacked buttons reusing .controls. */
+.clarify { margin: 8px 0 2px; }
+.clarify .controls { flex-direction: column; align-items: stretch; }
+/* Clarification lists are complete (never truncated), so long sets
+   scroll inside the box instead of pushing safety out of view.
+   Single column always: the inherited .controls wrap would spill
+   options into a second column once max-height binds. */
+#clarifyChoices {
+  flex-wrap: nowrap;
+  max-height: 216px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+#clarifyChoices button {
+  flex: none; /* never shrink below the 44px accessible minimum */
+  white-space: normal; /* long labels wrap instead of overflowing */
+  overflow-wrap: anywhere;
+}
 .view-targets {
   display: block; width: 100%; margin: 10px 0 4px; padding: 10px 14px;
   font-size: 15px; font-weight: 500;

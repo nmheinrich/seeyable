@@ -3,9 +3,9 @@
 MV3 extension that captures a labelled snapshot of a page's interactive
 controls using DOM/ARIA, with an optional debug-only CDP comparison,
 numbered word tags, a validated single-action executor, push-to-talk
-voice/typed commands that only show or hide tags, and a shared
-human-confirmation safety gate with Stop/Pause and a redacted action
-log. It contains no planner or MCP server.
+voice/typed commands (tag visibility plus a local click/fill fast
+path), and a shared human-confirmation safety gate with Stop/Pause
+and a redacted action log. It contains no planner or MCP server.
 
 ## Load it
 
@@ -25,7 +25,8 @@ log. It contains no planner or MCP server.
 ## Use it
 
 The panel is a product surface: identity and tag state, current status,
-voice/typed tag commands (`show tags` / `hide tags` only), and the
+voice/typed commands (`show tags`, `hide tags`, `click <target>`,
+`fill <target> with <value>`), and the
 Safety section (confirmation, Stop/Pause/Resume, gate status) are
 always visible. Diagnostic tools — snapshot buttons, JSON copy/download,
 tag visibility buttons, highlight-by-number, manual single-action
@@ -37,7 +38,9 @@ nothing is submitted, paid, deleted, sent, or published without it.
    server or `file://`).
 2. Click the extension action to open the side panel.
 3. Take a DOM/ARIA snapshot (Developer view), then Show tags.
-   Say or type “show tags” / “hide tags” to toggle them.
+   Say or type “show tags” / “hide tags” to toggle them, or
+   “click …” / “fill … with …” to act on a named control through
+   the same guarded executor (risky ones still pause for approval).
 4. The CDP AXTree path is debug-only; the panel explains the
    `debugger`-permission situation in place.
 
