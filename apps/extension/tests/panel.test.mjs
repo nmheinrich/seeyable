@@ -172,8 +172,9 @@ test("targets: crowded-out ids are marked after show; counts stay truthful; disc
     throw new Error("unexpected " + msg.type);
   });
   await takeSnapshot(panel);
-  panel.$("btnTryShow").click();
+  panel.$("tagsChip").click(); // the header Tags toggle replaced the Try chips
   await tick(); await tick();
+  assert.equal(panel.$("tagsChip").getAttribute("aria-pressed"), "true");
   // No stale precision: the chip reports visibility only and the status
   // carries no placed/listed counts (placement changes as the page moves).
   assert.equal(panel.$("tagsChip").textContent, "Tags: on");
@@ -182,8 +183,10 @@ test("targets: crowded-out ids are marked after show; counts stay truthful; disc
   const items = [...panel.doc.querySelectorAll("#targetList .target")];
   assert.ok(!items[0].textContent.includes("Shown in panel"));
   assert.match(items[1].textContent, /Shown in panel/, "crowded-out target stays discoverable with a clear mark");
-  // Discovery: the obvious control moves focus to the Targets heading.
+  // Discovery: the obvious control opens Targets and focuses its heading.
   panel.$("btnViewTargets").click();
+  assert.equal(panel.$("screenTargets").hidden, false, "View page targets opens the Targets screen");
+  assert.equal(panel.$("screenAssist").hidden, true);
   assert.equal(panel.doc.activeElement.id, "targetsHeading", "View page targets reveals and focuses the Targets section");
   panel.dom.window.close();
 });
@@ -954,7 +957,7 @@ function gateImpl(snapshot, gateState) {
   };
 }
 
-test("page-action: Pause/Resume during snapshot acquisition dispatches nothing", async () => {
+test("gate: Stop and Resume are one control; it sends stop, never pause, and replays nothing", async () => {
   let releaseSnap;
   const heldSnap = new Promise((res) => { releaseSnap = res; });
   const snapshot = snap([el("el-1", "Full name")]);
@@ -963,19 +966,23 @@ test("page-action: Pause/Resume during snapshot acquisition dispatches nothing",
     if (msg.type === "SEEYABLE_SNAPSHOT_DOM") { await heldSnap; return { ok: true, snapshot }; }
     return gateImpl(snapshot, gateState)(t, msg);
   });
+  assert.equal(panel.$("btnPauseExec"), null, "Pause is merged into Stop/Resume");
   sendTyped(panel, "click Full name"); // no bound snapshot: acquisition starts
   await tick();
-  assert.equal(panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_SNAPSHOT_DOM").length, 1);
-  panel.$("btnPauseExec").click();
+  assert.equal(panel.$("btnStopExec").textContent, "Stop");
+  panel.$("btnStopExec").click();
   await tick();
-  assert.equal(panel.$("btnPauseExec").textContent, "Resume");
-  panel.$("btnPauseExec").click(); // Resume restores availability only
+  assert.equal(panel.$("btnStopExec").textContent, "Resume");
+  assert.equal(panel.doc.body.dataset.gate, "closed");
+  panel.$("btnStopExec").click(); // Resume restores availability only
   await tick();
-  assert.equal(panel.$("btnPauseExec").textContent, "Pause");
+  assert.equal(panel.$("btnStopExec").textContent, "Stop");
   releaseSnap();
   await tick(); await tick();
+  const commands = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_GATE_CONTROL").map((c) => c.msg.command);
+  assert.deepEqual(commands, ["stop", "resume"], "the merged control uses the executor's stop, never pause");
   assert.equal(panel.calls.execute, 0, "the older command must never revive after Resume");
-  assert.match(panel.$("status").textContent, /paused/);
+  assert.match(panel.$("status").textContent, /stopped/);
   assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
   panel.dom.window.close();
 });
@@ -993,8 +1000,8 @@ test("page-action: Stop/Resume during snapshot acquisition dispatches nothing", 
   await tick();
   panel.$("btnStopExec").click();
   await tick();
-  assert.equal(panel.$("btnPauseExec").textContent, "Resume", "stopped gate offers Resume");
-  panel.$("btnPauseExec").click();
+  assert.equal(panel.$("btnStopExec").textContent, "Resume", "stopped gate offers Resume on the same control");
+  panel.$("btnStopExec").click();
   await tick();
   releaseSnap();
   await tick(); await tick();
@@ -1459,17 +1466,18 @@ test("gate: tab change revokes a pending confirmation", async () => {
   panel.dom.window.close();
 });
 
-test("gate: Stop and Pause controls drive the executor gate and update state", async () => {
+test("gate: the Stop/Resume control drives the executor gate and updates state", async () => {
   const { panel, sent } = gatePanel({});
   panel.$("btnStopExec").click();
   await tick(); await tick();
   assert.ok(sent.includes("SEEYABLE_GATE_CONTROL"));
   assert.match(panel.$("gateStatus").textContent, /stopped/i);
-  assert.equal(panel.$("btnPauseExec").textContent, "Resume");
-  panel.$("btnPauseExec").click(); // gateClosed -> resume
+  assert.equal(panel.$("btnStopExec").textContent, "Resume");
+  assert.equal(panel.$("stateChip").textContent, "Stopped");
+  panel.$("btnStopExec").click(); // gateClosed -> resume
   await tick(); await tick();
   assert.match(panel.$("gateStatus").textContent, /Gate: open/);
-  assert.equal(panel.$("btnPauseExec").textContent, "Pause");
+  assert.equal(panel.$("btnStopExec").textContent, "Stop");
   panel.dom.window.close();
 });
 
@@ -1513,27 +1521,35 @@ test("surface: developer controls live in the collapsible Developer view; safety
   }
   for (const id of ["stateChip", "tagsChip", "status", "latestResult", "voiceState", "commandInput",
     "confirmBox", "confirmTitle", "confirmText", "btnApproveOnce", "btnCancelChallenge",
-    "confirmStatus", "btnStopExec", "btnPauseExec", "gateStatus"]) {
+    "confirmStatus", "btnStopExec", "btnUndo", "gateStatus"]) {
     assert.ok(!dev.contains(panel.$(id)), `${id} stays visible with Developer view closed`);
   }
   panel.dom.window.close();
 });
 
-test("surface: reference composition — discovery and safety precede the long target list", () => {
+test("surface: Plain Words composition — safety and nav sit outside the scrolling screens", () => {
   const panel = makePanel(async () => { throw new Error("unexpected"); });
   const doc = panel.doc;
   assert.equal(doc.getElementById("commandHeading").textContent, "Ready when you are.");
-  const before = (a, b) => Boolean(doc.getElementById(a).compareDocumentPosition(doc.getElementById(b)) & 4);
-  assert.ok(before("btnViewTargets", "targetList"), "View page targets sits in the primary area, before the list");
-  assert.ok(before("btnStopExec", "targetList"), "Stop/Pause come before the long target list");
-  assert.ok(before("confirmBox", "targetList"), "pending confirmation is presented ahead of the target list");
-  const settings = doc.getElementById("voiceSettings");
-  assert.equal(settings.open, false, "voice/microphone settings start collapsed");
-  for (const id of ["btnMicSetup", "chkSpeak", "btnStopSpeech", "voiceNote"]) {
-    assert.ok(settings.contains(panel.$(id)), `${id} lives in the secondary settings area`);
+  const screens = doc.getElementById("screens");
+  for (const id of ["btnStopExec", "btnUndo", "gateStatus"]) {
+    assert.ok(!screens.contains(panel.$(id)), `${id} stays visible on every screen (outside the scroll)`);
   }
-  assert.ok(!settings.contains(panel.$("btnStopListen")), "Stop listening stays in the primary area");
-  assert.ok(!settings.contains(panel.$("btnCancelListen")), "Cancel listening stays in the primary area");
+  assert.ok(panel.$("screenAssist").contains(panel.$("confirmBox")), "a held action is decided in the main card");
+  assert.ok(panel.$("screenAssist").contains(panel.$("btnViewTargets")), "View page targets sits in the main card");
+  assert.ok(panel.$("screenTargets").contains(panel.$("targetList")), "the long target list has its own screen");
+  assert.equal(panel.$("screenTargets").hidden, true, "Assist is the starting screen");
+  const settings = doc.getElementById("voiceSettings");
+  assert.ok(panel.$("screenSettings").contains(settings), "voice/microphone settings live on the Settings screen");
+  for (const id of ["btnMicSetup", "chkSpeak", "btnStopSpeech", "voiceNote"]) {
+    assert.ok(settings.contains(panel.$(id)), `${id} lives in the voice settings`);
+  }
+  assert.ok(panel.$("screenSettings").contains(panel.$("developerView")), "Developer view sits under Settings › Advanced");
+  assert.equal(panel.$("developerView").open, false, "Developer view starts collapsed");
+  assert.ok(panel.$("screenAssist").contains(panel.$("btnStopListen")), "Done talking stays in the main card");
+  assert.ok(panel.$("screenAssist").contains(panel.$("btnCancelListen")), "Cancel stays in the main card");
+  const nav = [...doc.querySelectorAll(".screen-nav button")].map((b) => b.textContent);
+  assert.deepEqual(nav, ["Assist", "Targets", "Activity", "Settings"]);
   panel.dom.window.close();
 });
 

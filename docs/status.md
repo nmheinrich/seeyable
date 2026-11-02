@@ -1,6 +1,6 @@
 # Project Status and Pending Verification
 
-Last updated: 2026-10-31. This file records what is built, what has
+Last updated: 2026-11-02. This file records what is built, what has
 actually been verified, and what still needs a human with a headed
 browser. It is a status note, not a roadmap; scope decisions live in
 the feature documents.
@@ -16,18 +16,21 @@ the feature documents.
 | Manual execution test panel | Complete — `docs/features/feature-09-manual-test-panel.md` |
 | Voice front end and typed fallback | Complete and accepted — `docs/features/feature-10-voice-front-end.md` |
 | Shared executor safety gate | Complete and accepted — `docs/features/feature-11-shared-safety-gate.md` |
-| Plain Words product interface (#29) | Deferred by Product Owner on 2026-10-30; visually NOT accepted — `docs/features/feature-29-plain-words-interface.md` |
+| Plain Words product interface (#29) | Superseded on 2026-11-01 by the Plain Words panel issue — `docs/features/feature-29-plain-words-interface.md` |
+| Plain Words panel (supersedes #29) | Implemented 2026-11-01 from the approved mockup (frozen at `DESIGN/plain-words-panel-mockup-2026-11-01.html`); headed visual and voice acceptance PENDING. Extension 299/299; headless-Chrome stub-model typed runs 127/127 (states × 320/400/480 px × light/dark, forced colors, page tag states) and #15 regression 32/32 — `docs/features/feature-plain-words-panel.md` |
 | Planner, proxy | Complete and accepted — Product Owner confirmed full canonical Act 1 typed then spoken on the corrected implementation, 2026-10-31; recognition remains imperfect — `docs/features/feature-14-muse-spark-planner.md`; loopback proxy, shared plan schema, guarded sequential execution, cached corrections; stub-model plumbing verified |
 | Voice transcription spike (#12) | Timeboxed spike complete: INCONCLUSIVE / KEEP Web Speech — `docs/decision-voice-transcription.md`; zero provider takes; file-client mechanics verified offline (3/3); live comparison harness incomplete |
 | MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
 | Plan preview, confirmation, undo (#15) | Complete and accepted for the core mouse-free workflow — Product Owner confirmed genuine-microphone/model preview, voice edit, unsupported-approval retention, approval and last-change undo on 2026-10-31. Repeated Grace Hopper → Grasshopper recognition remains a limitation; supplementary headed safety probes are not claimed — `docs/features/feature-15-plan-review-undo.md` |
 | Planner fast path (#13) | Checkpoint ready: headed typed exact/fuzzy fill, held Submit/cancel, compound rejection, clarification/expiry, five-choice access, single-error display, and live-mic click (one counter increment) passed. Voice fill remains limited by fill/feel/Phil recognition; full voice acceptance is not claimed — `docs/features/feature-13-local-command-fast-path.md` |
 
-Issue #29 is parked to prioritize remaining functionality. Keep its current
-uncommitted implementation; do not resume visual refinements without a new
-Product Owner request. Remaining work includes reference-composition fidelity,
-headed visual/accessibility acceptance, and a known Listening-state input-label
-contrast issue (dark text on blue, approximately 2.74:1 at review). The last
+Issue #29 is superseded by the Plain Words panel issue (2026-11-01), which
+implements the approved mockup; its notes below are historical. At #29's
+parking, remaining work included reference-composition fidelity, headed
+visual/accessibility acceptance, and a Listening-state input-label contrast
+issue (dark text on blue, approximately 2.74:1); the new panel no longer
+fills the card blue and computes ≥ 6.9:1 for Listening, while headed
+visual/accessibility acceptance is still pending. The last
 independently rerun suite passed 146/146; this does not constitute visual acceptance.
 Issue #28's local MCP bridge smoke test is now complete and accepted.
 Git staging, commits, and pushes remain with the Product Owner; the current
@@ -38,6 +41,45 @@ requires no `debugger` permission; CDP remains debug-only via
 `apps/extension/manifest.debug.json`.
 
 ## Verification evidence
+
+- Issue #16 genuine-form follow-up (2026-11-02): after the final
+  classification correction, the Product Owner reported “Works very well”
+  in response to the genuine Google Form rating/held-Submit/card spot-check
+  instructions, and requested a checkpoint and continuation. Record this
+  as human-reported spot-check acceptance, not three complete rehearsals.
+  Individual zoom measurements and raw transcripts were not supplied.
+  The three-consecutive-clean-run record and written scope freeze remain
+  pending; this checkpoint does not declare #16 complete. #19/#20 are the
+  next implementation work; Shopify remains outside the demo scope.
+
+- Issue #16 blockers fixed 2026-11-02 (rehearsal streak restarts at 0/3 on
+  this build): survey rating radios whose names quote a "Checkout
+  experience" row no longer trigger the gate — each label source of a
+  selection control may shed only a trailing reference to its structural
+  row ("…, response for Checkout experience"); group text anywhere else is
+  kept, buttons/links keep full-label checks under any role, and native
+  submit evidence wins (two earlier, broader fixes were rejected in review
+  and removed) — and the confirmation card is concise with Approve/Cancel
+  ahead of an expandable Details area. Extension 315/315; shared 11/11, proxy 15/15, MCP 11/11. Real headless
+  Chrome (local Google-Forms look-alike, scripted model, typed): 40/40
+  incl. a held Delete checkbox with zero dispatches, 320/400 px, emulated
+  200% zoom, light/dark; Plain
+  Words run 127/127 and #15 run 32/32 re-passed. These counts are
+  automated/stub evidence. The later genuine-form spot-check is recorded
+  above; the full three-run acceptance is still pending —
+  `docs/issue-16-google-forms-rehearsal.md`.
+
+- Plain Words panel (supersedes #29), 2026-11-01 — automated and headless
+  only; headed acceptance PENDING. `npm --prefix apps/extension test`
+  299/299 (279 prior with deliberate migrations for the merged Stop/Resume,
+  Tags toggle, and screen structure; +15 panel, +4 overlay tag states, +1
+  tag-state routing); shared 11/11, proxy 15/15, MCP 11/11. Token contrast
+  computed from the stylesheet passes in both themes (Listening now ≥ 6.9:1).
+  Headless Chrome with the real extension, overlay, proxy and a SCRIPTED
+  upstream (typed, no microphone): 127/127 across states, widths, themes,
+  and forced colors, plus the #15 run 32/32 on the new UI. Not
+  genuine-model, genuine-microphone, browser-zoom, screen-reader, or
+  Product Owner visual evidence.
 
 - Issue #15 final headed acceptance (2026-10-31): after the approval-alias
   correction, the Product Owner reported all five checks passed: initial

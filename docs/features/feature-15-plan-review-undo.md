@@ -327,3 +327,8 @@ plan. Whether the genuine model asks a clarification is not guaranteed.
 - The “Review — nothing changed” chip reuses the held (brick) chip style;
   no new visual treatment was invented. #29 visual acceptance is still
   deferred.
+
+
+## Note (2026-11-01, Plain Words panel)
+
+The review card, gate, and Completed view now offer a speak prompt (the same Start control, so voice approval stays bound to what is on screen) and a panel-only Alt+S shortcut (not while typing). Undo is also a button in the always-visible safety bar, using the same path as the voice command. Planned runs show step progress and, when every step is verified, a Completed list. See `docs/features/feature-plain-words-panel.md`.

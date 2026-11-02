@@ -266,3 +266,52 @@ reporting logs codes rather than raw messages.
 The log's approved flag records the human decision, not successful
 activation: STALE_SNAPSHOT with approved:true is a rejected approved
 attempt. Issue #29 should distinguish these concepts more clearly.
+
+
+## Note (2026-11-01, Plain Words panel)
+
+The panel now presents the held action inside the main card as an `alertdialog` (title names the action, for example "Click “Submit survey”?") and offers one Stop/Resume control. The panel uses the executor's `stop`; `pause` remains in the executor API but is no longer sent by the panel. Approval routing, binding, expiry, consumption, and final-dispatch validation are unchanged. Step states on page tags (`SEEYABLE_TAG_STATE`) use the same trusted-panel sender check. See `docs/features/feature-plain-words-panel.md`.
+
+
+## Note (2026-11-02, Issue #16 blocker, narrowed twice)
+
+Survey answers whose labels quote their row ("Very satisfied, response for
+Checkout experience") were held as checkouts. A first fix exempted every
+radio/checkbox/option (rejected: `<button role="checkbox">Delete
+draft</button>` and a "Delete all saved responses" checkbox dispatched). A
+second fix removed group text globally from a joined label (rejected:
+"Pay now (required)" in a group named "Pay now" dispatched). Both are gone.
+
+Decision rule (executor, every caller): (1) native submit evidence —
+`input[type=submit|image]`, a form-associated default/submit `<button>` —
+is consequential first, whatever ARIA role the page assigns; (2) native
+buttons, links (`a[href]`), button-type inputs, and `<summary>` are judged
+by their whole labels even when given a selection role; (3) for a
+selection control — native radio/checkbox, `<option>`, or an explicit ARIA
+radio/checkbox/option role on a non-committing element — each label source
+(accessible name, aria-label, title, value, own text) is judged separately;
+a source may shed ONE trailing reference to the control's structural group
+(fieldset legend; enclosing radiogroup/group/listbox name via aria-label or
+aria-labelledby, or a separator-delimited part of it with two or more
+words) only when that group phrase is the source's final words, sits on a
+word boundary, is introduced by a referring word (for, of, about,
+regarding, concerning, on), and leaves the option's own words; group text
+anywhere else is the control's own evidence and is kept; (4) any source
+that still names a consequential action holds the control; other controls
+are judged on every label source as before. The keyword list is
+unchanged; page event handlers are never inspected; no special words.
+
+Held (zero dispatches before approval): "Pay now (required)" in a group
+named "Pay now"; "Delete all saved responses now" / "Send notification
+immediately" / "Send notification to all members" in groups named with
+the same action; "Confirm, Delete all saved responses" (bare comma);
+"Pay for Checkout experience" (own "Pay" remains); a survey label whose
+title independently says "Delete all saved responses";
+`<button role="checkbox">Delete draft</button>`; buttons/links with a
+radio role. Selected: "Very satisfied, response for Checkout experience"
+under its "Checkout experience" (or "Rate your visit: Checkout
+experience") row, native and ARIA, by check and click. Limitations: row
+text placed first ("Checkout experience: Very satisfied") or joined
+without a referring word is not demonstrably incidental and is held
+conservatively; context is recognised only when the page exposes it
+structurally.

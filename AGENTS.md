@@ -4,16 +4,20 @@ Seeyable is a Chrome extension (Meta Global AI Developer Hackathon, Indie /
 Push the Frontier) that turns any webpage into labeled, safe, callable tools:
 a person operates the page by voice; external agents operate it via a local
 MCP server. Same executor, same safety gate for both.
-Design: Plain Words (D) is the selected design reference; the current
-implementation has NOT received visual acceptance. The side
-panel is a Plain Words surface — identity, status, commands, and
-safety always visible; diagnostics in a collapsible Developer view —
+Design: Plain Words (D) is the selected design reference. The approved
+panel mockup is frozen at DESIGN/plain-words-panel-mockup-2026-11-01.html
+and implemented by the Plain Words panel issue (supersedes #29; headed
+visual acceptance pending — docs/features/feature-plain-words-panel.md).
+The side panel is a Plain Words surface — identity, status, the main card,
+and an always-visible Stop/Resume + Undo safety bar outside the scrolling
+screens (Assist / Targets / Activity / Settings); diagnostics in a
+collapsible Developer view under Settings › Advanced —
 and overlays use word-first token pills with a quiet number dot,
 placement verified clear of controls and rendered text, and omission
 to the panel Targets list when nothing is clear (never number piles,
 never a forced badge for the active target). Keep later work inside that
-visual system; do not invent a competing one, and do not build
-plan/agent/undo states until their features exist.
+visual system; do not invent a competing one, and do not build agent
+states until their features exist.
 
 ## Architecture (build in this order)
 - apps/extension — MV3: content script (snapshot/labels/overlay/executor),
@@ -39,10 +43,12 @@ actions), and #9 (manual execution test panel) are complete and accepted.
 Issue #10 (voice front end and typed fallback — show/hide tag commands
 only) is complete and accepted. Issue #11 (shared executor safety
 gate: human confirmation, action log, Stop/Pause) is complete and accepted.
-Issue #29 (Plain Words product interface and overlay refinement) is
-implemented but visually NOT accepted, and deferred by the Product Owner
-on 2026-10-30. Preserve its work; do not resume visual refinement unless
-requested. Issue #28 (early local MCP bridge smoke test: stdio server,
+Issue #29 (Plain Words product interface and overlay refinement) was
+parked on 2026-10-30 and is superseded by the Plain Words panel issue
+(implemented 2026-11-01 from the approved mockup: merged Stop/Resume, Undo
+button, Tags toggle, speak prompts, panel-only Alt+S, step progress, and
+acting/done/held page tag states; automated and headless evidence only,
+headed visual and voice acceptance PENDING). Issue #28 (early local MCP bridge smoke test: stdio server,
 loopback bridge, tab-explicit snapshot/highlight tools) is complete and
 accepted. Product Owner confirmed explicit disconnect/re-pair and stale-target
 rejection after the headed snapshot/highlight and idle checks passed.

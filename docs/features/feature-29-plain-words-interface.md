@@ -1,5 +1,10 @@
 # Issue #29 — Plain Words Product Interface and Overlay Refinement
 
+> **Superseded (2026-11-01)** by the Plain Words panel issue, which implements
+> the approved mockup — see `docs/features/feature-plain-words-panel.md`.
+> This document is kept as history; its layout notes no longer describe the
+> current panel.
+
 The engineering panel is now the **D · Plain Words** product surface.
 Behavior, contracts, permissions, messages, and safety logic are
 unchanged; this issue restyles presentation and compacts dense

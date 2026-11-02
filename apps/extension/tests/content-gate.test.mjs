@@ -82,3 +82,17 @@ test("approval routing: only the side-panel sender can approve; held submit runs
   await sleep(0);
   win.close();
 });
+
+test("tag states: only the side panel may paint acting/done/held, and only for this document", async () => {
+  const { win, send } = loadContent();
+  const { snapshot } = await send({ type: "SEEYABLE_SNAPSHOT_DOM" }, PANEL);
+  const target = snapshot.elements[0].id;
+  const forged = await send({ type: "SEEYABLE_TAG_STATE", documentSessionId: snapshot.documentSessionId, states: { [target]: "done" } }, PAGE);
+  assert.equal(forged.error.code, "UNTRUSTED_APPROVAL", "a page sender cannot fake a done/held tag");
+  const wrongDoc = await send({ type: "SEEYABLE_TAG_STATE", documentSessionId: "doc-other", states: { [target]: "held" } }, PANEL);
+  assert.equal(wrongDoc.ok, false);
+  const ok = await send({ type: "SEEYABLE_TAG_STATE", documentSessionId: snapshot.documentSessionId, states: { [target]: "acting" } }, PANEL);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.states, 1);
+  win.close();
+});

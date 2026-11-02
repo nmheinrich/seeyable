@@ -6,12 +6,13 @@
 <title>Seeyable</title>
 <link rel="stylesheet" href="sidepanel.css">
 </head>
-<body>
+<body data-view="ready">
 <header class="identity">
   <div class="brand-row">
     <span class="wordmark">SEEYABLE</span>
-    <span class="mode">~you</span>
-    <span id="tagsChip" class="chip">Tags: off</span>
+    <span id="modeLabel" class="mode">~ready</span>
+    <span id="stateChip" class="chip">Ready</span>
+    <button id="tagsChip" type="button" class="chip tags-toggle" aria-pressed="false">Tags: off</button>
   </div>
   <div class="page-card">
     <span class="page-dot" aria-hidden="true"></span>
@@ -20,61 +21,81 @@
       <p id="pageMeta" class="page-meta">No snapshot yet</p>
     </div>
   </div>
+  <div class="status-strip" role="group" aria-label="Current status">
+    <p id="status" class="status" role="status">Open the page you want to work with.</p>
+    <p id="latestResult" class="result-line" aria-live="polite"></p>
+  </div>
 </header>
 
-<div class="status-strip" role="group" aria-label="Current status">
-  <span id="stateChip" class="chip">Ready</span>
-  <span id="status" class="status" role="status">Open the page you want to work with.</span>
-  <p id="latestResult" class="result-line" aria-live="polite"></p>
-</div>
+<div class="screens" id="screens">
+<main id="screenAssist" class="screen">
+<section id="mainCard" class="card commands" aria-labelledby="commandHeading">
+  <h1 id="commandHeading" class="hero-title" tabindex="-1">Ready when you are.</h1>
+  <p id="heroCopy" class="hero-copy">Say or type what you want done on this page. Plans are shown for review before anything changes, and Submit, Pay, Delete, and Send always stop for your approval.</p>
 
-<section class="card commands" aria-labelledby="commandHeading">
-  <h1 id="commandHeading" class="hero-title">Ready when you are.</h1>
-  <p class="hero-copy">Say or type <strong>“show tags”</strong>, <strong>“hide tags”</strong>, <strong>“click …”</strong>, or <strong>“fill … with …”</strong>. Clicks and fills run locally through the same guarded executor as the panel — risky ones still pause for your approval. Anything beyond that is planned through the paired planner proxy, when available, and shown for review before anything changes. Say <strong>“undo last change”</strong> to restore the last field Seeyable changed.</p>
+  <section id="progressBox" class="progress" aria-labelledby="progressLabel" hidden>
+    <p id="progressLabel" class="chip is-acting">● ACTING</p>
+    <p id="progressNow" class="progress-now"></p>
+    <p class="sub progress-sub">Press Stop any time. Steps already done stay done.</p>
+    <ol id="progressSteps" class="steps"></ol>
+  </section>
+
+  <section id="resultBox" class="result" aria-labelledby="resultTitle" hidden>
+    <div class="done-card">
+      <p class="section-label done-label">■ Done · verified</p>
+      <h2 id="resultTitle" class="result-title" tabindex="-1"></h2>
+      <p class="sub">Each change was checked on the live page.</p>
+    </div>
+    <ol id="resultSteps" class="steps"></ol>
+    <p class="sub">Undo restores the last change only. Clicks, and anything the page did in response, are not reversed.</p>
+    <div class="talk" role="group" aria-label="Speak again">
+      <button id="btnTalkDone" type="button" class="talk-btn" data-talk><span class="mic-icon small" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span><span class="talk-label">Speak again</span><kbd aria-label="shortcut Alt S">Alt+S</kbd></button>
+      <p class="section-label">Then say</p>
+      <ul class="say-list"><li class="main">“Undo last change”</li><li>“…or a new request”</li></ul>
+    </div>
+    <button id="btnNewRequest" type="button">New request</button>
+  </section>
 
   <button id="btnListen" type="button" class="btn-mic">
     <span class="mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span>
-    <span>Start listening</span>
+    <span class="mic-text"><span class="mic-label">Start talking</span><span class="mic-hint">One sentence, then I stop · Alt+S</span></span>
+  </button>
+  <button id="btnStopListen" type="button" class="btn-mic is-live" disabled>
+    <span class="mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span>
+    <span class="mic-text"><span class="mic-label">Done talking</span><span class="mic-hint">Use what I said</span></span>
   </button>
   <div class="meter" id="voiceMeter" aria-hidden="true"><span></span><span></span><span></span></div>
   <p id="voiceState" class="status" role="status">Voice: idle.</p>
   <p id="voiceTranscript" class="transcript" aria-live="polite">Transcript: —</p>
-
+  <div id="listenHints" class="listen-hints" hidden>
+    <p id="listenHintsLabel" class="section-label">You can say</p>
+    <ul id="listenHintsList" class="say-list"></ul>
+  </div>
   <div class="controls listen-actions" aria-label="Listening controls">
-    <button id="btnStopListen" type="button" disabled>Stop listening</button>
-    <button id="btnCancelListen" type="button" disabled>Cancel listening</button>
+    <button id="btnCancelListen" type="button" disabled>Cancel — discard what I said</button>
   </div>
 
-  <label class="field request-label">
-    Or type a request
-    <span class="request-row">
-      <input id="commandInput" type="text" autocomplete="off" placeholder="show tags">
-      <button id="btnSendCommand" type="button">Send</button>
-    </span>
-  </label>
-
-  <p class="try-row" aria-label="Supported command shortcuts">
-    <span class="try-label">Try</span>
-    <button id="btnTryShow" type="button" class="chip-btn">Show tags</button>
-    <button id="btnTryHide" type="button" class="chip-btn">Hide tags</button>
-  </p>
-
   <div id="clarifyBox" class="clarify" hidden>
+    <p class="ask">? Waiting for you</p>
     <p id="clarifyPrompt" class="status" role="status"></p>
     <div id="clarifyChoices" class="controls"></div>
   </div>
 
   <section id="planBox" class="clarify plan-review" aria-labelledby="planTitle" hidden>
-    <h2 id="planTitle" class="section-label" tabindex="-1">Review plan</h2>
-    <p id="planIntro" class="sub">Nothing has changed on the page yet.</p>
-    <ol id="planSteps" class="plan-steps"></ol>
-    <p id="planNote" class="sub">Approving the plan runs these steps in order. Submit, pay, delete, send, or publish steps still stop for their own approval in Safety.</p>
-    <div class="controls" aria-label="Plan review controls">
-      <button id="btnApprovePlan" type="button">Approve plan</button>
+    <h2 id="planTitle" class="section-label" tabindex="-1">Review plan · nothing changed yet</h2>
+    <p id="planIntro" class="plan-intro">Nothing has changed on the page yet.</p>
+    <ol id="planSteps" class="plan-steps steps"></ol>
+    <p id="planNote" class="sub">Filled fields can be undone. Submit, Pay, Delete, and Send steps still stop for their own approval.</p>
+    <div class="controls plan-controls" aria-label="Plan review controls">
+      <button id="btnApprovePlan" type="button" class="primary wide">Approve plan<span class="hint">“go ahead”</span></button>
       <button id="btnEditPlan" type="button">Edit plan</button>
       <button id="btnCancelPlan" type="button">Cancel plan</button>
     </div>
-    <p class="sub">Or say “Approve plan” (also “Approve” or “Go ahead”), “Cancel plan”, or “Edit plan: …” with a complete new request. Plan approval never approves a Submit-type step.</p>
+    <div class="talk" role="group" aria-label="Answer by voice">
+      <button id="btnTalkPlan" type="button" class="talk-btn" data-talk><span class="mic-icon small" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span><span class="talk-label">Answer by voice</span><kbd aria-label="shortcut Alt S">Alt+S</kbd></button>
+      <p class="section-label">Then say</p>
+      <ul class="say-list"><li class="main">“Approve plan”</li><li>“Cancel plan”</li><li>“Edit plan: …your new request”</li></ul><p class="sub">“Approved plan”, “Approve”, and “Go ahead” also approve. Other wording keeps the plan waiting. Plan approval never approves a Submit-type step.</p>
+    </div>
   </section>
 
   <section id="planEditBox" class="clarify plan-review" aria-labelledby="planEditTitle" hidden>
@@ -92,48 +113,77 @@
     </div>
   </section>
 
-  <button id="btnViewTargets" type="button" class="view-targets">View page targets ↓</button>
-
-  <details id="voiceSettings" class="voice-settings">
-    <summary>Voice and microphone settings</summary>
-    <div class="controls">
-      <button id="btnStopSpeech" type="button">Stop speech</button>
-      <label class="check">
-        <input id="chkSpeak" type="checkbox" checked>
-        Speak feedback
-      </label>
-      <button id="btnMicSetup" type="button">Microphone setup</button>
+  <div id="confirmBox" class="gate-card" role="alertdialog" aria-labelledby="confirmTitle" aria-describedby="confirmSummary confirmCopy" hidden>
+    <h2 id="confirmTitle" tabindex="-1"><span aria-hidden="true">▲ </span>Approve this action?</h2>
+    <div class="gate-what">
+      <p id="confirmSummary" class="gate-summary"></p>
+      <p id="confirmQuestion" class="gate-question" hidden></p>
+      <p id="confirmPage" class="gate-page"></p>
     </div>
-    <p id="voiceNote" class="sub"></p>
-  </details>
-</section>
-
-<section class="card gate" aria-labelledby="gateHeading">
-  <h2 id="gateHeading" class="section-label">Safety</h2>
-  <p class="sub">Risky actions — submit, pay, delete, send, publish — pause here for one explicit approval. Approval runs once and cannot be replayed.</p>
-  <div id="confirmBox" hidden>
-    <h3 id="confirmTitle" tabindex="-1">Confirmation required</h3>
-    <p id="confirmText"></p>
-    <div class="controls">
+    <p id="confirmCopy" class="gate-copy">Nothing has run yet. Approving runs this one action once.</p>
+    <div class="controls gate-controls">
       <button id="btnApproveOnce" type="button">Approve once</button>
       <button id="btnCancelChallenge" type="button">Cancel</button>
     </div>
+    <details id="confirmDetails" class="gate-details">
+      <summary>Details</summary>
+      <p id="confirmText"></p>
+    </details>
+  </div>
+  <div id="gateTalk" hidden>
+    <div class="talk" role="group" aria-label="Approve by voice">
+      <button id="btnTalkGate" type="button" class="talk-btn" data-talk><span class="mic-icon small" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span><span class="talk-label">Approve by voice</span><kbd aria-label="shortcut Alt S">Alt+S</kbd></button>
+      <p class="section-label">Then say</p>
+      <ul class="say-list"><li class="main">“Approve this action”</li></ul><p class="sub">Only a session you start while this is shown can approve it. Typing the phrase does not approve.</p>
+    </div>
   </div>
   <p id="confirmStatus" class="status" role="status"></p>
-  <div class="controls" aria-label="Gate controls">
-    <button id="btnStopExec" type="button">Stop</button>
-    <button id="btnPauseExec" type="button">Pause</button>
-  </div>
-  <p id="gateStatus" class="status" role="status">Gate: open.</p>
-</section>
 
-<section class="card" aria-labelledby="targetsHeading">
-  <h2 id="targetsHeading" class="section-label" tabindex="-1">Targets</h2>
-  <p class="sub">Word tags float on the page where there is room; the rest stay listed here, marked “Shown in panel.” Select a target to outline it on the page.</p>
+  <label class="field request-label">
+    Or type a request
+    <span class="request-row">
+      <input id="commandInput" type="text" autocomplete="off" placeholder="e.g. Fill in this form">
+      <button id="btnSendCommand" type="button">Send</button>
+    </span>
+  </label>
+
+  <button id="btnViewTargets" type="button" class="view-targets">View page targets</button>
+</section>
+</main>
+
+<section id="screenTargets" class="screen card" aria-labelledby="targetsHeading" hidden>
+  <h2 id="targetsHeading" class="screen-title" tabindex="-1">Page targets</h2>
+  <p class="sub">Every control Seeyable can use on this page. Word tags float on the page where there is room; the rest stay listed here, marked “Shown in panel.” Select a target to outline it on the page.</p>
   <div id="targetList" class="target-list"></div>
 </section>
 
-<details id="developerView" class="card developer">
+<section id="screenActivity" class="screen card" aria-labelledby="activityHeading" hidden>
+  <h2 id="activityHeading" class="screen-title" tabindex="-1">Activity</h2>
+  <p class="sub">What Seeyable did on this page in this session. It is not saved and never includes values you typed.</p>
+  <div id="activityList" class="activity-list"><p class="sub">No activity yet.</p></div>
+  <div class="controls">
+    <button id="btnActivityRefresh" type="button">Refresh</button>
+  </div>
+</section>
+
+<section id="screenSettings" class="screen card" aria-labelledby="settingsHeading" hidden>
+  <h2 id="settingsHeading" class="screen-title" tabindex="-1">Settings</h2>
+  <details id="voiceSettings" class="sec" open>
+    <summary>Voice and microphone</summary>
+    <div class="sec-body">
+      <label class="check switch">
+        <span>Speak feedback after each action</span>
+        <input id="chkSpeak" type="checkbox" checked>
+      </label>
+      <button id="btnStopSpeech" type="button">Stop speech</button>
+      <p class="sub">Speech also stops by itself when you start talking, so Seeyable never hears its own voice.</p>
+      <button id="btnMicSetup" type="button">Microphone setup</button>
+      <p id="voiceNote" class="sub"></p>
+    </div>
+  </details>
+  <section class="advanced" aria-labelledby="advancedHeading">
+    <h3 id="advancedHeading" class="section-label">Advanced</h3>
+    <details id="developerView" class="sec developer">
   <summary>Developer view</summary>
   <p class="sub">Snapshot tools, tag visibility, manual execution, and the detailed log. Confirmations, Stop/Pause, and the safety state above stay visible whether this is open or closed.</p>
 
@@ -207,7 +257,7 @@
 
   <section class="exec" aria-labelledby="execHeading">
     <h2 id="execHeading">Manual execution</h2>
-    <p class="sub">One action at a time through the validated executor. Consequential actions pause for your approval in the Safety section above; sensitive writes stay blocked by the executor.</p>
+    <p class="sub">One action at a time through the validated executor. Consequential actions pause for your approval in the main card; sensitive writes stay blocked by the executor.</p>
 
     <label class="field">
       Target
@@ -235,7 +285,7 @@
     </label>
 
     <button id="btnExecute" type="button" disabled>Execute once</button>
-    <p id="execStatus" class="status" role="status">No execution yet.</p>
+    <p id="execStatus" class="status">No execution yet.</p>
     <pre id="execResult" class="output exec-result" aria-label="Execution result"></pre>
   </section>
 
@@ -256,6 +306,25 @@
     “started debugging this browser” banner — expected.
   </p>
 </details>
+  </section>
+</section>
+</div>
+
+<section class="safety" aria-labelledby="gateHeading">
+  <h2 id="gateHeading" class="sr-only">Safety</h2>
+  <div class="controls safety-controls">
+    <button id="btnStopExec" type="button" class="stop">Stop</button>
+    <button id="btnUndo" type="button">Undo last change</button>
+  </div>
+  <p id="gateStatus" class="status gate-status" role="status">Gate: open.</p>
+</section>
+
+<nav class="screen-nav" aria-label="Seeyable">
+  <button type="button" data-screen="Assist" aria-current="page">Assist</button>
+  <button type="button" data-screen="Targets">Targets</button>
+  <button type="button" data-screen="Activity">Activity</button>
+  <button type="button" data-screen="Settings">Settings</button>
+</nav>
 
 <script src="lib/snapshot-cdp.js"></script>
 <script src="lib/voice-commands.js"></script>

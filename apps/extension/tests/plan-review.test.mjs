@@ -369,14 +369,14 @@ test("review: page changed after review is rejected — fresh review required, n
   panel.dom.window.close();
 });
 
-test("review: superseding request, tab change, Pause, and Stop each invalidate the preview", async () => {
-  for (const kind of ["supersede", "tab", "pause", "stop"]) {
+test("review: superseding request, tab change, and Stop each invalidate the preview", async () => {
+  // Pause and Stop are one control now (merged Stop/Resume).
+  for (const kind of ["supersede", "tab", "stop"]) {
     const panel = makePanel(tabStub({ snapshots: [snap(base)] }), { plan: twoFill });
     await typed(panel, "put Grace Hopper in Full name and Pilot in Short bio");
     const stale = panel.$("btnApprovePlan").onclick;
     if (kind === "supersede") await typed(panel, "show tags please now");
     if (kind === "tab") { for (const fn of panel.listeners.activated) fn({ tabId: 999 }); await tick(); }
-    if (kind === "pause") { panel.$("btnPauseExec").click(); await tick(); }
     if (kind === "stop") { panel.$("btnStopExec").click(); await tick(); }
     if (kind === "supersede") {
       assert.equal(panel.calls.fetch.length, 2, "the newer request was planned");
@@ -384,7 +384,6 @@ test("review: superseding request, tab change, Pause, and Stop each invalidate t
     } else {
       assert.equal(panel.$("planBox").hidden, true, kind);
     }
-    if (kind === "pause") assert.match(panel.$("status").textContent, /Plan discarded — execution was paused/);
     if (kind === "stop") assert.match(panel.$("status").textContent, /Plan discarded — execution was stopped/);
     if (kind === "tab") assert.match(panel.$("status").textContent, /Active tab changed/);
     stale();
@@ -612,8 +611,8 @@ test("correction: several model alternatives offer choices; the chosen one enter
   panel.dom.window.close();
 });
 
-test("correction: navigation, Pause, cancellation of the choice preview, and a superseding request invalidate the model cache", async () => {
-  for (const kind of ["tab", "pause", "supersede", "cancel-preview"]) {
+test("correction: navigation, Stop/Resume, cancellation of the choice preview, and a superseding request invalidate the model cache", async () => {
+  for (const kind of ["tab", "stop-resume", "supersede", "cancel-preview"]) {
     const panel = makePanel(tabStub({ snapshots: [snap(base)] }), { plan: (body) => respond({ version: "seeyable-plan-1", outcome: "clarify", question: "Which?", action: "fill", value: "Pilot",
       choices: [{ elementId: "el-1", label: "Full name" }, { elementId: "el-2", label: "Short bio" }] }, body) });
     await typed(panel, "put Pilot somewhere");
@@ -627,7 +626,7 @@ test("correction: navigation, Pause, cancellation of the choice preview, and a s
     }
     const executedBefore = panel.calls.execute;
     if (kind === "tab") { for (const fn of panel.listeners.activated) fn({ tabId: 999 }); await tick(); }
-    if (kind === "pause") { panel.$("btnPauseExec").click(); await tick(); panel.$("btnPauseExec").click(); await tick(); }
+    if (kind === "stop-resume") { panel.$("btnStopExec").click(); await tick(); panel.$("btnStopExec").click(); await tick(); }
     if (kind === "supersede") await typed(panel, "hide tags");
     const fetches = panel.calls.fetch.length;
     await typed(panel, "no, the other one");

@@ -499,3 +499,217 @@ test("review: unchanged ARIA target during hashing still approves exactly once (
   assert.equal(res.ok, true, JSON.stringify(res.error));
   assert.equal(ctx.win.__ran, 1);
 });
+
+/* --- Issue #16 blocker: incidental words in survey answers ------------------
+ * A Google-Forms-style rating grid: answer labels quote their row, and one
+ * row is "Checkout experience". The row text is the answer's structural
+ * group context (radiogroup name / fieldset legend), so it is removed before
+ * the keyword check; the answer's own words still count. Committing
+ * controls are judged by their whole label whatever role the page assigns.
+ * No domain or label whitelist; page handlers are never inspected. */
+const SURVEY = `<!doctype html><body><form id="f" onsubmit="event.preventDefault(); window.__submitted = true;">
+  <div role="radiogroup" aria-label="Checkout experience">
+    <div role="radio" tabindex="0" aria-checked="false" id="aria-vs" aria-label="Very satisfied, response for Checkout experience"
+      onclick="document.querySelectorAll('[role=radio]').forEach((r) => r.setAttribute('aria-checked', String(r === this)))">Very satisfied</div>
+    <div role="radio" tabindex="0" aria-checked="false" id="aria-s" aria-label="Satisfied, response for Checkout experience"
+      onclick="document.querySelectorAll('[role=radio]').forEach((r) => r.setAttribute('aria-checked', String(r === this)))">Satisfied</div>
+  </div>
+  <fieldset><legend>Checkout experience</legend>
+    <label><input type="radio" name="co" id="native-vs"> Very satisfied, response for Checkout experience</label>
+    <label><input type="radio" name="co" id="native-s"> Satisfied, response for Checkout experience</label>
+  </fieldset>
+  <label><input type="checkbox" id="cb"> Email me product updates</label>
+  <button type="button" id="checkout" onclick="window.__checkout = true">Checkout</button>
+  <button id="continue" onclick="window.__continue = true">Continue</button>
+  <button role="radio" aria-checked="false" id="fake-radio" onclick="window.__fakeRadio = true">Very satisfied</button>
+  <div role="switch" aria-checked="false" tabindex="0" id="pub" onclick="this.setAttribute('aria-checked','true'); window.__published = true">Publish post</div>
+</form></body>`;
+async function surveyRequest(ctx, id, action) {
+  const s = ctx.engine.snapshot();
+  const node = ctx.doc.getElementById(id);
+  const el = s.elements.find((e) => ctx.engine.resolveNode(e.id, s.revision).node === node);
+  assert.ok(el, `snapshot has #${id}`);
+  return { action, elementId: el.id, documentSessionId: s.documentSessionId, revision: s.revision };
+}
+
+test("#16: survey answers with incidental 'Checkout' context select by check AND click, without a challenge", async () => {
+  for (const [id, action] of [["aria-vs", "check"], ["aria-s", "click"], ["native-vs", "check"], ["native-s", "click"]]) {
+    const ctx = load(SURVEY);
+    const res = await ctx.executor.execute(await surveyRequest(ctx, id, action));
+    assert.equal(res.ok, true, `${id} ${action}: ${JSON.stringify(res.error)}`);
+    assert.equal(res.confirmation, undefined, "no consequential-action challenge");
+    const node = ctx.doc.getElementById(id);
+    const selected = node.tagName === "INPUT" ? node.checked : node.getAttribute("aria-checked") === "true";
+    assert.equal(selected, true, `${id} is selected after ${action}`);
+    assert.equal(ctx.win.__submitted, undefined);
+    ctx.dom.window.close();
+  }
+});
+
+test("#16: an ordinary checkbox selects without a challenge", async () => {
+  const ctx = load(SURVEY);
+  const res = await ctx.executor.execute(await surveyRequest(ctx, "cb", "check"));
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  assert.equal(ctx.doc.getElementById("cb").checked, true);
+  ctx.dom.window.close();
+});
+
+test("#16: genuine consequential controls stay held — Checkout button, native submit labelled Continue, submit with a radio role, Publish switch", async () => {
+  const cases = [
+    ["checkout", "click", "__checkout"],
+    ["continue", "click", "__continue"],       // no type in a form = native submit
+    ["fake-radio", "click", "__fakeRadio"],    // role=radio, but a form-associated default-submit button
+    ["fake-radio", "check", "__fakeRadio"],
+    ["pub", "click", "__published"],           // switches act immediately: label check kept
+    ["pub", "check", "__published"],
+  ];
+  for (const [id, action, flag] of cases) {
+    const ctx = load(SURVEY);
+    const res = await ctx.executor.execute(await surveyRequest(ctx, id, action));
+    assert.equal(code(res), "CONFIRMATION_REQUIRED", `${id} ${action} must be held`);
+    assert.ok(res.confirmation && res.confirmation.challengeId);
+    assert.equal(ctx.win[flag], undefined, `${id} handler did not run`);
+    assert.equal(ctx.win.__submitted, undefined, "nothing was submitted");
+    ctx.dom.window.close();
+  }
+});
+
+test("#16: native submit evidence wins over a misleading role, and its approval binding is unchanged", async () => {
+  const ctx = load(SURVEY);
+  const held = await ctx.executor.execute(await surveyRequest(ctx, "fake-radio", "click"));
+  assert.equal(held.confirmation.evidence, "native-submit");
+  const approved = await ctx.executor.approveChallenge(held.confirmation.challengeId);
+  assert.equal(approved.ok, true, JSON.stringify(approved.error));
+  assert.equal(ctx.win.__fakeRadio, true, "approval runs exactly the reviewed control once");
+  assert.equal(code(await ctx.executor.approveChallenge(held.confirmation.challengeId)), "APPROVAL_CONSUMED");
+  ctx.dom.window.close();
+});
+
+/* --- #16 narrowing: selection roles never exempt a committing label ------ */
+const COMMITTING = `<!doctype html><body><form id="f" onsubmit="event.preventDefault(); window.__submitted = true;">
+  <button type="button" role="checkbox" aria-checked="false" id="b-del" onclick="window.__n = (window.__n || 0) + 1">Delete draft</button>
+  <label><input type="checkbox" id="c-del" onclick="window.__n = (window.__n || 0) + 1">Delete all saved responses</label>
+  <div role="radiogroup" aria-label="Payment">
+    <div role="radio" tabindex="0" aria-checked="false" id="r-pay" onclick="window.__n = (window.__n || 0) + 1; this.setAttribute('aria-checked', 'true')">Pay now</div>
+  </div>
+  <div role="checkbox" tabindex="0" aria-checked="false" id="a-pub" onclick="window.__n = (window.__n || 0) + 1; this.setAttribute('aria-checked', 'true')">Publish immediately</div>
+  <fieldset><legend>Delete options</legend>
+    <label><input type="checkbox" id="c-del2" onclick="window.__n = (window.__n || 0) + 1">Delete all saved responses</label>
+  </fieldset>
+  <div role="radiogroup" aria-label="Pay now">
+    <div role="radio" tabindex="0" aria-checked="false" id="r-same" onclick="window.__n = (window.__n || 0) + 1; this.setAttribute('aria-checked', 'true')">Pay now</div>
+  </div>
+  <a href="#checkout" role="radio" aria-checked="false" id="l-checkout" onclick="window.__n = (window.__n || 0) + 1; return false">Checkout</a>
+  <input type="checkbox" role="switch" id="s-pub" aria-label="Publish post" onclick="window.__n = (window.__n || 0) + 1">
+  <div role="radiogroup" aria-label="Checkout experience">
+    <button type="button" role="radio" aria-checked="false" id="b-row" onclick="window.__n = (window.__n || 0) + 1">Continue to Checkout experience</button>
+    <a href="#go" role="radio" aria-checked="false" id="l-row" onclick="window.__n = (window.__n || 0) + 1; return false">Go to Checkout experience</a>
+  </div>
+</form></body>`;
+
+test("#16 narrowing: committing selection-role controls are held with ZERO dispatches before approval", async () => {
+  const cases = [
+    ["b-del", "button with role=checkbox, “Delete draft” (reviewer repro 1)"],
+    ["c-del", "native checkbox “Delete all saved responses” (reviewer repro 2)"],
+    ["r-pay", "ARIA radio “Pay now”"],
+    ["a-pub", "ARIA checkbox “Publish immediately”"],
+    ["c-del2", "“Delete all saved responses” inside a group named “Delete options” (single shared word is not context)"],
+    ["r-same", "“Pay now” inside a group also named “Pay now” (context cannot erase the whole label)"],
+    ["l-checkout", "link with role=radio “Checkout”"],
+    ["s-pub", "checkbox with role=switch “Publish post”"],
+    ["b-row", "<button role=radio> inside a Checkout-named group keeps button semantics (no context stripping)"],
+    ["l-row", "<a href role=radio> inside a Checkout-named group keeps link semantics"],
+  ];
+  for (const [id, label] of cases) for (const action of ["click", "check"]) {
+    const ctx = load(COMMITTING);
+    const res = await ctx.executor.execute(await surveyRequest(ctx, id, action));
+    assert.equal(code(res), "CONFIRMATION_REQUIRED", `${label} via ${action} must be held`);
+    assert.equal(ctx.win.__n, undefined, `${label} via ${action}: zero dispatches before approval`);
+    ctx.dom.window.close();
+  }
+});
+
+test("#16 narrowing: an approved committing checkbox runs exactly once; the challenge stays single-use", async () => {
+  const ctx = load(COMMITTING);
+  const held = await ctx.executor.execute(await surveyRequest(ctx, "c-del", "click"));
+  assert.equal(held.confirmation.evidence, "consequential-label");
+  assert.equal(ctx.win.__n, undefined);
+  const approved = await ctx.executor.approveChallenge(held.confirmation.challengeId);
+  assert.equal(approved.ok, true, JSON.stringify(approved.error));
+  assert.equal(ctx.win.__n, 1, "approval dispatches exactly once");
+  assert.equal(code(await ctx.executor.approveChallenge(held.confirmation.challengeId)), "APPROVAL_CONSUMED");
+  assert.equal(ctx.win.__n, 1);
+  ctx.dom.window.close();
+});
+
+test("#16 narrowing: row context named through aria-labelledby or a 'Question: Row' group name is incidental", async () => {
+  const html = `<!doctype html><body>
+    <span id="row">Checkout experience</span>
+    <div role="radiogroup" aria-labelledby="row">
+      <div role="radio" tabindex="0" aria-checked="false" id="lb" aria-label="Satisfied, response for Checkout experience" onclick="this.setAttribute('aria-checked','true')"></div>
+    </div>
+    <div role="radiogroup" aria-label="Rate your visit: Checkout experience">
+      <div role="radio" tabindex="0" aria-checked="false" id="qr" aria-label="Neutral, response for Checkout experience" onclick="this.setAttribute('aria-checked','true')"></div>
+    </div></body>`;
+  for (const id of ["lb", "qr"]) for (const action of ["click", "check"]) {
+    const ctx = load(html);
+    const res = await ctx.executor.execute(await surveyRequest(ctx, id, action));
+    assert.equal(res.ok, true, `${id} ${action}: ${JSON.stringify(res.error)}`);
+    assert.equal(ctx.doc.getElementById(id).getAttribute("aria-checked"), "true");
+    ctx.dom.window.close();
+  }
+});
+
+/* --- #16 narrowing 2: group text never erases the control's own action ----
+ * Context is removed from a label source only when it is that source's
+ * trailing words introduced by a referring word ("response for <row>").
+ * Everything else is the control's own evidence and is kept. */
+function selectionFixture(kind, group, label, extraAttrs = "") {
+  const hook = `onclick="window.__n = (window.__n || 0) + 1; this.setAttribute && this.getAttribute('role') && this.setAttribute('aria-checked', 'true')"`;
+  if (kind === "native") return `<!doctype html><body><fieldset><legend>${group}</legend><label><input type="checkbox" id="t" ${extraAttrs} ${hook}>${label}</label></fieldset></body>`;
+  return `<!doctype html><body><div role="group" aria-label="${group}"><div role="checkbox" tabindex="0" aria-checked="false" id="t" ${extraAttrs} ${hook}>${label}</div></div></body>`;
+}
+
+test("#16 narrowing 2: reviewer bypasses — group-named actions with qualifiers are held with ZERO dispatches", async () => {
+  const cases = [
+    ["Pay now", "Pay now (required)"],
+    ["Delete all saved responses", "Delete all saved responses now"],
+    ["Send notification", "Send notification immediately"],
+    ["Send notification", "Send notification to all members"],          // a different qualifier, no special words
+    ["Delete all saved responses", "Confirm, Delete all saved responses"], // bare comma: not a demonstrable reference
+    ["Checkout experience", "Pay for Checkout experience"],              // reference removed, own "Pay" still counts
+  ];
+  for (const [group, label] of cases) for (const kind of ["native", "aria"]) for (const action of ["click", "check"]) {
+    const ctx = load(selectionFixture(kind, group, label));
+    const res = await ctx.executor.execute(await surveyRequest(ctx, "t", action));
+    assert.equal(code(res), "CONFIRMATION_REQUIRED", `${kind} “${label}” in “${group}” via ${action} must be held`);
+    assert.equal(ctx.win.__n, undefined, `${kind} “${label}” via ${action}: zero dispatches before approval`);
+    ctx.dom.window.close();
+  }
+});
+
+test("#16 narrowing 2: independent label sources keep their evidence; ambiguous placement holds", async () => {
+  const cases = [
+    // Survey-like aria-label is incidental, but the title independently names a deletion.
+    `<!doctype html><body><div role="radiogroup" aria-label="Checkout experience"><div role="radio" tabindex="0" aria-checked="false" id="t" aria-label="Very satisfied, response for Checkout experience" title="Delete all saved responses" onclick="window.__n = (window.__n || 0) + 1"></div></div></body>`,
+    // Row text at the start of the answer is not demonstrably incidental: held conservatively.
+    `<!doctype html><body><div role="radiogroup" aria-label="Checkout experience"><div role="radio" tabindex="0" aria-checked="false" id="t" aria-label="Checkout experience: Very satisfied" onclick="window.__n = (window.__n || 0) + 1"></div></div></body>`,
+  ];
+  for (const html of cases) for (const action of ["click", "check"]) {
+    const ctx = load(html);
+    const res = await ctx.executor.execute(await surveyRequest(ctx, "t", action));
+    assert.equal(code(res), "CONFIRMATION_REQUIRED", action);
+    assert.equal(ctx.win.__n, undefined);
+    ctx.dom.window.close();
+  }
+});
+
+test("#16 narrowing 2: the genuine survey answer still selects under its structurally named row", async () => {
+  for (const kind of ["native", "aria"]) for (const action of ["click", "check"]) {
+    const ctx = load(selectionFixture(kind, "Checkout experience", "Very satisfied, response for Checkout experience"));
+    const res = await ctx.executor.execute(await surveyRequest(ctx, "t", action));
+    assert.equal(res.ok, true, `${kind} ${action}: ${JSON.stringify(res.error)}`);
+    assert.equal(ctx.win.__n, 1, "dispatched exactly once");
+    ctx.dom.window.close();
+  }
+});

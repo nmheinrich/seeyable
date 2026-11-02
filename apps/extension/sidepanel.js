@@ -164,14 +164,46 @@ function populateTargets(snapshot, preserveId) {
   updateExecuteEnabled();
 }
 
-// Discovery shortcut next to the main interaction: move keyboard focus
-// (and scroll) to the Targets heading so the list is one activation away.
+/* --- Screens (Assist / Targets / Activity / Settings) ----------------------
+ * Presentation only. The safety bar and nav sit outside the screens, so
+ * Stop/Resume and Undo stay visible on every screen. Anything that needs a
+ * decision (a plan to review, a choice, a held action) brings Assist back. */
+function showScreen(name, opts = {}) {
+  for (const screen of ["Assist", "Targets", "Activity", "Settings"]) {
+    const el = $(`screen${screen}`);
+    if (el) el.hidden = screen !== name;
+  }
+  for (const btn of document.querySelectorAll(".screen-nav button")) {
+    if (btn.dataset.screen === name) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  }
+  if (name === "Activity" && typeof fetchActionLog === "function") void fetchActionLog();
+  if (opts.focus) {
+    const heading = { Assist: "commandHeading", Targets: "targetsHeading", Activity: "activityHeading", Settings: "settingsHeading" }[name];
+    const el = $(heading);
+    if (el && typeof el.focus === "function") el.focus();
+  }
+}
+for (const btn of document.querySelectorAll(".screen-nav button")) {
+  btn.addEventListener("click", () => showScreen(btn.dataset.screen, { focus: true }));
+}
+// Keep scroll padding equal to the safety bar's real height (its labels wrap
+// at narrow widths and browser zoom), so the sticky bar never covers the
+// control being focused or scrolled to — e.g. the gate's Cancel.
+function syncSafetyHeight() {
+  const bar = document.querySelector(".safety");
+  if (bar) document.documentElement.style.setProperty("--safety-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+}
+{
+  const bar = document.querySelector(".safety");
+  if (bar && typeof ResizeObserver === "function") new ResizeObserver(syncSafetyHeight).observe(bar);
+  window.addEventListener("resize", syncSafetyHeight);
+  syncSafetyHeight();
+}
+// Discovery shortcut in the Ready view: open Targets and focus its heading.
 {
   const viewBtn = $("btnViewTargets");
-  if (viewBtn) viewBtn.addEventListener("click", () => {
-    const heading = $("targetsHeading");
-    if (heading) heading.focus();
-  });
+  if (viewBtn) viewBtn.addEventListener("click", () => showScreen("Targets", { focus: true }));
 }
 
 function targetMarks(element) {
@@ -230,12 +262,12 @@ function renderState() {
     let label = "Ready";
     if (state.confirmation) { label = "\u25B2 Held \u2014 nothing sent"; cls = "is-held"; }
     else if (state.pending || commandPending) { label = "\u25CF Acting"; cls = "is-acting"; }
-    else if (pendingPlan) { label = "\u25B2 Review \u2014 nothing changed"; cls = "is-held"; }
+    else if (pendingPlan) { label = "Review \u2014 nothing changed"; cls = "is-review"; }
     else if (state.acquiring) { label = "\u25CF Working"; cls = "is-acting"; }
     else if (voicePhase === "listening") { label = "Listening"; cls = "is-listening"; }
     else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
     else if (voicePhase === "finishing") { label = "Finishing"; cls = "is-listening"; }
-    else if (gateClosed) { label = /paused/i.test(($("gateStatus") || {}).textContent || "") ? "Paused" : "Stopped"; cls = "is-error"; }
+    else if (gateClosed) { label = "Stopped"; cls = "is-error"; }
     else if (/^Completed and verified/.test(execText)) { label = "\u25A0 Done"; cls = "is-success"; }
     chip.className = "chip" + (cls ? " " + cls : "");
     chip.textContent = label;
@@ -247,10 +279,138 @@ function renderState() {
   document.body.dataset.voiceMsg = voiceEl && voiceEl.textContent === "Voice: idle." ? "quiet" : "shown";
   const transcriptEl = $("voiceTranscript");
   document.body.dataset.transcript = !transcriptEl || /^Transcript:/.test(transcriptEl.textContent) ? "empty" : "shown";
+  const view = currentView();
+  document.body.dataset.view = view;
+  document.body.dataset.gate = gateClosed ? "closed" : "open";
+  const mode = $("modeLabel");
+  if (mode) mode.textContent = VIEW_MODES[view] || "~ready";
   const heroHeading = $("commandHeading");
   if (heroHeading) heroHeading.textContent = voicePhase === "listening" ? "Listening"
-    : voicePhase === "finishing" ? "Finishing" : "Ready when you are.";
+    : voicePhase === "finishing" ? "Finishing"
+    : view === "stopped" ? "Stopped."
+    : view === "working" ? "Working\u2026" : "Ready when you are.";
+  const heroCopy = $("heroCopy");
+  if (heroCopy) heroCopy.textContent = view === "stopped" ? STOPPED_COPY : READY_COPY;
+  const gateTalk = $("gateTalk");
+  if (gateTalk) gateTalk.hidden = !state.confirmation;
+  renderListenHints();
+  renderProgress();
+  if (typeof syncSafetyHeight === "function") syncSafetyHeight();
   if (typeof updateVoiceControls === "function") updateVoiceControls();
+}
+
+/* --- Main-card state (presentation only) -----------------------------------
+ * One view name derived from state the panel already owns. It decides which
+ * parts of the main card show (CSS reads body[data-view]); it never touches
+ * ownership, locks, plan binding, or approval authority. */
+const READY_COPY = "Say or type what you want done on this page. Plans are shown for review before anything changes, and Submit, Pay, Delete, and Send always stop for your approval.";
+const STOPPED_COPY = "Nothing new will run until you resume. Anything waiting for approval was withdrawn, and nothing that was stopped will run again.";
+const VIEW_MODES = {
+  ready: "~ready", listening: "~listening", plan: "~plan", edit: "~edit", repair: "~you",
+  gate: "~you", acting: "~you", working: "~you", done: "~done", stopped: "~stopped",
+};
+function currentView() {
+  if (state.confirmation) return "gate";
+  if (voicePhase !== "idle") return "listening";
+  if (pendingPlan) return "plan";
+  if ($("planEditBox") && !$("planEditBox").hidden) return "edit";
+  if (pendingClarification) return "repair";
+  if (state.pending || commandPending) return planProgress ? "acting" : "working";
+  if (gateClosed) return "stopped";
+  if (lastRun) return "done";
+  return "ready";
+}
+
+/* Step progress for the Acting card and the Completed list. Labels come
+ * from the validated plan and the reviewed snapshot (the same words the
+ * review showed); they live only in this view and are never logged. */
+let planProgress = null; // { steps: [{ text, el, risky }], index }
+let lastRun = null;      // { steps: [{ text, el }] } after a verified plan
+
+/* Step states on the page's word tags (acting / done / held), sent as one
+ * complete picture to the bound tab over the trusted-panel route. "done"
+ * is only ever sent for steps the executor verified. Best effort: a
+ * missing receiver never affects execution. */
+let tagStates = {};
+function sendTagStates(next, target) {
+  tagStates = { ...next };
+  const tabId = target ? target.tabId : state.boundTabId;
+  const session = target ? target.session : state.snapshot && state.snapshot.documentSessionId;
+  if (tabId === null || tabId === undefined || !session) return;
+  try {
+    const sent = chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_TAG_STATE", documentSessionId: session, states: tagStates });
+    if (sent && typeof sent.catch === "function") sent.catch(() => {});
+  } catch { /* the page may not have the content script; presentation only */ }
+}
+function stepItem(item, status) {
+  const li = document.createElement("li");
+  const gl = document.createElement("span");
+  gl.className = "gl";
+  gl.setAttribute("aria-hidden", "true");
+  gl.textContent = status === "done" ? "\u25A0" : status === "now" ? "\u25CF" : item.risky ? "\u25B2" : "\u25CB";
+  const tx = document.createElement("span");
+  tx.className = "tx";
+  tx.textContent = item.text;
+  if (status === "next") {
+    const note = document.createElement("span");
+    note.className = "step-note";
+    note.textContent = "next";
+    tx.append(note);
+  }
+  const no = document.createElement("span");
+  no.className = "no";
+  no.textContent = numberFromId(item.el);
+  no.setAttribute("aria-label", `target ${numberFromId(item.el)}`);
+  li.className = status === "done" ? "is-done" : status === "now" ? "is-now" : item.risky ? "is-risky" : "";
+  const sr = document.createElement("span");
+  sr.className = "sr-only";
+  sr.textContent = status === "done" ? "Done: " : status === "now" ? "Now: " : "";
+  li.append(gl, sr, tx, no);
+  return li;
+}
+function renderProgress() {
+  const box = $("progressBox");
+  if (!box) return;
+  const show = Boolean(planProgress) && (state.pending || commandPending);
+  box.hidden = !show;
+  if (show) {
+    const { steps, index } = planProgress;
+    const at = Math.min(index, steps.length - 1);
+    $("progressLabel").textContent = `\u25CF ACTING \u00B7 ${at + 1} OF ${steps.length}`;
+    $("progressNow").textContent = steps[at].text;
+    const list = $("progressSteps");
+    list.replaceChildren(...steps.map((item, i) => stepItem(item, i < index ? "done" : i === index ? "now" : i === index + 1 ? "next" : "")));
+  }
+  const result = $("resultBox");
+  if (!result) return;
+  const showResult = Boolean(lastRun) && currentView() === "done";
+  result.hidden = !showResult;
+  if (showResult) {
+    const n = lastRun.steps.length;
+    $("resultTitle").textContent = `${n} change${n === 1 ? "" : "s"} made.`;
+    $("resultSteps").replaceChildren(...lastRun.steps.map((item) => stepItem(item, "done")));
+  }
+}
+
+// Phrases that fit what is on screen while the microphone is live.
+function renderListenHints() {
+  const box = $("listenHints");
+  if (!box) return;
+  const live = voicePhase !== "idle";
+  let label = "";
+  let phrases = [];
+  if (live && state.confirmation) { label = "For the held action, say"; phrases = ["Approve this action"]; }
+  else if (live && pendingPlan) { label = "For the plan, say"; phrases = ["Approve plan", "Cancel plan", "Edit plan: \u2026your new request"]; }
+  else if (live && lastRun) { label = "You can say"; phrases = ["Undo last change", "\u2026or a new request"]; }
+  box.hidden = phrases.length === 0;
+  if (phrases.length === 0) return;
+  $("listenHintsLabel").textContent = label;
+  $("listenHintsList").replaceChildren(...phrases.map((text, i) => {
+    const li = document.createElement("li");
+    if (i === 0) li.className = "main";
+    li.textContent = `\u201C${text}\u201D`;
+    return li;
+  }));
 }
 
 function updateValueEnabled() {
@@ -326,11 +486,15 @@ function renderPageLine() {
 }
 
 function invalidateExecution(reason) {
+  if (Object.keys(tagStates).length && state.boundTabId !== null && state.snapshot) {
+    sendTagStates({}, { tabId: state.boundTabId, session: state.snapshot.documentSessionId });
+  }
   state.generation += 1;
   cancelVoiceInteraction();
   clearClarification();
-  const tagsChip = $("tagsChip");
-  if (tagsChip) tagsChip.textContent = "Tags: unknown";
+  setTagsChip("unknown");
+  planProgress = null;
+  lastRun = null;
   if (state.confirmation) {
     const held = state.confirmation;
     try {
@@ -551,6 +715,21 @@ async function sendBound(payload) {
   return chrome.tabs.sendMessage(tab.id, payload);
 }
 
+/* One header toggle replaces the tags chip, the Show/Hide buttons in the
+ * main area, and the Try chips. It dispatches the same typed commands, so
+ * it shares their locks, ownership, and spoken feedback. "unknown" (after
+ * a tab/document change) reads as off: pressing it shows tags. */
+function setTagsChip(value) {
+  const chip = $("tagsChip");
+  if (!chip) return;
+  chip.textContent = `Tags: ${value}`;
+  chip.setAttribute("aria-pressed", String(value === "on"));
+}
+$("tagsChip").addEventListener("click", async () => {
+  const on = $("tagsChip").getAttribute("aria-pressed") === "true";
+  await dispatchCommand(on ? "hide tags" : "show tags", "typed");
+});
+
 /* Show tags as a reusable flow: the manual button, typed commands, and
  * voice commands all run this exact code path (same ownership checks,
  * same snapshot acquisition). Returns an outcome object; callers own
@@ -586,11 +765,10 @@ async function runShowTags(opts = {}) {
       // discoverable in the Targets list, marked "Shown in panel".
       unplacedIds = new Set(Array.isArray(res.unplaced) ? res.unplaced : []);
       if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
-      const chip = $("tagsChip");
       // Visibility only: placement changes as the page scrolls/resizes
       // and the panel gets no live recount, so a number here would go
-      // stale. The chip states the durable fact (tags on), nothing more.
-      if (chip) chip.textContent = "Tags: on";
+      // stale. The toggle states the durable fact (tags on), nothing more.
+      setTagsChip("on");
       renderTargets(); // refresh "Shown in panel" marks from this show's report
       if (unplacedIds.size > 0) {
         return { ok: true, message: `Tags shown (${res.total} controls, revision ${res.revision}). Some word tags stay in the panel \u2014 see Targets.` };
@@ -628,8 +806,7 @@ async function runHideTags(tabId, opts = {}) {
       ? await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_HIDE_TAGS" })
       : await sendBound({ type: "SEEYABLE_HIDE_TAGS" });
     if (res && res.ok) {
-      const chip = $("tagsChip");
-      if (chip) chip.textContent = "Tags: off";
+      setTagsChip("off");
       unplacedIds = new Set();
       renderTargets();
       return { ok: true, message: "Tags hidden. Highlighting by number still works." };
@@ -767,10 +944,13 @@ function updateVoiceControls() {
   $("btnCancelListen").disabled = !(recActive || commandPending);
   $("btnSendCommand").disabled = commandPending || panelBusy;
   $("commandInput").disabled = commandPending;
-  // Suggestion chips dispatch through the same typed flow and lock.
-  for (const id of ["btnTryShow", "btnTryHide"]) {
+  // The tags toggle and Undo dispatch through the same typed flow and lock.
+  if ($("tagsChip")) $("tagsChip").disabled = commandPending || panelBusy;
+  if ($("btnUndo")) $("btnUndo").disabled = commandPending || panelBusy;
+  // Speak prompts are the same Start control, offered where an answer fits.
+  for (const id of ["btnTalkPlan", "btnTalkGate", "btnTalkDone"]) {
     const btn = $(id);
-    if (btn) btn.disabled = commandPending || panelBusy;
+    if (btn) btn.disabled = $("btnListen").disabled;
   }
 }
 
@@ -954,7 +1134,7 @@ function presentPipelineOutcome(action, name, result) {
     // Held means nothing ran yet: never past-tense the action.
     return {
       ok: true,
-      message: `${pending} on “${name}” is waiting for your approval in the Safety section. Nothing was executed.`,
+      message: "Held: waiting for your approval below. Nothing was executed.",
       spoken: "Waiting for your approval.",
       contextOutcome: "held for approval",
     };
@@ -1028,6 +1208,7 @@ let clarifySeq = 0; // identity for each clarification round; obsolete callbacks
 
 function renderClarification(local, candidates, binding) {
   clearClarification();
+  showScreen("Assist");
   // Each choice button closes over THIS clarification object — its own
   // request, value, and allowed candidate IDs. A newer command replaces
   // pendingClarification, and any callback from the older round then
@@ -1389,7 +1570,43 @@ function planSummaryOf(plan, pruned) {
   }).join("; ");
 }
 
-async function runPlanSteps(plan, { tabId, source, gen, seq, pruned }) {
+// Progress presentation wraps the unchanged sequential runner: the Acting
+// card shows done/now/next from the same validated steps, and a fully
+// verified run becomes the Completed list. Execution is not affected.
+async function runPlanSteps(plan, opts) {
+  const elements = state.snapshot && Array.isArray(state.snapshot.elements) ? state.snapshot.elements : opts.pruned.elements;
+  planProgress = {
+    index: 0,
+    steps: plan.steps.map((step) => {
+      const element = elements.find((e) => e && e.id === step.elementId)
+        || opts.pruned.elements.find((e) => e.id === step.elementId);
+      const described = describePlanStep(step, element, elements);
+      return { text: described.text, el: step.elementId, risky: Boolean(described.note) };
+    }),
+  };
+  lastRun = null;
+  renderState();
+  try {
+    const outcome = await runPlanStepsInner(plan, opts);
+    const verified = Boolean(outcome && outcome.ok && !outcome.held && /^completed/.test(outcome.contextOutcome || ""));
+    if (verified) {
+      lastRun = { steps: planProgress.steps };
+      sendTagStates(Object.fromEntries(plan.steps.map((st) => [st.elementId, "done"])));
+    } else if (outcome && outcome.held) {
+      // Earlier steps verified; the held step is marked by showConfirmation.
+      const held = {};
+      for (let d = 0; d < planProgress.index; d++) held[plan.steps[d].elementId] = "done";
+      sendTagStates({ ...held, ...Object.fromEntries(Object.entries(tagStates).filter(([, st]) => st === "held")) });
+    } else {
+      sendTagStates({});
+    }
+    return outcome;
+  } finally {
+    planProgress = null;
+  }
+}
+
+async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
   const total = plan.steps.length;
   const prunedById = new Map(pruned.elements.map((e) => [e.id, e]));
   const planSummary = planSummaryOf(plan, pruned);
@@ -1432,6 +1649,11 @@ async function runPlanSteps(plan, { tabId, source, gen, seq, pruned }) {
         };
       }
     }
+    if (planProgress) planProgress.index = i;
+    const stepStates = {};
+    for (let d = 0; d < i; d++) stepStates[plan.steps[d].elementId] = "done";
+    stepStates[step.elementId] = "acting";
+    sendTagStates(stepStates);
     setStatus(`Step ${i + 1} of ${total}: ${step.action} ${commandTargetName(target)}…`);
     const request = {
       action: step.action,
@@ -1654,6 +1876,35 @@ function frozenCopy(value) {
 }
 
 const CONSEQUENTIAL_HINT = /\b(submit|pay|buy|purchase|checkout|delete|remove|send|publish|place order|confirm order)\b/i;
+const SELECTION_HINT_ROLES = new Set(["radio", "checkbox", "option"]);
+// Preview hint only — the executor decides, for every caller. It mirrors
+// the executor's rule with snapshot data: committing controls (and buttons
+// or links given a selection role) are judged by their whole label; a
+// selection control's name may shed only a trailing, demonstrably
+// incidental reference to its structurally certain question/row context
+// ("…, response for Checkout experience"). Context anywhere else is kept,
+// so ambiguous cases are hinted as held.
+const REFERENCE_INTRO_HINT = /(?:^|[^\p{L}\p{N}])(?:for|of|about|regarding|concerning|on)\s*[:,]?\s*$/iu;
+function previewMayHold(element) {
+  if (!element) return false;
+  const squash = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  const whole = squash(element.name).replace(/[\s.]+$/, "");
+  const tag = String(element.tag || "").toLowerCase();
+  const selection = SELECTION_HINT_ROLES.has(element.role) && !["button", "a", "summary"].includes(tag);
+  if (!selection || !element.question || !element.questionCertain) return CONSEQUENTIAL_HINT.test(whole);
+  const phrases = new Set([squash(element.question)]);
+  for (const part of element.question.split(/\s*[:,;·|–—]\s*|\s+-\s+/)) {
+    if (squash(part).split(" ").length >= 2) phrases.add(squash(part));
+  }
+  for (const phrase of [...phrases].sort((a, b) => b.length - a.length)) {
+    if (!phrase || !whole.toLowerCase().endsWith(phrase.toLowerCase())) continue;
+    const before = whole.slice(0, whole.length - phrase.length);
+    if (/[\p{L}\p{N}]$/u.test(before) || !REFERENCE_INTRO_HINT.test(before)) continue;
+    if (!/[\p{L}\p{N}]/u.test(before.replace(REFERENCE_INTRO_HINT, ""))) continue;
+    return CONSEQUENTIAL_HINT.test(before);
+  }
+  return CONSEQUENTIAL_HINT.test(whole);
+}
 function quotedValue(value) {
   const text = String(value);
   return text.length > 160 ? `“${text.slice(0, 160)}…” (${text.length} characters in total)` : `“${text}”`;
@@ -1673,14 +1924,12 @@ function describePlanStep(step, element, elements) {
     const option = options.find((o) => o && o.value === step.value);
     return { text: `Choose ${quotedValue(option ? option.label : step.value)} in “${name}”` };
   }
+  const note = previewMayHold(element) ? "This will stop and ask for its own approval." : null;
   if (step.action === "check") {
-    return { text: element && element.role === "radio" ? `Select “${name}”` : `Turn on “${name}”` };
+    return { text: element && element.role === "radio" ? `Select “${name}”` : `Turn on “${name}”`, note };
   }
-  if (step.action === "uncheck") return { text: `Turn off “${name}”` };
-  return {
-    text: `Click “${name}”`,
-    note: CONSEQUENTIAL_HINT.test(name) ? "This will stop and ask for its own approval in Safety." : null,
-  };
+  if (step.action === "uncheck") return { text: `Turn off “${name}”`, note };
+  return { text: `Click “${name}”`, note };
 }
 
 function clearPlanPreview() {
@@ -1716,6 +1965,7 @@ function discardPlanReview() {
 
 function presentPlanPreview(plan, binding) {
   discardPlanReview();
+  showScreen("Assist");
   const preview = frozenCopy({
     id: ++planSeq,
     plan,
@@ -1978,10 +2228,10 @@ function handleReviewCommand(review, source, meta) {
     // Consequential approval stays on its own authority: the Approve once
     // button, or this phrase spoken in a user-started session bound to
     // the exact challenge on screen. Typed text never approves it.
-    if (source !== "voice") return done("Use the Approve once button in Safety, or say “Approve this action” while listening. Nothing was approved.", true);
+    if (source !== "voice") return done("Use the Approve once button, or say “Approve this action” while listening. Nothing was approved.", true);
     if (!state.confirmation) return done("No action is waiting for approval. Nothing was approved.", true);
     if (!voiceReviewAuthorized(meta, "challenge", state.confirmation.challengeId)) {
-      return done("That approval was not accepted: start listening while this action is shown in Safety, then say “Approve this action”. Nothing was approved.", true);
+      return done("That approval was not accepted: start listening while this action is shown, then say “Approve this action”. Nothing was approved.", true);
     }
     settleVoiceAfterCommand();
     void approveHeldChallenge(state.confirmation.challengeId);
@@ -2148,6 +2398,7 @@ async function dispatchCommand(rawText, source, meta = {}) {
   // plan waiting for review (Issue #15: a superseding request).
   interactionSeq += 1;
   clearClarification();
+  lastRun = null;
   const supersededPlan = discardPlanReview() && !edited;
   // Typed submission safely resolves any live recognition first:
   // the speech session is cancelled and its utterance discarded.
@@ -2225,7 +2476,9 @@ async function dispatchCommand(rawText, source, meta = {}) {
   });
 }
 
-$("btnListen").addEventListener("click", async () => {
+// One start path for the main microphone, the speak prompts, and Alt+S:
+// the same checks, the same session, the same review binding.
+async function startListening() {
   if (!recognizer || !recognizer.supported()) {
     setVoiceState("Voice: error — speech recognition is not supported in this browser. Typed commands remain available.", true);
     return;
@@ -2256,6 +2509,24 @@ $("btnListen").addEventListener("click", async () => {
     used: false,
   } : null;
   updateVoiceControls();
+}
+$("btnListen").addEventListener("click", () => { void startListening(); });
+for (const id of ["btnTalkPlan", "btnTalkGate", "btnTalkDone"]) {
+  const btn = $(id);
+  if (btn) btn.addEventListener("click", () => { void startListening(); });
+}
+// Alt+S starts talking while the panel has focus — never while a text
+// field has focus, so typing (including Option+S "ß" on macOS) is never
+// taken over. Panel-only: this listens on Seeyable's own page, not the
+// web page, and adds no browser-wide shortcut.
+document.addEventListener("keydown", (event) => {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.code !== "KeyS" || event.repeat) return;
+  const target = event.target;
+  if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+  if ($("btnListen").disabled) return;
+  event.preventDefault();
+  showScreen("Assist");
+  void startListening();
 });
 
 $("btnStopListen").addEventListener("click", () => {
@@ -2280,15 +2551,16 @@ $("btnSendCommand").addEventListener("click", async () => {
   $("commandInput").value = "";
   await dispatchCommand(text, "typed");
 });
-// Suggestion chips offer only the two supported commands, dispatched
-// through the same shared typed flow (same locks, same ownership).
-for (const [buttonId, command] of [["btnTryShow", "show tags"], ["btnTryHide", "hide tags"]]) {
-  const chip = $(buttonId);
-  if (chip) chip.addEventListener("click", async () => {
-    $("commandInput").value = "";
-    await dispatchCommand(command, "typed");
-  });
-}
+// Undo button: the same path as the spoken/typed "undo last change".
+// Always offered; when nothing can be undone the executor says so.
+$("btnUndo").addEventListener("click", async () => {
+  await dispatchCommand("undo last change", "typed");
+});
+$("btnNewRequest").addEventListener("click", () => {
+  lastRun = null;
+  renderState();
+  $("commandInput").focus();
+});
 $("commandInput").addEventListener("keydown", async (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
@@ -2442,7 +2714,7 @@ async function runExecutionPipeline(tabId, request, gen, ownerSeq = null) {
   if (!response.ok && response.error && response.error.code === "CONFIRMATION_REQUIRED" && response.confirmation) {
     // A held action, not an ordinary failure: nothing ran, the reviewed
     // request stays fixed, and no snapshot refresh (or replay) follows.
-    // The human decides in the Safety gate section.
+    // The human decides on the held action in the main card.
     showConfirmation(response.confirmation, tabId);
     void fetchActionLog(tabId);
     return { outcome: "held", response };
@@ -2504,7 +2776,7 @@ $("btnExecute").addEventListener("click", async () => {
       setExecStatus("Malformed executor response. Execution paused.", true);
     } else if (result.outcome === "held") {
       renderExecution([
-        "Confirmation required — nothing was executed. Review the pending action in the Safety gate section, then Approve once or Cancel.",
+        "Confirmation required — nothing was executed. Review the held action in the main card, then Approve once or Cancel.",
         `Diff unavailable: ${result.response.diffUnavailableReason || "awaiting human confirmation"}.`,
       ], result.response);
       setExecStatus("Confirmation required. Nothing was executed.", false);
@@ -2552,14 +2824,39 @@ function showConfirmation(confirmation, tabId) {
   confirmFocusReturn = document.activeElement && document.contains(document.activeElement)
     ? document.activeElement : null;
   confirmFocusMoved = false;
+  showScreen("Assist"); // a held action is always shown where it can be decided
+  if (confirmation.elementId) {
+    const next = Object.fromEntries(Object.entries(tagStates).filter(([, st]) => st === "done"));
+    next[confirmation.elementId] = "held";
+    sendTagStates(next, { tabId, session: confirmation.documentSessionId || (state.snapshot && state.snapshot.documentSessionId) });
+  }
+  // Presentation only: every line below is derived from the executor's
+  // confirmation. The approved request and its binding live in the
+  // executor and are referenced by challenge id alone, so shortening what
+  // is shown here cannot shorten or alter what is approved.
+  const target = confirmation.targetName || confirmation.elementId;
+  const verb = confirmation.action ? confirmation.action.charAt(0).toUpperCase() + confirmation.action.slice(1) : "Run";
+  $("confirmSummary").textContent = `${verb} \u201C${target}\u201D`;
+  $("confirmQuestion").textContent = confirmation.targetQuestion ? `Question: ${confirmation.targetQuestion}` : "";
+  $("confirmQuestion").hidden = !confirmation.targetQuestion;
+  $("confirmPage").textContent = confirmationPageLine(confirmation.pageUrl);
+  const expires = new Date(confirmation.expiresAt);
+  const expiresText = Number.isNaN(expires.getTime()) ? "" : ` The approval expires at ${expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`;
+  $("confirmCopy").textContent = `Nothing has run yet. Approving runs this one action once.${expiresText}`;
+  // Full, unshortened facts for anyone who wants them.
   const lines = [
     `Page: ${confirmation.pageUrl || "(current page)"}`,
-    `Action: ${confirmation.action} on “${confirmation.targetName || confirmation.elementId}” (${confirmation.elementId})`,
+    `Action: ${confirmation.action} on “${target}” (${confirmation.elementId})`,
   ];
   if (confirmation.targetQuestion) lines.push(`Question context: ${confirmation.targetQuestion}`);
   lines.push(confirmation.consequence || "This action is consequential.");
   lines.push(`Approval expires: ${confirmation.expiresAt}. Approving runs exactly this action once; it cannot be replayed.`);
   $("confirmText").textContent = lines.join("\n");
+  $("confirmDetails").open = false;
+  // A previous verified result must not read as success for this held
+  // action: the latest-result line belongs to the earlier action.
+  $("latestResult").textContent = "";
+  lastRun = null;
   $("confirmBox").hidden = false;
   renderTargets(); // mark the held target in the list from authoritative state
   const title = $("confirmTitle");
@@ -2567,12 +2864,26 @@ function showConfirmation(confirmation, tabId) {
     title.focus();
     confirmFocusMoved = document.activeElement === title;
   }
-  setConfirmStatus("Waiting for your decision. Nothing has been executed.");
+  setConfirmStatus(""); // the card itself says nothing has run; no duplicate line
   updateExecuteEnabled();
+}
+
+// "Page title · domain" for the card; the full URL stays in Details. The
+// domain comes from the executor's confirmation; the title is the bound
+// tab's title shown in the page card.
+function confirmationPageLine(pageUrl) {
+  let host = "";
+  try { host = pageUrl ? new URL(pageUrl).hostname : ""; } catch { host = ""; }
+  const title = (($("tabInfo") && $("tabInfo").textContent) || "").replace(/ \(execution bound to another tab\)$/, "").trim();
+  const parts = [title && title !== "Current page" && title !== "—" ? title : "", host].filter(Boolean);
+  return parts.length ? `On ${parts.join(" \u00B7 ")}` : "On the current page";
 }
 
 function clearConfirmation(statusText, isError, opts) {
   state.confirmation = null;
+  if (Object.values(tagStates).includes("held")) {
+    sendTagStates(Object.fromEntries(Object.entries(tagStates).filter(([, st]) => st !== "held")));
+  }
   $("confirmBox").hidden = true;
   renderTargets();
   if (statusText !== undefined) setConfirmStatus(statusText, isError);
@@ -2701,12 +3012,10 @@ async function sendGateCommand(command) {
       return;
     }
     gateClosed = Boolean(res.gate.paused || res.gate.stopped);
-    $("btnPauseExec").textContent = gateClosed ? "Resume" : "Pause";
-    setGateStatus(res.gate.stopped
-      ? "Gate: stopped. Execution and approvals are blocked until Resume."
-      : res.gate.paused
-        ? "Gate: paused. New execution is blocked and pending approvals were revoked; Resume replays nothing."
-        : "Gate: open.");
+    $("btnStopExec").textContent = gateClosed ? "Resume" : "Stop";
+    setGateStatus(gateClosed
+      ? "Gate: stopped. New actions and approvals are blocked, and pending approvals were withdrawn. Resume replays nothing."
+      : "Gate: open.");
     if ((command === "stop" || command === "pause") && state.confirmation) {
       clearConfirmation(command === "stop"
         ? "Stopped: the pending approval was revoked. Nothing further will run from it."
@@ -2718,40 +3027,83 @@ async function sendGateCommand(command) {
   void fetchActionLog(tabId);
 }
 
+/* One Stop/Resume control (merged Stop and Pause). Stopping closes the
+ * executor gate with `stop` and does every panel-side cleanup that Stop and
+ * Pause each did before: live listening is cancelled (no late transcript
+ * may start a command), the current interaction is invalidated, the planner
+ * request is aborted, choices, cached corrections, and any plan under review
+ * are discarded, and pending approvals are revoked by the executor. The
+ * discard outcome is presented once, in #status; the voice line keeps
+ * reporting the microphone only. Resume reopens the gate and replays
+ * nothing. The executor's separate `pause` command is kept, unused here. */
+const STOP_REASON = "execution was stopped; pending page commands, choices, and listening were discarded.";
 $("btnStopExec").addEventListener("click", async () => {
-  // Executor Stop also silences voice: no late transcript may start
-  // another command after stopping. "Stop listening" is separate.
-  // Pending command preparation and clarification die here too — the
-  // executor cannot revoke a request it never received, so panel-side
-  // ownership invalidates the older command permanently.
-  cancelVoiceInteraction("execution was stopped; listening and any pending voice interaction were discarded.");
+  if (gateClosed) {
+    await sendGateCommand("resume");
+    return;
+  }
+  const hadPlan = discardPlanReview();
+  cancelVoiceInteraction(); // bumps the interaction, aborts the planner, cancels listening
+  discardMessage = STOP_REASON;
+  pendingCorrection = null;
   clearClarification();
+  lastRun = null;
+  sendTagStates({});
+  if (hadPlan && !commandPending) {
+    setStatus("Plan discarded — execution was stopped. Nothing was executed, and Resume does not bring it back.", true);
+  }
   await sendGateCommand("stop");
 });
-$("btnPauseExec").addEventListener("click", async () => {
-  if (!gateClosed) {
-    // Pause permanently invalidates undispatched panel-side work the
-    // same way: a command still acquiring its snapshot or awaiting a
-    // choice must never dispatch after Resume. Resume restores
-    // availability only; it revives nothing.
-    interactionSeq += 1;
-    abortPlannerFetch();
-    discardMessage = "execution was paused; pending page commands and choices were discarded.";
-    pendingSpoken = null;
-    pendingCorrection = null;
-    clearClarification();
-    if (discardPlanReview() && !commandPending) {
-      setStatus("Plan discarded — execution was paused. Nothing was executed, and Resume does not bring it back.", true);
-    }
-  }
-  await sendGateCommand(gateClosed ? "resume" : "pause");
-});
 
+// Activity shows the same executor log entries in plain words, newest
+// first. Entries carry names and decisions only; values never appear.
+const DECISION_WORDS = {
+  verified: "done, verified",
+  "dispatched-unverified": "sent, not verified",
+  "already-in-desired-state": "already set",
+  completed: "done",
+  "confirmation-required": "held for your approval",
+  approved: "approved by you",
+  "approval-cancelled": "approval cancelled",
+  "approval-cancel-too-late": "too late to cancel",
+  "approval-revoked-stop": "approval withdrawn by Stop",
+  "approval-revoked-pause": "approval withdrawn by Pause",
+  stopped: "stopped", paused: "paused", resumed: "resumed",
+};
+function renderActivity(entries) {
+  const list = $("activityList");
+  if (!list) return;
+  if (!entries || entries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "sub";
+    empty.textContent = "No activity yet.";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...entries.slice().reverse().map((e) => {
+    const row = document.createElement("div");
+    row.className = "activity-row";
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = typeof e.timestamp === "string" ? e.timestamp.slice(11, 19) : "";
+    const what = document.createElement("span");
+    what.className = "what";
+    const target = e.targetName ? ` “${e.targetName}”` : e.elementId ? ` ${numberFromId(e.elementId)}` : "";
+    what.textContent = `${e.action}${target} · ${e.source === "voice" ? "by voice" : e.source === "mcp" ? "by an assistant" : "by you"}`;
+    const decision = document.createElement("span");
+    decision.className = "decision";
+    decision.textContent = DECISION_WORDS[e.decision] || e.decision;
+    row.append(when, what, decision);
+    return row;
+  }));
+}
 function renderActionLog(entries) {
   $("actionLog").textContent = entries && entries.length
     ? entries.map((e) => `${e.timestamp} · ${e.source} · ${e.action} · ${e.elementId || "—"}${e.targetName ? ` “${e.targetName}”` : ""} · ${e.decision}${e.approved ? " · approved" : ""}`).join("\n")
     : "No log entries yet.";
+  renderActivity(entries);
 }
+$("btnActivityRefresh").addEventListener("click", () => void fetchActionLog());
 
 async function fetchActionLog(tabIdHint) {
   try {

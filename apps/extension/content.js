@@ -20,6 +20,8 @@
  *                                                     -> scroll validated node into view + ring
  *  - SEEYABLE_EXECUTE_ACTION { action, elementId, documentSessionId, revision, value }
  *                                                     -> single executor entry point (async response)
+ *  - SEEYABLE_TAG_STATE { documentSessionId, states } -> step states on word tags
+ *                                                     (trusted side panel only)
  *  - SEEYABLE_UNDO_LAST { documentSessionId, source } -> restore the last reversible change
  *                                                     (trusted side panel only; Issue #15)
  */
@@ -211,6 +213,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Action log clearing"); return false; }
     try { sendResponse({ ok: true, ...getExecutor().clearActionLog() }); }
     catch (err) { fail(sendResponse, err); }
+    return false;
+  }
+
+  if (message.type === "SEEYABLE_TAG_STATE") {
+    // Step states on word tags (acting / done / held). Presentation only,
+    // but a fake "done" or "held" would mislead the person, so only the
+    // trusted side panel may set them, and only for this document.
+    if (!isTrustedPanelSender(_sender)) { rejectUntrusted(sendResponse, "Tag state"); return false; }
+    try {
+      if (message.documentSessionId !== engine().sessionId) {
+        sendResponse({ ok: false, error: "Wrong document session. Tag states were not changed." });
+        return false;
+      }
+      sendResponse({ ok: true, ...getOverlay().setTargetStates(message.states || {}) });
+    } catch (err) { fail(sendResponse, err); }
     return false;
   }
 

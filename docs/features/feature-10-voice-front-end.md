@@ -171,3 +171,8 @@ transcript line, tags appearing, and "Tags shown" feedback; repeat
 with "hide tags"; deny the microphone once and confirm the denial
 message and that typed commands still work; operate Start/Stop/
 Cancel and Send command by keyboard only.
+
+
+## Note (2026-11-01, Plain Words panel)
+
+"Start listening" is now "Start talking"; while the microphone is live the same place shows "Done talking" (the former Stop listening control) and "Cancel — discard what I said". Recognition lifecycle, dispatch-once, and microphone/speech separation are unchanged. Voice settings moved to the Settings screen. See `docs/features/feature-plain-words-panel.md`.

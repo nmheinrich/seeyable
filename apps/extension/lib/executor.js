@@ -20,11 +20,103 @@ const ACTIONS = new Set(["click", "fill", "select", "check", "uncheck", "scroll_
 const TEXT_FILL_TYPES = new Set(["", "text", "email", "search", "tel", "url"]);
 const CONSEQUENTIAL_LABEL = /\b(submit|pay|buy|purchase|checkout|delete|remove|send|publish|place order|confirm order|buy now|pay now)\b/i;
 
+const SELECTION_ROLES = new Set(["radio", "checkbox", "option"]);
+const norm = (text) => String(text || "").replace(/\s+/g, " ").trim();
+
+// A selection control: a native radio/checkbox input or <option>, or an
+// element with an explicit ARIA radio/checkbox/option role — but never a
+// native committing control. Buttons, links, button-type inputs, and
+// <summary> keep their own semantics whatever role the page assigns, so
+// role="checkbox" on a <button> does not make it a mere selection. An
+// explicit non-selection role (e.g. role="switch" on a checkbox) also wins.
+function isSelectionControl(node) {
+  const tag = node.tagName;
+  const type = ((node.getAttribute && node.getAttribute("type")) || "").toLowerCase();
+  if (tag === "BUTTON" || tag === "SUMMARY") return false;
+  if (tag === "A" && node.hasAttribute && node.hasAttribute("href")) return false;
+  if (tag === "INPUT" && ["button", "submit", "reset", "image"].includes(type)) return false;
+  const explicitRole = ((node.getAttribute && node.getAttribute("role")) || "").trim().toLowerCase().split(/\s+/)[0];
+  if (explicitRole) return SELECTION_ROLES.has(explicitRole);
+  return (tag === "INPUT" && (type === "radio" || type === "checkbox")) || tag === "OPTION";
+}
+
+// Structural question/row context of a selection control: the text that
+// names its group, not the option itself — a fieldset's legend, and the
+// accessible name (aria-label / aria-labelledby) of an enclosing ARIA
+// radiogroup, group, or listbox. Page text is only read, never executed.
+function groupContextOf(node) {
+  const doc = node.ownerDocument;
+  const contexts = [];
+  const fieldset = node.closest ? node.closest("fieldset") : null;
+  const legend = fieldset && Array.from(fieldset.children || []).find((c) => c.tagName === "LEGEND");
+  if (legend) contexts.push(norm(legend.textContent));
+  const group = node.closest ? node.closest("[role='radiogroup'], [role='group'], [role='listbox']") : null;
+  if (group && group !== node) {
+    contexts.push(norm(group.getAttribute("aria-label")));
+    const ids = (group.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    contexts.push(norm(ids.map((id) => { const el = doc && doc.getElementById(id); return el ? el.textContent : ""; }).join(" ")));
+  }
+  return contexts.filter(Boolean);
+}
+
+// A label source ends with a demonstrably incidental reference to its
+// group when the group phrase is the source's final words AND is
+// introduced by a referring word ("…, response for Checkout experience",
+// "… of …", "… about …"). Only then is the reference removed, leaving the
+// option's own words. Context anywhere else — at the start ("Pay now
+// (required)"), in the middle ("Delete all saved responses now"), or after
+// a bare comma — is not demonstrably incidental and is kept.
+const REFERENCE_INTRO = /(?:^|[^\p{L}\p{N}])(?:for|of|about|regarding|concerning|on)\s*[:,]?\s*$/iu;
+function withoutIncidentalReference(source, phrases) {
+  const text = norm(source).replace(/[\s.]+$/, "");
+  const lower = text.toLowerCase();
+  for (const phrase of phrases) {
+    const p = phrase.toLowerCase();
+    if (!p || !lower.endsWith(p)) continue;
+    const before = text.slice(0, text.length - p.length);
+    if (/[\p{L}\p{N}]$/u.test(before)) continue;        // not a word boundary
+    if (!REFERENCE_INTRO.test(before)) continue;           // not introduced as a reference
+    const own = before.replace(REFERENCE_INTRO, "");
+    if (/[\p{L}\p{N}]/u.test(own)) return before;        // the option's own words remain
+  }
+  return text;
+}
+
+// Is there consequential evidence in this control's own description?
+// Every label source is judged on its own, with clear boundaries: the
+// computed accessible name, aria-label, title, value, and own text. For a
+// selection control, a source may shed one trailing, demonstrably
+// incidental reference to its structural group (see above); nothing else
+// is removed, and group text never erases words from another source. Any
+// source that still names a consequential action holds the control.
+function hasConsequentialLabel(node, descriptor) {
+  const sources = [
+    descriptor && descriptor.name,
+    node.getAttribute && node.getAttribute("aria-label"),
+    node.getAttribute && node.getAttribute("value"),
+    node.getAttribute && node.getAttribute("title"),
+    node.textContent,
+  ].map(norm).filter(Boolean);
+  if (!isSelectionControl(node)) return sources.some((source) => CONSEQUENTIAL_LABEL.test(source));
+  // Group names and their separator-delimited parts of two or more words
+  // ("Rate your visit: Checkout experience" → "Checkout experience"),
+  // longest first.
+  const phrases = new Set();
+  for (const context of groupContextOf(node)) {
+    phrases.add(context);
+    for (const part of context.split(/\s*[:,;·|–—]\s*|\s+-\s+/)) {
+      if (norm(part).split(" ").length >= 2) phrases.add(norm(part));
+    }
+  }
+  const ordered = [...phrases].sort((a, b) => b.length - a.length);
+  return sources.some((source) => CONSEQUENTIAL_LABEL.test(withoutIncidentalReference(source, ordered)));
+}
+
 function isConsequentialControl(node, descriptor) {
   if (!node) return false;
   const tag = node.tagName;
   const type = ((node.getAttribute && node.getAttribute("type")) || "").toLowerCase();
-  // Native submit controls are consequential regardless of label.
+  // Native submit controls are consequential regardless of label or role.
   if (tag === "INPUT" && (type === "submit" || type === "image")) return true;
   if (tag === "BUTTON") {
     // Effective button type: missing/invalid type defaults to "submit" when
@@ -36,14 +128,7 @@ function isConsequentialControl(node, descriptor) {
     if (effectiveType === "submit" && associatedForm) return true;
     if (type === "submit") return true;
   }
-  const labels = [
-    descriptor && descriptor.name,
-    node.getAttribute && node.getAttribute("aria-label"),
-    node.getAttribute && node.getAttribute("value"),
-    node.getAttribute && node.getAttribute("title"),
-    node.textContent,
-  ].filter(Boolean).join(" ");
-  return CONSEQUENTIAL_LABEL.test(labels.replace(/\s+/g, " ").trim());
+  return hasConsequentialLabel(node, descriptor);
 }
 
 function createExecutor(options) {

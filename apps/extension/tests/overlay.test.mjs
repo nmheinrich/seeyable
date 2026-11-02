@@ -395,3 +395,82 @@ test("chooseSpot: whitespace first, never covering, null when boxed in", () => {
   const covered = chooseSpot({ x: 50, y: 100, width: 120, height: 24 }, { width: 100, height: 22 }, { width: 500, height: 500 }, [], []);
   assert.deepEqual(covered, { left: 50, top: 74, width: 100, height: 22 }, "without neighbors the same spot is chosen");
 });
+
+/* --- Plain Words: step states on tags ------------------------------------ */
+
+const STATE_FORM = `<form aria-label="Survey">
+  <label for="a">Full name</label><input id="a">
+  <label for="b">Short bio</label><input id="b">
+  <button type="submit">Submit survey</button></form>`;
+function stateFixture() {
+  const ctx = load(STATE_FORM);
+  ctx.doc.querySelectorAll("input, button").forEach((el, i) => stubRect(el, 300, 100 + i * 120));
+  ctx.snapshot = ctx.engine.snapshot();
+  ctx.id = (name) => ctx.snapshot.elements.find((e) => e.name === name).id;
+  return ctx;
+}
+
+test("tag states: acting, done, and held tags carry glyph and word, never colour alone", () => {
+  const { overlay, snapshot, id } = stateFixture();
+  overlay.show(snapshot.elements);
+  overlay.setTargetStates({ [id("Full name")]: "done", [id("Short bio")]: "acting", [id("Submit survey")]: "held" });
+  const st = overlay.getState();
+  assert.equal(st.badgeStates[id("Full name")], "done");
+  assert.equal(st.badgeStates[id("Short bio")], "acting");
+  assert.equal(st.badgeStates[id("Submit survey")], "held");
+  const text = (tid) => st.badges.find((b) => b.id === tid).text;
+  assert.match(text(id("Full name")), /^■Full name/);
+  assert.match(text(id("Short bio")), /^●Short bio/);
+  assert.match(text(id("Submit survey")), /^▲Submit survey · held/, "held carries the word, not only brick");
+  assert.equal(st.stateRingVisible, false, "with tags shown, the tags carry the state");
+});
+
+test("tag states: with tags off, only the acting or held target is outlined", () => {
+  const { overlay, id } = stateFixture();
+  overlay.setTargetStates({ [id("Full name")]: "done", [id("Short bio")]: "acting" });
+  let st = overlay.getState();
+  assert.equal(st.badgeCount, 0, "states never force tags onto the page");
+  assert.equal(st.stateRingVisible, true);
+  overlay.setTargetStates({ [id("Submit survey")]: "held", [id("Short bio")]: "acting" });
+  st = overlay.getState();
+  assert.equal(st.stateRingVisible, true, "held takes priority for the single outline");
+  overlay.setTargetStates({});
+  assert.equal(overlay.getState().stateRingVisible, false);
+});
+
+test("tag states: placement rules still apply — a state never forces a crowded tag onto the page", () => {
+  const { overlay, doc, snapshot, id } = stateFixture();
+  // Pack every control so no spot is clear for the stated target.
+  doc.querySelectorAll("input, button").forEach((el) => stubRect(el, 2, 2));
+  overlay.show(snapshot.elements);
+  overlay.setTargetStates({ [id("Short bio")]: "acting" });
+  const st = overlay.getState();
+  const placed = st.badges.map((b) => b.id);
+  if (!placed.includes(id("Short bio"))) {
+    assert.ok(st.unplaced.includes(id("Short bio")), "the stated target is listed in the panel instead");
+  }
+  for (const b of st.badges) {
+    const others = st.badges.filter((o) => o !== b);
+    for (const o of others) {
+      const overlap = parseInt(b.left) < parseInt(o.left) + o.width && parseInt(b.left) + b.width > parseInt(o.left)
+        && parseInt(b.top) < parseInt(o.top) + o.height && parseInt(b.top) + b.height > parseInt(o.top);
+      assert.ok(!overlap, "no tag pile-ups, states included");
+    }
+  }
+});
+
+test("tag states: done clears after 4 s; unknown states and ids are ignored; stale targets drop", async () => {
+  const { overlay, snapshot, id, doc } = stateFixture();
+  overlay.show(snapshot.elements);
+  const r = overlay.setTargetStates({ [id("Full name")]: "done", "el-999": "acting", [id("Short bio")]: "approved", "not-an-id": "held" });
+  assert.equal(r.states, 2, "only known states on el-N ids are kept (el-999 resolves to nothing)");
+  assert.equal(overlay.getState().targetStates[id("Short bio")], undefined, "unknown state words are dropped");
+  // A replaced node loses its state presentation through identity revalidation.
+  const old = doc.getElementById("a");
+  const fresh = old.cloneNode();
+  stubRect(fresh, 300, 100);
+  old.replaceWith(fresh);
+  overlay.refresh();
+  assert.ok(!overlay.getState().badges.some((b) => b.id === id("Full name")), "stale target shows no tag or state");
+  overlay.destroy();
+});

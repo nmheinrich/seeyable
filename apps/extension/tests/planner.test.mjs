@@ -766,7 +766,7 @@ function deferredProxy(plan) {
   return { fetch, release };
 }
 
-test("planner: slow model invalidated by cancel, tab change, and pause", async () => {
+test("planner: slow model invalidated by cancel, tab change, and Stop", async () => {
   const snapshot = snap([el("el-1", "Full name"), el("el-2", "Nickname")]);
   const plan = {
     version: "seeyable-plan-1", outcome: "steps",
@@ -812,7 +812,7 @@ test("planner: slow model invalidated by cancel, tab change, and pause", async (
     const deferred = deferredProxy(plan);
     const panel = makePanel(async (t, msg) => {
       if (msg.type === "SEEYABLE_GATE_CONTROL") {
-        return { ok: true, gate: msg.command === "pause" ? { paused: true, stopped: false } : { paused: false, stopped: false } };
+        return { ok: true, gate: msg.command === "stop" ? { paused: false, stopped: true } : { paused: false, stopped: false } };
       }
       return tabStub({ snapshots: [snapshot, snapshot] })(t, msg);
     }, {
@@ -821,9 +821,9 @@ test("planner: slow model invalidated by cancel, tab change, and pause", async (
     });
     sendTyped(panel, "fill Full name up somehow");
     await tick();
-    panel.$("btnPauseExec").click();
+    panel.$("btnStopExec").click();
     await tick();
-    panel.$("btnPauseExec").click(); // Resume restores availability only
+    panel.$("btnStopExec").click(); // Resume restores availability only
     await tick();
     deferred.release();
     await tick(); await tick(); await tick();
@@ -836,13 +836,13 @@ function gateTabStub(snapshot) {
   const snaps = tabStub({ snapshots: [snapshot, snapshot] });
   return async (t, msg) => {
     if (msg.type === "SEEYABLE_GATE_CONTROL") {
-      return { ok: true, gate: msg.command === "pause" ? { paused: true, stopped: false } : { paused: false, stopped: false } };
+      return { ok: true, gate: msg.command === "stop" ? { paused: false, stopped: true } : { paused: false, stopped: false } };
     }
     return snaps(t, msg);
   };
 }
 
-test("planner: pause during planning clears stale status and shows the paused gate", async () => {
+test("planner: Stop during planning clears stale status and shows the stopped gate", async () => {
   const snapshot = snap([el("el-1", "Full name")]);
   const plan = {
     version: "seeyable-plan-1", outcome: "steps",
@@ -857,18 +857,18 @@ test("planner: pause during planning clears stale status and shows the paused ga
   await tick();
   assert.equal(panel.calls.fetch.length, 1, "model request in flight");
   assert.match(panel.$("status").textContent, /Planning/, "progress text shown while waiting");
-  panel.$("btnPauseExec").click();
+  panel.$("btnStopExec").click();
   await tick();
   deferred.release(); // the late plan still arrives — after the pause killed the command
   await tick(); await tick(); await tick();
   assert.equal(panel.calls.execute, 0, "discarded plan never dispatches");
   assert.match(panel.$("status").textContent, /Command discarded/, "main status leaves Planning behind");
-  assert.match(panel.$("status").textContent, /paused/);
+  assert.match(panel.$("status").textContent, /stopped/);
   assert.doesNotMatch(panel.$("status").textContent, /Planning/);
   assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only — the discard outcome lives in #status alone");
-  assert.doesNotMatch(panel.$("voiceState").textContent, /paused|discarded/i, "no duplicated command feedback across live regions");
-  assert.equal(panel.$("stateChip").textContent, "Paused", "chip reflects the closed gate, not Ready");
-  assert.match(panel.$("gateStatus").textContent, /paused/);
+  assert.doesNotMatch(panel.$("voiceState").textContent, /stopped|discarded/i, "no duplicated command feedback across live regions");
+  assert.equal(panel.$("stateChip").textContent, "Stopped", "chip reflects the closed gate, not Ready");
+  assert.match(panel.$("gateStatus").textContent, /stopped/);
   assert.equal(panel.$("btnSendCommand").disabled, false, "locks released after discard");
   panel.dom.window.close();
 });
@@ -886,13 +886,13 @@ test("planner: resume after a discarded plan replays nothing and restores availa
   });
   sendTyped(panel, "fill Full name up somehow");
   await tick();
-  panel.$("btnPauseExec").click();
+  panel.$("btnStopExec").click();
   await tick();
   deferred.release();
   await tick(); await tick(); await tick();
   assert.equal(panel.calls.execute, 0);
   assert.match(panel.$("status").textContent, /Command discarded/);
-  panel.$("btnPauseExec").click(); // Resume
+  panel.$("btnStopExec").click(); // Resume
   await tick(); await tick();
   assert.equal(panel.$("stateChip").textContent, "Ready");
   assert.match(panel.$("gateStatus").textContent, /Gate: open/);
@@ -910,7 +910,7 @@ test("planner: resume after a discarded plan replays nothing and restores availa
   panel.dom.window.close();
 });
 
-test("planner: obsolete plan arriving after resume cannot revive paused state", async () => {
+test("planner: obsolete plan arriving after resume cannot revive stopped state", async () => {
   const snapshot = snap([el("el-1", "Full name")]);
   const plan = {
     version: "seeyable-plan-1", outcome: "steps",
@@ -923,14 +923,14 @@ test("planner: obsolete plan arriving after resume cannot revive paused state", 
   });
   sendTyped(panel, "fill Full name up somehow");
   await tick();
-  panel.$("btnPauseExec").click();
+  panel.$("btnStopExec").click();
   await tick();
-  panel.$("btnPauseExec").click(); // Resume: the newer interaction lands first
+  panel.$("btnStopExec").click(); // Resume: the newer interaction lands first
   await tick(); await tick();
   deferred.release(); // the obsolete pre-pause response arrives last
   await tick(); await tick(); await tick();
   assert.equal(panel.calls.execute, 0, "obsolete plan never dispatches");
-  assert.equal(panel.$("stateChip").textContent, "Ready", "obsolete response cannot flip the chip back to Paused");
+  assert.equal(panel.$("stateChip").textContent, "Ready", "obsolete response cannot flip the chip back to Stopped");
   assert.match(panel.$("gateStatus").textContent, /Gate: open/, "newer Resume state survives the late response");
   assert.match(panel.$("status").textContent, /Command discarded/);
   assert.doesNotMatch(panel.$("status").textContent, /Planning/);

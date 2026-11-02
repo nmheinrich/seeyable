@@ -134,14 +134,35 @@ const OVERLAY_CSS = `
     border: 3px solid #F2F2EE; box-shadow: 0 0 0 2px #141414, inset 0 0 0 1px #141414;
     transition: opacity 120ms ease;
   }
+  /* Step states (Plain Words). Colour AND glyph AND word, never colour
+     alone; theme-independent because tags sit on other people's pages.
+     amber = acting now, sage = verified done, brick = held by the gate. */
+  .badge .glyph { flex: 0 0 auto; margin-right: 6px; font: 11px/1 "DM Mono", ui-monospace, monospace; }
+  .badge.state-acting { background: #F2B33D; color: #141414; border: 2px solid #141414; }
+  .badge.state-acting .num { background: #141414; color: #F2B33D; border-color: #141414; }
+  .badge.state-done { background: #D9E6D8; color: #2E4E37; border: 1px solid #2E4E37; }
+  .badge.state-done .num { background: #2E4E37; color: #D9E6D8; border-color: #2E4E37; }
+  .badge.state-held { background: #B3401F; color: #FFFFFF; border: 2px solid #141414; }
+  .badge.state-held .num { background: #FFFFFF; color: #B3401F; border-color: #FFFFFF; }
+  .state-ring {
+    position: fixed; display: none; pointer-events: none; border-radius: 6px;
+    border: 3px solid #F2B33D; box-shadow: 0 0 0 2px #141414;
+  }
+  .state-ring.state-held { border-color: #B3401F; box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px #141414; }
   @media (prefers-reduced-motion: reduce) {
     .badge, .ring { transition: none; }
   }
   @media (forced-colors: active) {
     .badge { background: Canvas; color: CanvasText; border-color: CanvasText; forced-color-adjust: none; }
-    .ring { border-color: Highlight; box-shadow: 0 0 0 2px CanvasText; }
+    .badge.state-acting, .badge.state-held, .badge.state-done { background: Canvas; color: CanvasText; border: 2px solid CanvasText; }
+    .ring, .state-ring { border-color: Highlight; box-shadow: 0 0 0 2px CanvasText; }
   }
 `;
+
+// Step states shown on tags. Only these three exist; anything else is
+// ignored. "done" is sent by the panel only for verified steps.
+const TAG_STATES = { acting: { glyph: "\u25CF", word: "" }, done: { glyph: "\u25A0", word: "" }, held: { glyph: "\u25B2", word: " \u00B7 held" } };
+const DONE_FADE_MS = 4000;
 
 function visibleOverflow(value) {
   return value !== "auto" && value !== "scroll" && value !== "hidden";
@@ -193,6 +214,9 @@ function createOverlayController(options) {
   let placedById = new Map(); // id -> placed box, for tests/diagnostics
   let highlightedId = null;
   let highlightedNode = null;
+  let stateRing = null;
+  let targetStates = new Map(); // id -> "acting" | "done" | "held"
+  let doneTimer = null;
   let rafPending = false;
   let settleTimer = null;
   let listening = false;
@@ -217,7 +241,9 @@ function createOverlayController(options) {
     badgeLayer.className = "layer";
     ring = docRef.createElement("div");
     ring.className = "ring";
-    shadow.append(style, badgeLayer, ring);
+    stateRing = docRef.createElement("div");
+    stateRing.className = "state-ring";
+    shadow.append(style, badgeLayer, ring, stateRing);
     (docRef.body || docRef.documentElement).append(host);
     startListening();
     startMutationObserver();
@@ -328,7 +354,13 @@ function createOverlayController(options) {
     const label = buildTagLabel(desc, Array.from(descriptors.values()), full ? { full: true } : { short: true });
     const word = badge.querySelector(".word");
     const num = badge.querySelector(".num");
-    const wordText = label.text;
+    const glyph = badge.querySelector(".glyph");
+    const tagState = TAG_STATES[targetStates.get(desc.id)] ? targetStates.get(desc.id) : null;
+    badge.className = tagState ? `badge state-${tagState}` : "badge";
+    if (glyph) glyph.textContent = tagState ? TAG_STATES[tagState].glyph : "";
+    if (glyph) glyph.hidden = !tagState;
+    const wordText = label.text + (tagState ? TAG_STATES[tagState].word : "");
+    label.text = wordText;
     const numText = label.number === null ? "" : String(label.number);
     if (word && word.textContent !== wordText) word.textContent = wordText;
     if (num && num.textContent !== numText) num.textContent = numText;
@@ -354,6 +386,7 @@ function createOverlayController(options) {
         ring.style.height = `${Math.round(r.height + 8)}px`;
       }
     }
+    refreshStateRing();
     if (!tagsVisible) return;
     const vw = win && win.innerWidth ? win.innerWidth : 0;
     const vh = win && win.innerHeight ? win.innerHeight : 0;
@@ -383,7 +416,10 @@ function createOverlayController(options) {
       if (vh && (ry + r.height <= 0 || ry >= vh)) continue;
       live.push({ id, desc, rect: { x: rx, y: ry, width: r.width, height: r.height } });
     }
-    const ordered = live.sort((a, b) => (a.id === highlightedId ? -1 : b.id === highlightedId ? 1 : 0));
+    // Placement ORDER only: the highlighted target, then targets with a
+    // step state. No exemption from the clearance rules for either.
+    const rank = (t) => (t.id === highlightedId ? 0 : targetStates.has(t.id) ? 1 : 2);
+    const ordered = live.sort((a, b) => rank(a) - rank(b));
     for (const { id, desc, rect } of ordered) {
       const rx = rect.x;
       const ry = rect.y;
@@ -393,11 +429,14 @@ function createOverlayController(options) {
         badge = docRef.createElement("div");
         badge.className = "badge";
         badge.setAttribute("data-target-id", id);
+        const glyph = docRef.createElement("span");
+        glyph.className = "glyph";
+        glyph.hidden = true;
         const word = docRef.createElement("span");
         word.className = "word";
         const num = docRef.createElement("span");
         num.className = "num";
-        badge.append(word, num);
+        badge.append(glyph, word, num);
         badgeLayer.append(badge);
       }
       // Always refresh text from the current descriptor (labels change).
@@ -426,6 +465,54 @@ function createOverlayController(options) {
     for (const badge of Array.from(badgeLayer.children)) {
       if (!seen.has(badge.getAttribute("data-target-id"))) badge.remove();
     }
+  }
+
+  // With tags off, only the element being acted on (or held) is outlined.
+  // The ring follows the same identity revalidation as the highlight ring.
+  function refreshStateRing() {
+    if (!stateRing) return;
+    let id = null;
+    let kind = null;
+    for (const [tid, st] of targetStates) {
+      if (st === "held") { id = tid; kind = "held"; break; }
+      if (st === "acting" && !id) { id = tid; kind = "acting"; }
+    }
+    const resolved = id ? resolveNode(id) : null;
+    if (!id || tagsVisible || !resolved || resolved.status !== "ok" || !resolved.node || !resolved.node.getBoundingClientRect) {
+      stateRing.style.display = "none";
+      return;
+    }
+    const r = resolved.node.getBoundingClientRect();
+    stateRing.className = `state-ring state-${kind}`;
+    stateRing.style.display = "block";
+    stateRing.style.left = `${Math.round((r.x !== undefined ? r.x : r.left) - 6)}px`;
+    stateRing.style.top = `${Math.round((r.y !== undefined ? r.y : r.top) - 6)}px`;
+    stateRing.style.width = `${Math.round(r.width + 12)}px`;
+    stateRing.style.height = `${Math.round(r.height + 12)}px`;
+  }
+
+  // Replaces all step states at once (the panel sends the whole picture
+  // for its current step). Unknown ids or states are dropped; "done"
+  // states clear themselves after DONE_FADE_MS. Placement is unchanged:
+  // a state never forces a tag onto the page.
+  function setTargetStates(states) {
+    const next = new Map();
+    for (const [id, st] of Object.entries(states || {})) {
+      if (/^el-\d+$/.test(id) && TAG_STATES[st]) next.set(id, st);
+    }
+    targetStates = next;
+    if (doneTimer !== null && win && win.clearTimeout) win.clearTimeout(doneTimer);
+    doneTimer = null;
+    if ([...next.values()].some((st) => st === "done") && win && win.setTimeout) {
+      doneTimer = win.setTimeout(() => {
+        doneTimer = null;
+        for (const [id, st] of targetStates) if (st === "done") targetStates.delete(id);
+        refresh();
+      }, DONE_FADE_MS);
+    }
+    if (next.size > 0) ensureHost();
+    refresh();
+    return { states: next.size };
   }
 
   function show(elements) {
@@ -479,6 +566,9 @@ function createOverlayController(options) {
 
   function destroy() {
     stopListening();
+    if (doneTimer !== null && win && win.clearTimeout) win.clearTimeout(doneTimer);
+    doneTimer = null;
+    targetStates = new Map();
     omitted = [];
     placedById = new Map();
     stopMutationObserver();
@@ -488,7 +578,7 @@ function createOverlayController(options) {
     descriptors = new Map();
     tagsVisible = false;
     if (host) host.remove();
-    host = null; badgeLayer = null; ring = null;
+    host = null; badgeLayer = null; ring = null; stateRing = null;
   }
 
   function visibleBadgeText(badge) {
@@ -504,11 +594,14 @@ function createOverlayController(options) {
       unplaced: [...omitted],
       highlightedId,
       ringVisible: Boolean(ring && ring.style.display === "block"),
+      targetStates: Object.fromEntries(targetStates),
+      stateRingVisible: Boolean(stateRing && stateRing.style.display === "block"),
+      badgeStates: badgeLayer ? Object.fromEntries(Array.from(badgeLayer.children).map((b) => [b.getAttribute("data-target-id"), (b.className.match(/state-(\w+)/) || [])[1] || null])) : {},
       hostPresent: Boolean(host),
     };
   }
 
-  return { show, hide, highlightById, highlightNode, clearHighlight, refresh, scheduleRefresh, destroy, getState };
+  return { show, hide, highlightById, highlightNode, clearHighlight, setTargetStates, refresh, scheduleRefresh, destroy, getState };
 }
 
 if (typeof globalThis !== "undefined") {
