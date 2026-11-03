@@ -1,7 +1,9 @@
 # Issue #16 — Google Forms rehearsal and scope freeze
 
-Prepared 2026-11-01. Status: instructions ready; zero of three consecutive
-runs recorded. This is the final-target rehearsal candidate, not the older
+Prepared 2026-11-01. Updated 2026-11-02: accepted on the Product Owner's
+report that three runs worked. Detailed timings, transcripts, and retry
+records were not supplied; the table records reported passes only.
+This is the final-target rehearsal, not the older
 local-fixture acceptance script in docs/act-1-demo-script.md. Do not rewrite
 that earlier pass as evidence for this Google Form.
 
@@ -129,9 +131,14 @@ Record actual behavior; never fill in results from the intended script.
 
 | Run | Start/end or duration | Complete? | Unexpected speech corrections/retries | Navigation status | Held Submit cancelled/reset? | Clean streak |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Not run | — | — | — | — | 0/3 |
-| 2 | Not run | — | — | — | — | 0/3 |
-| 3 | Not run | — | — | — | — | 0/3 |
+| 1 | Not supplied | Pass (owner report) | Not supplied | Not itemized | Not itemized | Reported pass 1/3 |
+| 2 | Not supplied | Pass (owner report) | Not supplied | Not itemized | Not itemized | Reported pass 2/3 |
+| 3 | Not supplied | Pass (owner report) | Not supplied | Not itemized | Not itemized | Reported pass 3/3 |
+
+On 2026-11-02 the Product Owner reported “Three runs works fine” and
+requested #19 next. Accept the rehearsal on that human report; this is
+not an independently measured clean-run log. The earlier blocker and
+spot-check records below remain historical evidence.
 
 A clean run has no unintended mutations, all intended field/radio/checkbox
 changes verified, correct visible navigation, planned repair and undo
@@ -240,7 +247,7 @@ Do not submit. Reset. This is section branching after navigation, not inline
 conditional rendering. Record this separately; broader messy-form hardening
 belongs to #17.
 
-## Scope-freeze record — finalize AFTER three clean runs
+## Scope-freeze record — accepted 2026-11-02 on owner report
 
 - Keep: Google Forms as the primary target; explicit push-to-talk and typed
   fallback; word-first targeting; reviewed plans; row-specific correction;
@@ -250,8 +257,11 @@ belongs to #17.
   plans, real submission, payment, or third-party fulfillment integration.
 - #29 visual acceptance remains a separate bounded task before recording.
 - Full MCP actions/external-client Act 2 remain #19/#20, not a #16 claim.
-- Record actual blockers, cuts, version, responder URL, and the three results
-  before declaring #16 complete. GitHub issue updates remain with the owner.
+- Diction improvements, automatic snapshot/page recovery, and proxy/setup
+  simplification are parked follow-ups, not additions to #19.
+- Latest checkpoint supplied by the owner: 86d4b8a. Exact run timings,
+  transcripts, retry counts, and the published responder URL were not
+  supplied in the three-run report. GitHub issue updates remain with the owner.
 
 Suggested Product Owner reply after each attempt:
 “Run N: pass/fail; clean count N/3; duration …; transcript differences …;

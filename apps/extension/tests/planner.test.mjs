@@ -400,9 +400,12 @@ test("planner: fast-path commands make zero proxy calls", async () => {
 test("planner: unpaired compound gets help plus pairing hint, zero tab sends", async () => {
   const snapshot = snap([el("el-1", "Full name")]);
   const panel = makePanel(tabStub({ snapshots: [snapshot] }));
+  await tick(); await tick(); // panel-open automatic acquisition settles (read-only)
+  const baseline = panel.calls.send.length;
   sendTyped(panel, "click Full name and submit");
   await tick(); await tick();
-  assert.equal(panel.calls.send.length, 0, "unpaired fast-fail touches no tab");
+  assert.ok(panel.calls.send.slice(baseline).every((c) => c.msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION"),
+    "unpaired fast-fail dispatches and acquires nothing (only read-only confirmation discovery may recur)");
   assert.match(panel.$("status").textContent, /Supported commands/);
   assert.match(panel.$("status").textContent, /planner proxy/);
   assert.equal(panel.$("voiceState").textContent, "Voice: idle.");
@@ -752,6 +755,37 @@ test("planner: vanished, disabled, and ambiguous dropdown choices stop without d
     assert.match(panel.$("status").textContent, c.message, c.name);
     panel.dom.window.close();
   }
+});
+
+test("planner: confirmation discovery deferred behind a plan review runs on cancel", async () => {
+  const snapshot = snap([el("el-1", "Full name")]);
+  const confirmation = {
+    challengeId: "held-1", action: "click", elementId: "el-1", targetName: "Submit feedback",
+    targetQuestion: null, consequence: "Submits.", pageUrl: "https://example.test/form",
+    documentSessionId: "doc-A", revision: 1, expiresAt: new Date(Date.now() + 60000).toISOString(),
+  };
+  let lookups = 0;
+  const base = tabStub({ snapshots: [snapshot, snapshot] });
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") { lookups += 1; return { ok: true, confirmation }; }
+    return base(t, msg);
+  }, { session: PAIRED });
+  const stub = proxyStub({
+    version: "seeyable-plan-1", outcome: "steps",
+    steps: [{ action: "fill", elementId: "el-1", value: "Ada" }],
+  });
+  panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
+  sendTyped(panel, "fill Full name somehow please");
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(panel.$("planBox").hidden, false, "the plan waits for review");
+  assert.equal(panel.$("confirmBox").hidden, true, "discovery must not displace the plan under review");
+  panel.$("btnCancelPlan").click();
+  await tick(); await tick(); await tick();
+  assert.equal(panel.$("planBox").hidden, true);
+  assert.equal(panel.$("confirmBox").hidden, false, "the deferred hold surfaces once the review ends");
+  assert.ok(lookups >= 1, "the authoritative lookup ran");
+  assert.equal(panel.calls.execute, 0, "neither the plan nor the hold executed anything");
+  panel.dom.window.close();
 });
 
 function deferredProxy(plan) {

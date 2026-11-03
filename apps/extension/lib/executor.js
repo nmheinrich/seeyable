@@ -523,6 +523,19 @@ function createExecutor(options) {
     if ((action === "fill" || action === "select") && typeof value !== "string") {
       return failure("VALUE_REQUIRED", `${action} requires a string value.`);
     }
+    // Optional bounded request validity (bridge-carried, Issue #19):
+    // an epoch-ms deadline after which this request must not dispatch.
+    // Absent for panel-originated requests, whose behavior is unchanged.
+    // Checked at admission, after the pre-dispatch waits, and in the
+    // synchronous final validation — the same discipline as approval
+    // expiry. A request is live only while now() < deadline.
+    if (request.deadline !== undefined && (typeof request.deadline !== "number" || !Number.isFinite(request.deadline))) {
+      return failure("INVALID_REQUEST", "deadline must be a finite epoch-ms number when supplied.");
+    }
+    const deadlineAt = typeof request.deadline === "number" ? request.deadline : null;
+    const deadlineExpired = () => deadlineAt !== null && now() >= deadlineAt;
+    const deadlineFailure = () => failure("DEADLINE_EXPIRED", "The request deadline expired before dispatch. Nothing was executed.", engine.getStatus(), "request deadline expired before dispatch");
+    if (deadlineExpired()) return deadlineFailure();
     if (gate.stopped) return failure("EXECUTION_STOPPED", "Execution is stopped at the safety gate. Use Resume in the panel to reopen it; nothing was executed and nothing will be replayed automatically.");
     if (gate.paused) return failure("EXECUTION_PAUSED", "Execution is paused at the safety gate. Resume in the panel to continue; this request was not executed and will not be replayed automatically.");
     const admissionGeneration = gate.generation;
@@ -642,6 +655,21 @@ function createExecutor(options) {
       if (changedDuringIssue && changedDuringIssue.changed) {
         return failure("STALE_SNAPSHOT", "The page changed while the confirmation was being prepared. Re-snapshot and try again.", engine.getStatus(), "page changed while issuing confirmation");
       }
+      const confirmation = {
+        challengeId,
+        action,
+        elementId,
+        targetName: descriptor.name || null,
+        targetQuestion: descriptor.question || null,
+        evidence: nativeSubmit ? "native-submit" : "consequential-label",
+        consequence: nativeSubmit
+          ? "This activates a form submission control. What it sends, to whom, and whether it can be undone cannot be determined from the page."
+          : "This activates a control whose label indicates a consequential action (such as submit, pay, delete, send, or publish). Its downstream effect, recipient, and reversibility cannot be determined from the page.",
+        pageUrl: preSnapshot.url || null,
+        documentSessionId,
+        revision,
+        expiresAt: new Date(expiresAt).toISOString(),
+      };
       challenges.set(challengeId, {
         request: {
           action, elementId, documentSessionId, revision,
@@ -652,6 +680,7 @@ function createExecutor(options) {
         targetName: descriptor.name || null,
         expiresAt,
         consumed: false,
+        confirmation,
       });
       return {
         ok: false,
@@ -659,21 +688,7 @@ function createExecutor(options) {
           code: "CONFIRMATION_REQUIRED",
           message: `${action} on "${descriptor.name}" is consequential and requires human confirmation in the Seeyable panel. Nothing was executed.`,
         },
-        confirmation: {
-          challengeId,
-          action,
-          elementId,
-          targetName: descriptor.name || null,
-          targetQuestion: descriptor.question || null,
-          evidence: nativeSubmit ? "native-submit" : "consequential-label",
-          consequence: nativeSubmit
-            ? "This activates a form submission control. What it sends, to whom, and whether it can be undone cannot be determined from the page."
-            : "This activates a control whose label indicates a consequential action (such as submit, pay, delete, send, or publish). Its downstream effect, recipient, and reversibility cannot be determined from the page.",
-          pageUrl: preSnapshot.url || null,
-          documentSessionId,
-          revision,
-          expiresAt: new Date(expiresAt).toISOString(),
-        },
+        confirmation,
         newSnapshotDiff: null,
         diffUnavailableReason: "awaiting human confirmation; nothing was performed",
         documentSessionId,
@@ -765,6 +780,7 @@ function createExecutor(options) {
     if (approvalGrant && now() >= approvalGrant.expiresAt) {
       return failure("APPROVAL_EXPIRED", "The confirmation expired before the action could be dispatched. Nothing was executed; request a new confirmation.", engine.getStatus(), "approval expired before dispatch");
     }
+    if (deadlineExpired()) return deadlineFailure();
     if (approvalGrant && verifiedSubmissionJson !== JSON.stringify(submissionRepresentation(node))) {
       return failure("APPROVAL_INVALIDATED", "The submission changed while the approved action was being prepared. Nothing was dispatched; the approval is revoked.", engine.getStatus(), "submission changed before dispatch");
     }
@@ -780,6 +796,7 @@ function createExecutor(options) {
     // replacing the target while hashing was in flight is rejected
     // here rather than dispatched.
     {
+      if (deadlineExpired()) return deadlineFailure();
       const changedNow = engine.checkForChanges();
       if (changedNow && changedNow.changed) {
         return failure("STALE_SNAPSHOT", "The page changed while the action was being prepared. Re-snapshot before acting.", engine.getStatus(), "page changed during final validation");
@@ -1267,6 +1284,19 @@ function createExecutor(options) {
     return getGateStatus();
   }
 
+  // Authoritative pending confirmation for the trusted panel (Issue #19):
+  // the earliest unexpired, unconsumed challenge's PUBLIC descriptor —
+  // the same object issueChallenge returned to its caller. The stored
+  // request, its value, and the private binding never leave through here;
+  // approval still requires the panel route and this challenge id.
+  function getPendingConfirmation() {
+    purgeExpired();
+    for (const record of challenges.values()) {
+      if (!record.consumed && record.confirmation) return { ...record.confirmation };
+    }
+    return null;
+  }
+
   function getActionLog() {
     return actionLog.map((entry) => ({ ...entry }));
   }
@@ -1284,6 +1314,7 @@ function createExecutor(options) {
     pauseExecution,
     resumeExecution,
     getGateStatus,
+    getPendingConfirmation,
     getActionLog,
     clearActionLog,
   };

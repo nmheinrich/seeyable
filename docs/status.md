@@ -9,6 +9,7 @@ the feature documents.
 
 | Area | State |
 |---|---|
+| Google Forms rehearsal and scope freeze (#16) | Accepted on Product Owner report, 2026-11-02: three runs worked. Detailed timings/transcripts were not supplied. Google Forms remains the primary demo; Shopify is excluded. Speech tuning and recovery/setup simplification are follow-up work — `docs/issue-16-google-forms-rehearsal.md` |
 | Snapshot spike (DOM/ARIA vs CDP decision) | Complete — `docs/decision-snapshot.md` |
 | Production snapshot engine (schema v2) | Complete — `docs/snapshot-schema.md` |
 | Visual overlays (numbered word tags, ID-based highlight) | Complete — `docs/features/feature-07-visual-overlay.md` |
@@ -21,6 +22,7 @@ the feature documents.
 | Planner, proxy | Complete and accepted — Product Owner confirmed full canonical Act 1 typed then spoken on the corrected implementation, 2026-10-31; recognition remains imperfect — `docs/features/feature-14-muse-spark-planner.md`; loopback proxy, shared plan schema, guarded sequential execution, cached corrections; stub-model plumbing verified |
 | Voice transcription spike (#12) | Timeboxed spike complete: INCONCLUSIVE / KEEP Web Speech — `docs/decision-voice-transcription.md`; zero provider takes; file-client mechanics verified offline (3/3); live comparison harness incomplete |
 | MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
+| Full local MCP server (#19) | Complete and accepted, 2026-11-02: Product Owner Inspector GUI snapshot/highlight/read/fill/click/select and held Submit/cancel checks passed; final automatic binding/tab-following/confirmation discovery passed without a tag toggle. Initial direct chat MCP calls verified. Cross-chat startup conflict fixed in code via one shared authenticated bridge (automated + real headless evidence; ChatGPT desktop headed check pending); full external-agent workflow remains #20 — `docs/features/feature-19-mcp-server.md` |
 | Plan preview, confirmation, undo (#15) | Complete and accepted for the core mouse-free workflow — Product Owner confirmed genuine-microphone/model preview, voice edit, unsupported-approval retention, approval and last-change undo on 2026-10-31. Repeated Grace Hopper → Grasshopper recognition remains a limitation; supplementary headed safety probes are not claimed — `docs/features/feature-15-plan-review-undo.md` |
 | Planner fast path (#13) | Checkpoint ready: headed typed exact/fuzzy fill, held Submit/cancel, compound rejection, clarification/expiry, five-choice access, single-error display, and live-mic click (one counter increment) passed. Voice fill remains limited by fill/feel/Phil recognition; full voice acceptance is not claimed — `docs/features/feature-13-local-command-fast-path.md` |
 
@@ -41,6 +43,79 @@ requires no `debugger` permission; CDP remains debug-only via
 `apps/extension/manifest.debug.json`.
 
 ## Verification evidence
+
+- Shared-bridge headed follow-up, 2026-11-02: fixed bridge running;
+  extension paired using the existing configured token. This chat's
+  real `list_tabs` succeeded (16 tabs), and the Product Owner confirmed
+  the other chat worked without another pairing. The cross-chat startup
+  blocker is resolved in this headed check. Three-chat snapshots,
+  close-one isolation, and forced bridge restart were not individually
+  itemized by the owner; their automated/headless evidence remains
+  separate. Full external-agent workflow remains #20. Latest independently
+  rerun MCP suite: 41/41; extension last verified 334/334, unchanged.
+
+- Shared-bridge review follow-up, 2026-11-02: both reviewer-reproduced
+  findings are corrected (uncommitted). Peer requests now carry their
+  issue-time `expiresAt` through the hub, which refuses missing/expired
+  deadlines and never extends them (reviewer repro: execute frames after
+  timeout 1 → 0). First-token creation now publishes atomically via
+  temp file + non-overwriting `link()` (reviewer repro: concurrent reader
+  failure → complete token, converged). New regressions: delayed-delivery
+  zero-dispatch, live slow-hop success keeping the original expiry,
+  clamp/missing/past expiry, deterministic paused-creator/reader and
+  8-way concurrent token tests. Stress testing found and fixed two
+  timing-fragile TESTS (fixed-delay frame reads; an unhandled-rejection
+  ordering) and that a failed test could hang its file; `npm test` now
+  has a per-test timeout. No live credentials or the running ChatGPT
+  server were changed during that review. The later headed follow-up
+  above supersedes its pending-restart status.
+
+- External-client follow-up, 2026-11-02: new chats failed MCP
+  initialization because every stdio process bound loopback 6123 before
+  answering `initialize`; later processes hit `EADDRINUSE`, re-emitted
+  unhandled by the WebSocketServer (exit 1). Not a token or OAuth issue.
+  **Fixed in code (not committed):** stdio processes answer `initialize`
+  first and join ONE shared, detached bridge process per port
+  (`apps/mcp-server/bridge-daemon.mjs`, `lib/shared-bridge.mjs`,
+  `lib/hub-launch.mjs`) over an HMAC-authenticated loopback peer link;
+  one extension pairing serves all chats; extension unchanged. Evidence:
+  MCP 35/35 (21 prior + 10 in-process shared-bridge + 4 real multi-process
+  with a scripted extension), extension 334/334, and a real headless
+  Chrome + real extension + real stdio processes run 19/19 (concurrent
+  start, one listener, shared pairing, close-one-keeps-other, held Submit
+  cancelled, bridge SIGKILL → automatic recovery, no replay). Against the
+  live pre-fix ChatGPT process on 6123 a fixed process initialized and
+  reported `PORT_CONFLICT` without touching it. ChatGPT desktop multi-chat
+  use is still **unverified** until the Product Owner quits ChatGPT and
+  runs the headed steps in `docs/features/feature-19-mcp-server.md`.
+
+- Issue #19 (full local MCP server): extension 334/334, MCP 21/21,
+  shared 11/11, proxy 15/15. Headless real-browser run (custom stdio
+  client, not an Inspector GUI run): 27/27 on the demo survey — all
+  six tools, sensitive-fill rejection, Submit held with zero dispatch,
+  panel card adoption, approve-once, cancel. Reviewer corrections
+  landed for editable-content section leaks, post-timeout delayed
+  dispatch (bridge-carried deadlines), and cross-tab confirmation
+  discovery. Product Owner Inspector GUI checks passed: Google Forms
+  snapshot/highlight/bounded section read/fill, Get advice and Checkout
+  rating clicks; demo exact-value select and held Submit/cancel.
+  The final headed re-check confirmed automatic panel-open binding,
+  tab-following, and Submit confirmation discovery/cancellation without
+  the earlier tag-toggle workaround. Issue #19 accepted 2026-11-02.
+  This chat also directly exercised MCP discovery, snapshot, and a held
+  Submit; no human approval was supplied. No planner-model call was
+  needed. The full multi-step external-agent workflow remains #20;
+  headed approve-once/sensitive-write probes are not claimed.
+  See `docs/features/feature-19-mcp-server.md`.
+
+- Issue #16 final follow-up (2026-11-02): the Product Owner reported
+  “Three runs works fine” and requested #19 next. This supersedes the
+  earlier pending-three-runs notes below. Record three successful headed
+  runs as human-reported acceptance, without inventing timing, transcript,
+  retry, or per-step measurements. Speech recognition remains imperfect.
+  Scope is frozen to the Google Forms workflow in the rehearsal note;
+  diction tuning, automatic snapshot/page recovery, and proxy/setup
+  simplification are parked follow-ups, outside #19.
 
 - Issue #16 genuine-form follow-up (2026-11-02): after the final
   classification correction, the Product Owner reported “Works very well”

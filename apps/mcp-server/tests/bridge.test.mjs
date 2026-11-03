@@ -159,7 +159,12 @@ test("unanswered requests time out and late responses are dropped", async () => 
   const ws = await pairedClient(bridge, bridge.token);
   let seen = null;
   ws.on("message", (raw) => { const m = JSON.parse(String(raw)); if (m.type === "request") seen = m; });
+  const before = Date.now();
   await assert.rejects(bridge.request("snapshot", 1), (e) => e.code === "TIMEOUT");
+  // Bounded validity travels with the frame so the extension and the
+  // executor can refuse dispatch after this side has given up.
+  assert.equal(typeof seen.expiresAt, "number");
+  assert.ok(seen.expiresAt >= before + 80 && seen.expiresAt <= Date.now() + 80, "expiresAt is issue time plus the request timeout");
   // The answer arrives after the timeout: it must be dropped, not crash or reuse the id.
   ws.send(JSON.stringify({ type: "response", id: seen.id, ok: true, payload: {} }));
   await tick();

@@ -83,6 +83,110 @@ test("approval routing: only the side-panel sender can approve; held submit runs
   win.close();
 });
 
+test("mcp hold: pending confirmation is panel-retrievable, approval runs once, cancel clears", async () => {
+  const { win, send } = loadContent();
+  const { snapshot } = await send({ type: "SEEYABLE_SNAPSHOT_DOM" }, PANEL);
+  const submit = snapshot.elements.find((e) => e.name === "Submit feedback");
+  const held = await send({
+    type: "SEEYABLE_EXECUTE_ACTION",
+    request: { action: "click", elementId: submit.id, documentSessionId: snapshot.documentSessionId, revision: snapshot.revision, source: "mcp" },
+  }, PANEL);
+  assert.equal(held.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(win.__flags.submitRan, false, "held with zero dispatch");
+
+  const forged = await send({ type: "SEEYABLE_GET_PENDING_CONFIRMATION" }, PAGE);
+  assert.equal(forged.error.code, "UNTRUSTED_APPROVAL", "pending challenges are not exposed to page senders");
+  const pending = await send({ type: "SEEYABLE_GET_PENDING_CONFIRMATION" }, PANEL);
+  assert.equal(pending.ok, true);
+  assert.equal(pending.confirmation.challengeId, held.confirmation.challengeId, "the authoritative challenge is retrievable");
+  assert.equal(pending.confirmation.targetName, "Submit feedback");
+  assert.ok(!("binding" in pending.confirmation) && !("request" in pending.confirmation), "no approval material leaks");
+
+  const approved = await send({ type: "SEEYABLE_APPROVE_CHALLENGE", challengeId: held.confirmation.challengeId }, PANEL);
+  assert.equal(approved.ok, true, JSON.stringify(approved.error));
+  assert.equal(win.__flags.submitRan, true, "the stored action ran exactly once after human approval");
+  const after = await send({ type: "SEEYABLE_GET_PENDING_CONFIRMATION" }, PANEL);
+  assert.equal(after.confirmation, null, "a consumed challenge is no longer pending");
+
+  // Cancellation path: hold Delete, cancel it, nothing pending, nothing ran.
+  const snap2 = (await send({ type: "SEEYABLE_SNAPSHOT_DOM" }, PANEL)).snapshot;
+  const del = snap2.elements.find((e) => e.name === "Delete draft");
+  const held2 = await send({
+    type: "SEEYABLE_EXECUTE_ACTION",
+    request: { action: "click", elementId: del.id, documentSessionId: snap2.documentSessionId, revision: snap2.revision, source: "mcp" },
+  }, PANEL);
+  assert.equal(held2.error.code, "CONFIRMATION_REQUIRED");
+  const cancelled = await send({ type: "SEEYABLE_CANCEL_CHALLENGE", challengeId: held2.confirmation.challengeId }, PANEL);
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(win.__flags.deleteRan, false);
+  const afterCancel = await send({ type: "SEEYABLE_GET_PENDING_CONFIRMATION" }, PANEL);
+  assert.equal(afterCancel.confirmation, null);
+  win.close();
+});
+
+test("read_section: protected editable content and hidden headings never leak, prose survives", async () => {
+  const { win, doc, send } = loadContent();
+  doc.querySelector("form").insertAdjacentHTML("afterbegin",
+    `<section id="s19"><h2 hidden>HiddenHeadingSecret</h2><h2>Visible section</h2>`
+    + `<div role="textbox" contenteditable="true" aria-label="Card number">SyntheticEditableSecret</div>`
+    + `<div contenteditable="true" aria-label="Notes">EditableNoteSecret</div>`
+    + `<p>Ordinary prose stays readable.</p>`
+    + `<label for="s19-anchor">Section anchor</label><input id="s19-anchor" type="text"></section>`);
+  const { snapshot } = await send({ type: "SEEYABLE_SNAPSHOT_DOM" }, PANEL);
+  const anchor = snapshot.elements.find((e) => e.name === "Section anchor");
+  assert.ok(anchor, "the section anchor is a snapshot target");
+  const res = await send({
+    type: "SEEYABLE_READ_SECTION", elementId: anchor.id,
+    documentSessionId: snapshot.documentSessionId, revision: snapshot.revision,
+  }, PANEL);
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  assert.equal(res.section.sectionTag, "section");
+  assert.equal(res.section.heading, "Visible section", "hidden headings are not section metadata");
+  assert.match(res.section.text, /Ordinary prose stays readable/, "ordinary prose remains readable");
+  const whole = JSON.stringify(res);
+  assert.ok(!whole.includes("SyntheticEditableSecret"), "sensitive editable (role=textbox) content is excluded");
+  assert.ok(!whole.includes("EditableNoteSecret"), "any contenteditable content is a control value, not prose");
+  assert.ok(!whole.includes("HiddenHeadingSecret"), "hidden heading text never leaks through metadata");
+  win.close();
+});
+
+test("read_section: bounded, redacted, section-scoped content with stale rejection", async () => {
+  const { win, doc, send } = loadContent();
+  const { snapshot } = await send({ type: "SEEYABLE_SNAPSHOT_DOM" }, PANEL);
+  const plain = snapshot.elements.find((e) => e.name === "Plain text");
+  const read = (over) => send({
+    type: "SEEYABLE_READ_SECTION", elementId: plain.id,
+    documentSessionId: snapshot.documentSessionId, revision: snapshot.revision, ...over,
+  }, PANEL);
+
+  assert.equal((await read({ documentSessionId: "doc-other" })).error.code, "WRONG_SESSION");
+  assert.equal((await read({ elementId: "el-999" })).error.code, "UNKNOWN_TARGET");
+  assert.equal((await read({ revision: 999 })).error.code, "STALE_TARGET");
+
+  const ok = await read({});
+  assert.equal(ok.ok, true, JSON.stringify(ok.error));
+  assert.equal(ok.section.sectionTag, "form");
+  assert.equal(ok.section.heading, "Executor fixture form");
+  assert.equal(ok.section.elementId, plain.id);
+  assert.match(ok.section.text, /How satisfied are you\?/);
+  assert.match(ok.section.text, /Plain text/);
+  assert.ok(!ok.section.text.includes("SyntheticPass!1"), "password values never appear in section text");
+  assert.ok(!ok.section.text.includes("4242424242424242"), "card values never appear in section text");
+
+  const small = await read({ maxChars: 120 });
+  assert.equal(small.ok, true);
+  assert.equal(small.section.truncated, true, "truncation is reported, never silent");
+  assert.ok(small.section.text.length <= 120);
+
+  // A live page change since the snapshot rejects instead of reading on.
+  doc.getElementById("plain").value = "typed after snapshot";
+  doc.getElementById("plain").dispatchEvent(new win.Event("input", { bubbles: true }));
+  const stale = await read({});
+  assert.equal(stale.ok, false);
+  assert.ok(["STALE_SNAPSHOT", "STALE_TARGET"].includes(stale.error.code), `expected stale rejection, got ${stale.error && stale.error.code}`);
+  win.close();
+});
+
 test("tag states: only the side panel may paint acting/done/held, and only for this document", async () => {
   const { win, send } = loadContent();
   const { snapshot } = await send({ type: "SEEYABLE_SNAPSHOT_DOM" }, PANEL);

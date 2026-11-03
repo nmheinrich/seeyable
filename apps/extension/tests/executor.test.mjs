@@ -339,3 +339,54 @@ test("disabled/readonly: mutations rejected, read allowed", async () => {
   assert.equal(read.ok, true);
   assert.equal(read.result.element.state.value, "fixed");
 });
+
+/* Issue #19 correction: bridge-carried request deadlines are enforced
+ * at admission, after pre-dispatch waits, and at the final dispatch
+ * boundary. Panel requests carry no deadline and are unaffected. */
+function makeDeadlineCtx() {
+  const dom = new JSDOM(`<label for="n">Name</label><input id="n" type="text">`,
+    { url: "https://example.test/deadline", runScripts: "dangerously", pretendToBeVisual: true });
+  const engine = snap.createSnapshotEngine(dom.window.document, dom.window, { debounceMs: 0 });
+  const clock = { t: 1_000_000 };
+  const executor = createExecutor({
+    engine,
+    internals: { normalizeElements: snap.normalizeElements, diffNormalized: snap.diffNormalized, sensitiveInfo: snap.sensitiveInfo, isVisible: snap.isVisible, computeAccessibleName: snap.computeAccessibleName },
+    settleMs: 25,
+    now: () => clock.t,
+  });
+  return { dom, doc: dom.window.document, engine, executor, clock };
+}
+
+test("deadline: expired, expiring-during-wait, malformed, and live requests", async () => {
+  const ctx = makeDeadlineCtx();
+  const s = ctx.engine.snapshot();
+  const el = s.elements.find((e) => e.name === "Name");
+  const req = (deadline) => ({
+    action: "fill", elementId: el.id, documentSessionId: s.documentSessionId,
+    revision: s.revision, value: "Ada", deadline,
+  });
+
+  const malformed = await ctx.executor.execute(req("soon"));
+  assert.equal(code(malformed), "INVALID_REQUEST");
+  assert.equal(ctx.doc.getElementById("n").value, "");
+
+  const expired = await ctx.executor.execute(req(ctx.clock.t - 1));
+  assert.equal(code(expired), "DEADLINE_EXPIRED");
+  assert.equal(ctx.doc.getElementById("n").value, "", "an already-expired request mutates nothing");
+
+  // Expiry lands during the pre-dispatch settle wait: the call runs
+  // synchronously up to its first wait, so advancing the injected clock
+  // in the same tick deterministically lands inside that window.
+  const inFlight = ctx.executor.execute(req(ctx.clock.t + 1000));
+  ctx.clock.t += 5000;
+  const late = await inFlight;
+  assert.equal(code(late), "DEADLINE_EXPIRED");
+  assert.equal(ctx.doc.getElementById("n").value, "", "expiry during preparation still dispatches nothing");
+
+  ctx.clock.t = 2_000_000;
+  const live = await ctx.executor.execute(req(ctx.clock.t + 60000));
+  assert.equal(live.ok, true, JSON.stringify(live.error));
+  assert.equal(ctx.doc.getElementById("n").value, "Ada", "a request inside its deadline runs normally");
+  ctx.engine.stopObserving();
+  ctx.dom.window.close();
+});

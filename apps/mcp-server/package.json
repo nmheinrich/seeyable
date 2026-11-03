@@ -6,7 +6,7 @@
   "description": "Issue #28 spike: local stdio MCP server with a loopback WebSocket bridge to the Seeyable extension.",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tests/bridge.test.mjs"
+    "test": "node --test --test-timeout=120000 tests/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

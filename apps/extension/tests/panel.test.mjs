@@ -47,7 +47,7 @@ function makePanel(sendImpl, opts = {}) {
   const dom = new JSDOM(html, { url: "chrome-extension://test/sidepanel.html", runScripts: "dangerously", pretendToBeVisual: true });
   const win = dom.window;
   const calls = { send: [], execute: 0, storage: 0, tabsCreated: [] };
-  const listeners = { activated: [], updated: [] };
+  const listeners = { activated: [], updated: [], runtime: [] };
   const logs = [];
   win.console = { info: (...a) => logs.push(a.join(" ")), warn: () => {}, error: () => {} };
   if (opts.speechRecognition) win.SpeechRecognition = opts.speechRecognition;
@@ -57,7 +57,7 @@ function makePanel(sendImpl, opts = {}) {
   }
   win.chrome = {
     tabs: {
-      query: async () => [{ id: opts.tabId || 111, title: "Form" }],
+      query: opts.tabsQueryImpl || (async () => [{ id: opts.tabId || 111, title: "Form" }]),
       sendMessage: async (tabId, msg) => {
         calls.send.push({ tabId, msg });
         if (msg.type === "SEEYABLE_EXECUTE_ACTION") calls.execute += 1;
@@ -73,6 +73,7 @@ function makePanel(sendImpl, opts = {}) {
     runtime: {
       sendMessage: async () => ({ ok: false, error: "no debugger" }),
       getURL: (path) => `chrome-extension://test/${path}`,
+      onMessage: { addListener: (fn) => listeners.runtime.push(fn) },
     },
     permissions: { contains: async () => false },
     storage: {
@@ -214,8 +215,10 @@ test("targets: held confirmation marks its target from authoritative state", asy
 });
 
 test("targets: invalidation clears the visible list (no stale rows)", async () => {
-  const panel = makePanel(async (_t, msg) => {
-    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Original field")]) };
+  const panel = makePanel(async (t, msg) => {
+    // The new tab's automatic acquisition fails here, so the cleared
+    // list must stay cleared — stale rows never reappear from it.
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM" && t === 111) return { ok: true, snapshot: snap([el("el-1", "Original field")]) };
     throw new Error("unexpected " + msg.type);
   });
   await takeSnapshot(panel);
@@ -454,11 +457,17 @@ test("lock through refresh: exactly one dispatch until the post-action refresh c
 test("show tags: ownership retained through follow-up snapshot; tab switch discards it", async () => {
   let release;
   const gate = new Promise((r) => { release = r; });
-  const panel = makePanel(async (_t, msg) => {
+  let snapCalls = 0;
+  const panel = makePanel(async (t, msg) => {
     if (msg.type === "SEEYABLE_SHOW_TAGS") return { ok: true, shown: 1, total: 1, revision: 1, documentSessionId: "doc-A" };
-    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") { await gate; return { ok: true, snapshot: snap([el("el-1", "Full name")]) }; }
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM" && t === 111) {
+      snapCalls += 1;
+      if (snapCalls > 1) await gate; // the show-tags follow-up is the held one
+      return { ok: true, snapshot: snap([el("el-1", "Full name")]) };
+    }
     throw new Error("unexpected " + msg.type);
   });
+  await tick(); await tick(); // panel-open automatic acquisition settles first
   panel.$("btnShowTags").click();
   await tick(); await tick(); // SHOW_TAGS done, follow-up snapshot held
   for (const fn of panel.listeners.activated) fn({ tabId: 999, windowId: 1 });
@@ -735,11 +744,14 @@ test("page-action: five exact matches are all reachable; option 5 dispatches its
 test("page-action: compound, negated, and incomplete commands send nothing", async () => {
   const snapshot = snap([el("el-1", "Full name")]);
   const panel = makePanel(pageActionImpl(snapshot));
+  await tick(); await tick(); // panel-open automatic acquisition settles (read-only)
+  const baseline = panel.calls.send.length;
   for (const text of ["click Continue and submit", "don't click Full name", "never fill bio with x", "click", "fill Full name", "fill Full name with", "tap Full name"]) {
     sendTyped(panel, text);
     await tick();
   }
-  assert.equal(panel.calls.send.length, 0, "rejected parses never touch the tab");
+  assert.ok(panel.calls.send.slice(baseline).every((c) => c.msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION"),
+    "rejected parses dispatch and acquire nothing (only read-only confirmation discovery may recur)");
   assert.equal(panel.calls.execute, 0);
   assert.match(panel.$("status").textContent, /Supported commands/);
   panel.dom.window.close();
@@ -1048,7 +1060,8 @@ test("page-action: command lock spans the post-action refresh; late refresh cann
   let releaseRefresh;
   const heldRefresh = new Promise((res) => { releaseRefresh = res; });
   let snapshots = 0;
-  const panel = makePanel(async (_t, msg) => {
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM" && t === 999) throw new Error("new tab answers nothing");
     if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
       snapshots += 1;
       if (snapshots === 1) return { ok: true, snapshot: rev1 };
@@ -1077,6 +1090,8 @@ test("page-action: command lock spans the post-action refresh; late refresh cann
   releaseRefresh();
   await tick(); await tick();
   assert.equal(panel.calls.execute, 1, "no replay");
+  // The new tab (999) answers nothing in this harness, so after the
+  // late refresh is discarded the list must still hold no old targets.
   assert.equal(panel.$("targetSelect").options.length, 1, "the late refresh cannot restore the old tab's targets");
   assert.match(panel.$("status").textContent, /discarded/);
   assert.equal(panel.$("voiceState").textContent, "Voice: idle.", "voice reports microphone lifecycle only");
@@ -1419,6 +1434,258 @@ test("gate: confirmation is held without refresh; Approve once runs it and then 
   assert.match(panel.$("execResult").textContent, /verified/);
   assert.equal(panel.$("confirmBox").hidden, true);
   assert.equal(snapCount(), 2, "the approved execution is followed by the usual same-tab refresh");
+  panel.dom.window.close();
+});
+
+test("gate: an MCP-originated hold is adopted into the same card on snapshot bind", async () => {
+  const confirmation = JSON.parse(JSON.stringify(confirmationResponse.confirmation));
+  let pending = confirmation;
+  let approved = 0;
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Submit feedback")]) };
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") return { ok: true, confirmation: pending };
+    if (msg.type === "SEEYABLE_APPROVE_CHALLENGE") { approved += 1; pending = null; return { ok: true, result: { dispatched: true, verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 2 }; }
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    if (msg.type === "SEEYABLE_TAG_STATE") return { ok: true, states: 1 };
+    throw new Error("unexpected " + msg.type);
+  });
+  await takeSnapshot(panel);
+  await tick(); await tick();
+  assert.equal(panel.$("confirmBox").hidden, false, "the remote hold appears in the existing confirmation card");
+  assert.match(panel.$("confirmText").textContent, /Submit feedback/);
+  panel.$("btnApproveOnce").click();
+  await tick(); await tick(); await tick();
+  assert.equal(approved, 1, "approval travels the same trusted route, once");
+  assert.equal(panel.$("confirmBox").hidden, true, "the card clears after the approved action");
+  panel.dom.window.close();
+});
+
+test("gate: obsolete lookup cannot suppress or replace the newly bound tab's hold", async () => {
+  let activeTab = 111;
+  const lookups = [];
+  const approvals = [];
+  let releaseA;
+  let bPending = true;
+  const mkConfirmation = (challengeId, documentSessionId) => ({
+    challengeId, action: "click", elementId: "el-1", targetName: "Submit feedback", targetQuestion: null,
+    consequence: "Submits.", pageUrl: "https://example.test/form", documentSessionId, revision: 1,
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  });
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Submit feedback")], 1, t === 111 ? "doc-A" : "doc-B") };
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") {
+      lookups.push(t);
+      if (t === 111) return new Promise((r) => { releaseA = () => r({ ok: true, confirmation: mkConfirmation("held-A", "doc-A") }); });
+      return { ok: true, confirmation: bPending ? mkConfirmation("held-B", "doc-B") : null };
+    }
+    if (msg.type === "SEEYABLE_APPROVE_CHALLENGE") { approvals.push(msg.challengeId); bPending = false; return { ok: true, result: { dispatched: true, verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-B", revision: 2 }; }
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    if (msg.type === "SEEYABLE_TAG_STATE") return { ok: true, states: 1 };
+    throw new Error("unexpected " + msg.type);
+  });
+  panel.win.chrome.tabs.query = async () => [{ id: activeTab, title: "Form" }];
+  await takeSnapshot(panel);
+  await tick();
+  assert.deepEqual(lookups, [111], "tab A's lookup is in flight (held)");
+  activeTab = 222;
+  for (const fn of panel.listeners.activated) fn({ tabId: 222 });
+  await tick();
+  await takeSnapshot(panel);
+  await tick(); await tick();
+  assert.deepEqual(lookups, [111, 222], "B is discovered despite A's lookup still being in flight");
+  assert.equal(panel.$("confirmBox").hidden, false, "B's hold appears without another manual refresh");
+  releaseA(); // the obsolete A response arrives last, carrying A's challenge
+  await tick(); await tick();
+  assert.equal(panel.$("confirmBox").hidden, false, "the obsolete response cannot clear or replace B's card");
+  panel.$("btnApproveOnce").click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(approvals, ["held-B"], "only the current tab's exact challenge can be approved, exactly once");
+  panel.dom.window.close();
+});
+
+test("gate: discovery deferred behind a manual operation runs when it finishes", async () => {
+  let pending = null;
+  let snapshots = 0;
+  let releaseRefresh;
+  const lookups = [];
+  const cancelled = [];
+  const elements = [el("el-1", "Full name"), el("el-2", "Submit feedback")];
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
+      snapshots += 1;
+      if (snapshots === 2) return new Promise((r) => { releaseRefresh = () => r({ ok: true, snapshot: snap(elements) }); });
+      return { ok: true, snapshot: snap(elements) };
+    }
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") { lookups.push(t); return { ok: true, confirmation: pending }; }
+    if (msg.type === "SEEYABLE_EXECUTE_ACTION") return { ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 1 };
+    if (msg.type === "SEEYABLE_CANCEL_CHALLENGE") { cancelled.push(msg.challengeId); pending = null; return { ok: true, cancelled: true }; }
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    if (msg.type === "SEEYABLE_TAG_STATE") return { ok: true, states: 1 };
+    throw new Error("unexpected " + msg.type);
+  });
+  await takeSnapshot(panel);
+  await tick();
+  selectTarget(panel, "el-1");
+  panel.$("actionSelect").value = "read";
+  panel.$("btnExecute").click();
+  await tick();
+  assert.equal(snapshots, 2, "the post-action refresh is in flight (held)");
+  pending = {
+    challengeId: "held-remote", action: "click", elementId: "el-2", targetName: "Submit feedback",
+    targetQuestion: null, consequence: "Submits.", pageUrl: "https://example.test/form",
+    documentSessionId: "doc-A", revision: 1, expiresAt: new Date(Date.now() + 60000).toISOString(),
+  };
+  for (const fn of panel.listeners.runtime) fn({ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId: 111 });
+  await tick();
+  assert.equal(panel.$("confirmBox").hidden, true, "the card stays hidden during the manual operation");
+  releaseRefresh();
+  await tick(); await tick(); await tick();
+  assert.equal(panel.$("confirmBox").hidden, false, "the deferred hold appears automatically once the operation finishes");
+  assert.ok(lookups.length >= 2 && lookups.every((t) => t === 111), "discovery resumed for the bound tab only");
+  assert.equal(panel.calls.execute, 1, "discovery runs no page action of its own");
+  assert.equal(panel.$("btnExecute").disabled, true, "manual execution stays locked while the card is shown");
+  panel.$("btnCancelChallenge").click();
+  await tick(); await tick();
+  assert.deepEqual(cancelled, ["held-remote"], "the exact remote challenge is cancelled once");
+  assert.equal(panel.$("confirmBox").hidden, true, "the card clears after cancellation");
+  assert.equal(panel.calls.execute, 1, "cancellation dispatched nothing further");
+  panel.dom.window.close();
+});
+
+const heldConfirmation = (challengeId, documentSessionId) => ({
+  challengeId, action: "click", elementId: "el-2", targetName: "Submit feedback",
+  targetQuestion: null, consequence: "Submits.", pageUrl: "https://example.test/form",
+  documentSessionId, revision: 1, expiresAt: new Date(Date.now() + 60000).toISOString(),
+});
+
+test("auto: panel open binds the active tab and discovers a pending hold without any tag toggle", async () => {
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-1", "Full name"), el("el-2", "Submit feedback")]) };
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") return { ok: true, confirmation: heldConfirmation("held-auto", "doc-A") };
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    if (msg.type === "SEEYABLE_TAG_STATE") return { ok: true, states: 1 };
+    throw new Error("unexpected " + msg.type);
+  });
+  const chipBefore = panel.$("tagsChip").getAttribute("aria-pressed");
+  await tick(); await tick(); await tick(); // no button is ever clicked
+  assert.equal(panel.doc.querySelectorAll("#targetList .target").length, 2, "the active tab binds automatically on open");
+  assert.match(panel.$("status").textContent, /Found 2 controls/);
+  assert.equal(panel.$("confirmBox").hidden, false, "the pending MCP hold appears without toggling tags");
+  const sentTypes = panel.calls.send.map((c) => c.msg.type);
+  assert.ok(!sentTypes.includes("SEEYABLE_SHOW_TAGS") && !sentTypes.includes("SEEYABLE_HIDE_TAGS"), "tag visibility is never touched");
+  assert.equal(panel.$("tagsChip").getAttribute("aria-pressed"), chipBefore, "the tags chip is unchanged");
+  assert.equal(panel.calls.execute, 0, "acquisition dispatches no page actions");
+  panel.dom.window.close();
+});
+
+test("auto: tab activation binds the new tab; rapid A-B-C leaves only C bound", async () => {
+  let active = 111;
+  let releaseB;
+  const snapshotTabs = [];
+  const fieldFor = (t) => (t === 111 ? "Field A" : t === 222 ? "Field B" : "Field C");
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
+      snapshotTabs.push(t);
+      const snapshot = snap([el("el-1", fieldFor(t))], 1, `doc-${t}`);
+      if (t === 222) return new Promise((r) => { releaseB = () => r({ ok: true, snapshot }); });
+      return { ok: true, snapshot };
+    }
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") return { ok: true, confirmation: null };
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    if (msg.type === "SEEYABLE_TAG_STATE") return { ok: true, states: 1 };
+    throw new Error("unexpected " + msg.type);
+  });
+  panel.win.chrome.tabs.query = async () => [{ id: active, title: "Form" }];
+  await tick(); await tick();
+  assert.match(panel.doc.querySelector("#targetList .target").textContent, /Field A/);
+  active = 222;
+  for (const fn of panel.listeners.activated) fn({ tabId: 222 });
+  await tick();
+  active = 333;
+  for (const fn of panel.listeners.activated) fn({ tabId: 333 });
+  await tick();
+  releaseB(); // B's late response must bind nothing
+  await tick(); await tick(); await tick(); await tick();
+  assert.deepEqual(snapshotTabs, [111, 222, 333], "each tab is acquired once, in switch order");
+  const rows = [...panel.doc.querySelectorAll("#targetList .target")].map((r) => r.textContent).join(" ");
+  assert.match(rows, /Field C/, "only the latest tab is bound");
+  assert.ok(!/Field [AB]/.test(rows), "late responses restore no other tab's targets");
+  assert.equal(panel.calls.execute, 0, "switching dispatches no page actions");
+  panel.dom.window.close();
+});
+
+test("auto: activation during a manual operation waits for it, then binds the latest tab", async () => {
+  let snapshots111 = 0;
+  let releaseRefresh;
+  const snapshotTabs = [];
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
+      snapshotTabs.push(t);
+      if (t === 222) return { ok: true, snapshot: snap([el("el-1", "Field B")], 1, "doc-B") };
+      snapshots111 += 1;
+      if (snapshots111 === 2) return new Promise((r) => { releaseRefresh = () => r({ ok: true, snapshot: snap([el("el-1", "Full name")], 2) }); });
+      return { ok: true, snapshot: snap([el("el-1", "Full name")], snapshots111) };
+    }
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") return { ok: true, confirmation: null };
+    if (msg.type === "SEEYABLE_EXECUTE_ACTION") return { ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 1 };
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    if (msg.type === "SEEYABLE_TAG_STATE") return { ok: true, states: 1 };
+    throw new Error("unexpected " + msg.type);
+  });
+  panel.win.chrome.tabs.query = async () => [{ id: 111, title: "Form" }];
+  await tick(); await tick(); // startup binds tab 111
+  selectTarget(panel, "el-1");
+  panel.$("actionSelect").value = "read";
+  panel.$("btnExecute").click();
+  await tick();
+  assert.equal(snapshots111, 2, "the post-action refresh is held");
+  for (const fn of panel.listeners.activated) fn({ tabId: 222 });
+  await tick();
+  assert.ok(!snapshotTabs.includes(222), "no acquisition starts while the manual operation owns the panel");
+  releaseRefresh();
+  await tick(); await tick(); await tick(); await tick();
+  assert.match(panel.doc.querySelector("#targetList .target").textContent, /Field B/, "the latest tab binds once the operation settles");
+  assert.equal(panel.calls.execute, 1, "the manual action ran exactly once; acquisition added none");
+  panel.dom.window.close();
+});
+
+test("auto: startup lookup superseded by activation never acquires the original tab", async () => {
+  const queryReleases = [];
+  const snapshotTabs = [];
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") { snapshotTabs.push(t); return { ok: true, snapshot: snap([el("el-1", t === 222 ? "Field B" : "Field A")], 1, `doc-${t}`) }; }
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") return { ok: true, pending: t === 111 ? { challengeId: "held-A", action: "click", elementId: "el-9", documentSessionId: "doc-111", revision: 1, name: "Submit", expiresAt: Date.now() + 60000 } : null };
+    return { ok: true };
+  }, { tabsQueryImpl: () => new Promise((r) => queryReleases.push(r)) });
+  // Panel opens on tab A; its startup activeTab() lookup is held.
+  // Tab B activates and binds first.
+  for (const fn of panel.listeners.activated) fn({ tabId: 222 });
+  await tick(); await tick();
+  assert.deepEqual(snapshotTabs, [222]);
+  assert.match(panel.$("targetList").textContent, /Field B/);
+  // Release every held query with the ORIGINAL tab A result.
+  for (const release of queryReleases) release([{ id: 111, title: "Form A" }]);
+  await tick(); await tick();
+  assert.deepEqual(snapshotTabs, [222], "releasing the obsolete lookup triggers no acquisition for A");
+  assert.doesNotMatch(panel.$("targetList").textContent, /Field A/);
+  assert.match(panel.$("targetList").textContent, /Field B/);
+  assert.equal(panel.$("confirmBox").hidden, true, "A's confirmation cannot populate the panel");
+  assert.equal(panel.calls.execute, 0);
+  assert.equal(panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_SHOW_TAGS" || c.msg.type === "SEEYABLE_HIDE_TAGS").length, 0);
+});
+
+test("auto: an unavailable tab is reported once, binds nothing, and is not retried", async () => {
+  let snapshotCalls = 0;
+  const panel = makePanel(async (_t, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") { snapshotCalls += 1; throw new Error("Cannot access contents of the page"); }
+    throw new Error("unexpected " + msg.type);
+  });
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(snapshotCalls, 1, "one honest attempt, no retry loop");
+  assert.match(panel.$("status").textContent, /DOM snapshot failed/, "the failure is reported, not hidden");
+  assert.equal(panel.$("targetSelect").options.length, 1, "nothing binds, so nothing is executable");
+  assert.equal(panel.$("btnExecute").disabled, true);
+  assert.equal(panel.calls.execute, 0);
   panel.dom.window.close();
 });
 

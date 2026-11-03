@@ -20,8 +20,11 @@ function makeWorld() {
   const store = {};
   const world = {
     sessionGetImpl: async () => ({ ...store }),
+    tabsGetImpl: null,
+    sendMessageImpl: null,
     tabsCalls: [],
     sentMessages: [],
+    runtimeMessages: [],
     now: Date.now(),
   };
   const RealDate = Date;
@@ -63,13 +66,22 @@ function makeWorld() {
         },
       },
       tabs: {
-        get: async (id) => { world.tabsCalls.push(["get", id]); if (id !== 7) throw new Error("No tab"); return { id }; },
+        get: async (id) => {
+          world.tabsCalls.push(["get", id]);
+          if (world.tabsGetImpl) return world.tabsGetImpl(id);
+          if (id !== 7) throw new Error("No tab");
+          return { id };
+        },
         query: async () => [{ id: 7, title: "Demo", url: "http://x/" }],
         sendMessage: async (tabId, msg) => {
           world.tabsCalls.push(["send", tabId, msg]);
           world.sentMessages.push(msg);
+          if (world.sendMessageImpl) return world.sendMessageImpl(tabId, msg);
           return { ok: true, snapshot: { kind: "dom-aria" } };
         },
+      },
+      runtime: {
+        sendMessage: async (msg) => { world.runtimeMessages.push(msg); return {}; },
       },
     },
   };
@@ -333,6 +345,125 @@ test("bridge-client: restore runs once per lifetime and Disconnect wins over it"
   await flush();
   assert.equal(t2.sockets.length, 0, "explicit Disconnect overrides a pending restore");
   assert.equal(t2.api.status().wanted, false);
+});
+
+async function pairedWorld() {
+  const t = makeWorld();
+  t.store.bridgeToken = "tok";
+  await t.api.connect({ token: "tok", port: 6123 });
+  await flush();
+  const sock = t.sockets[0];
+  sock.readyState = 1;
+  sock.emit("open");
+  sock.emit("message", { data: JSON.stringify({ type: "auth_ok" }) });
+  await flush();
+  return { t, sock };
+}
+const responseFrames = (sock) => sock.sent.map((s) => JSON.parse(s)).filter((m) => m.type === "response");
+
+test("bridge-client: execute reaches the shared executor as mcp; a hold hints the panel", async () => {
+  const { t, sock } = await pairedWorld();
+  t.world.sendMessageImpl = async () => ({
+    ok: false,
+    error: { code: "CONFIRMATION_REQUIRED", message: "Held." },
+    confirmation: { challengeId: "ch-1", action: "click", elementId: "el-1" },
+    newSnapshotDiff: null, documentSessionId: "doc-A", revision: 1,
+  });
+  sock.emit("message", { data: JSON.stringify({ type: "request", id: "e1", op: "execute", tabId: 7, params: { action: "click", elementId: "el-1", documentSessionId: "doc-A", revision: 1 } }) });
+  await flush();
+  assert.equal(t.world.sentMessages.length, 1);
+  const forwarded = t.world.sentMessages[0];
+  assert.equal(forwarded.type, "SEEYABLE_EXECUTE_ACTION");
+  assert.equal(forwarded.request.source, "mcp", "audit source is set in trusted extension code");
+  assert.equal(forwarded.request.action, "click");
+  assert.ok(!("confirmed" in forwarded.request) && !("challengeId" in forwarded.request) && !("token" in forwarded.request), "no approval-shaped fields cross");
+  const responses = responseFrames(sock);
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].ok, true, "the executor response is the bridge payload");
+  assert.equal(responses[0].payload.error.code, "CONFIRMATION_REQUIRED");
+  assert.deepEqual(JSON.parse(JSON.stringify(t.world.runtimeMessages)), [{ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId: 7 }], "panel gets an unauthoritative hint only");
+});
+
+test("bridge-client: duplicate request frame dispatches exactly once", async () => {
+  const { t, sock } = await pairedWorld();
+  let executions = 0;
+  t.world.sendMessageImpl = async () => { executions += 1; return { ok: true, result: { verified: true }, documentSessionId: "doc-A", revision: 2 }; };
+  const frame = JSON.stringify({ type: "request", id: "dup-1", op: "execute", tabId: 7, params: { action: "fill", elementId: "el-1", documentSessionId: "doc-A", revision: 1, value: "Ada" } });
+  sock.emit("message", { data: frame });
+  sock.emit("message", { data: frame });
+  await flush();
+  assert.equal(executions, 1, "the same request id never dispatches twice");
+  assert.equal(responseFrames(sock).length, 1);
+});
+
+test("bridge-client: malformed execute params are rejected before touching the tab", async () => {
+  const { t, sock } = await pairedWorld();
+  sock.emit("message", { data: JSON.stringify({ type: "request", id: "bad-1", op: "execute", tabId: 7, params: { action: "click", elementId: "not-an-id", documentSessionId: "doc-A", revision: 1 } }) });
+  sock.emit("message", { data: JSON.stringify({ type: "request", id: "bad-2", op: "execute", tabId: 7, params: { action: "click", elementId: "el-1", documentSessionId: "doc-A", revision: 1, approved: true } }) });
+  await flush();
+  assert.deepEqual(t.world.sentMessages, [], "invalid params never reach the page");
+  const responses = responseFrames(sock);
+  assert.equal(responses.length, 2);
+  assert.ok(responses.every((r) => r.ok === false && r.error.code === "INVALID_REQUEST"));
+});
+
+test("bridge-client: a superseded connection performs no mutation after tab lookup", async () => {
+  const { t, sock } = await pairedWorld();
+  let releaseGet;
+  t.world.tabsGetImpl = () => new Promise((res) => { releaseGet = () => res({ id: 7 }); });
+  sock.emit("message", { data: JSON.stringify({ type: "request", id: "own-1", op: "execute", tabId: 7, params: { action: "fill", elementId: "el-1", documentSessionId: "doc-A", revision: 1, value: "Ada" } }) });
+  await flush();
+  await t.api.disconnect(); // ownership moves on while the tab lookup is held
+  releaseGet();
+  await flush();
+  assert.deepEqual(t.world.sentMessages, [], "nothing is forwarded once the connection is superseded");
+});
+
+test("bridge-client: expired frames never forward; expiry during lookup kills the mutation", async () => {
+  const { t, sock } = await pairedWorld();
+  const execFrame = (id, expiresAt) => JSON.stringify({
+    type: "request", id, op: "execute", tabId: 7,
+    params: { action: "click", elementId: "el-1", documentSessionId: "doc-A", revision: 1 },
+    expiresAt,
+  });
+  // Already expired on arrival.
+  sock.emit("message", { data: execFrame("exp-1", 1) });
+  await flush();
+  assert.deepEqual(t.world.sentMessages, [], "an expired frame never reaches the page");
+  assert.equal(responseFrames(sock)[0].error.code, "REQUEST_EXPIRED");
+
+  // Live on arrival, expires while the tab lookup is held (the exact
+  // reviewer reproduction shape: connection stays current throughout).
+  let release;
+  t.world.tabsGetImpl = () => new Promise((r) => { release = () => r({ id: 7 }); });
+  sock.emit("message", { data: execFrame("exp-2", new Date().getTime() + 30) });
+  await flush();
+  await new Promise((r) => setTimeout(r, 60)); // real time passes the deadline
+  release();
+  await flush();
+  assert.deepEqual(t.world.sentMessages, [], "expiry during the pre-dispatch wait still forwards nothing");
+
+  // A live frame forwards and carries its deadline into the executor.
+  t.world.tabsGetImpl = null;
+  let forwarded = null;
+  t.world.sendMessageImpl = async (_tab, msg) => { forwarded = msg; return { ok: true, result: { verified: true }, documentSessionId: "doc-A", revision: 2 }; };
+  const deadline = new Date().getTime() + 60000;
+  sock.emit("message", { data: execFrame("exp-3", deadline) });
+  await flush();
+  assert.equal(forwarded.type, "SEEYABLE_EXECUTE_ACTION");
+  assert.equal(forwarded.request.deadline, deadline, "the executor re-checks the same deadline at dispatch");
+});
+
+test("bridge-client: read_section forwards bounded params and returns the section", async () => {
+  const { t, sock } = await pairedWorld();
+  const section = { elementId: "el-1", heading: "Form", text: "Hello", truncated: false, charCount: 5, documentSessionId: "doc-A", revision: 1 };
+  t.world.sendMessageImpl = async () => ({ ok: true, section });
+  sock.emit("message", { data: JSON.stringify({ type: "request", id: "rs-1", op: "read_section", tabId: 7, params: { elementId: "el-1", documentSessionId: "doc-A", revision: 1, maxChars: 500 } }) });
+  await flush();
+  assert.equal(t.world.sentMessages[0].type, "SEEYABLE_READ_SECTION");
+  assert.equal(t.world.sentMessages[0].maxChars, 500);
+  const responses = responseFrames(sock);
+  assert.deepEqual(responses[0].payload, section);
 });
 
 test("bridge-client: fired reconnect timer from a superseded generation does nothing", async () => {

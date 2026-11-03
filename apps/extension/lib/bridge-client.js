@@ -17,6 +17,18 @@
  *  - tabs      -> [{ tabId, title, url }] via chrome.tabs.query
  *  - snapshot  -> SEEYABLE_SNAPSHOT_DOM to that tab (real engine output)
  *  - highlight -> SEEYABLE_HIGHLIGHT_ID to that tab (guarded route)
+ *  - execute   -> SEEYABLE_EXECUTE_ACTION to that tab (the ONE shared
+ *                 executor; source is set to "mcp" HERE, in trusted
+ *                 extension code — the MCP caller cannot choose it, and
+ *                 no approval-shaped field is ever forwarded)
+ *  - read_section -> SEEYABLE_READ_SECTION (bounded, read-only)
+ *
+ * Duplicate request frames (same id) are answered once: the first
+ * handling owns the id and any repeat is dropped, so a mutation can
+ * never dispatch twice from duplicate delivery. Ownership (socket
+ * identity + connection generation) is rechecked after every await
+ * and immediately before forwarding a mutation: a superseded socket
+ * performs no page work.
  *
  * Service-worker lifecycle: a suspended worker drops the socket and the
  * server fails pending requests without replay. On wake (startup,
@@ -52,6 +64,9 @@ const __seeyableBridge = {
   // superseded attempt can never open a socket, claim ownership, clear a
   // newer connection, or schedule an unwanted reconnect.
   generation: 0,
+  // Request ids already owned by a handler (in-flight or answered).
+  // Bounded; duplicates are dropped so nothing dispatches twice.
+  seenRequestIds: new Map(),
 };
 
 function __bridgeLog(...args) {
@@ -145,28 +160,82 @@ function __bridgeClassifyHighlightError(text) {
   return "HIGHLIGHT_FAILED";
 }
 
-async function __bridgeHandleRequest(ws, msg) {
+function __bridgeValidTargetParams(p, needsValue) {
+  if (!p || typeof p !== "object") return "params are required.";
+  if (typeof p.elementId !== "string" || !/^el-[0-9]+$/.test(p.elementId)) return "elementId must be a snapshot id like el-12.";
+  if (typeof p.documentSessionId !== "string" || !p.documentSessionId) return "documentSessionId from a snapshot is required.";
+  if (!Number.isInteger(p.revision)) return "revision from a snapshot is required.";
+  for (const key of Object.keys(p)) {
+    if (!["elementId", "documentSessionId", "revision", "action", "value", "maxChars"].includes(key)) {
+      return `Unknown bridge param: ${key}.`;
+    }
+  }
+  if (needsValue === "action") {
+    if (!["click", "fill", "select"].includes(p.action)) return "action must be click, fill, or select.";
+    if ((p.action === "fill" || p.action === "select") && typeof p.value !== "string") return `${p.action} needs a string value.`;
+    if (p.action === "click" && p.value !== undefined) return "click takes no value.";
+  }
+  if (needsValue === "read" && p.maxChars !== undefined && !Number.isInteger(p.maxChars)) return "maxChars must be an integer.";
+  return null;
+}
+
+// A held MCP action must surface in the panel's existing confirmation
+// card. The runtime message is only a HINT (tab id, no authority): the
+// panel re-fetches the authoritative pending challenge from the content
+// script over its trusted route before showing anything.
+function __bridgeNotifyPanelOfHold(tabId) {
+  try {
+    if (typeof chrome === "undefined" || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") return;
+    const sent = chrome.runtime.sendMessage({ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId });
+    if (sent && typeof sent.catch === "function") sent.catch(() => {});
+  } catch { /* no panel listening: the hold still waits in the executor */ }
+}
+
+async function __bridgeHandleRequest(ws, msg, isCurrent) {
   const { id, op, tabId, params } = msg;
+  const ownsWork = () => typeof isCurrent !== "function" || isCurrent();
+  // The server's bounded request validity (Issue #19): a frame whose
+  // deadline has passed must not be forwarded — the caller has already
+  // seen TIMEOUT, and dispatching now would mutate without an owner.
+  // The later of the two wall-clock reads is used so a clock moved
+  // forward by the embedding environment is honored too.
+  const expiresAt = Number.isFinite(msg.expiresAt) ? msg.expiresAt : null;
+  const expired = () => expiresAt !== null && Math.max(Date.now(), new Date().getTime()) >= expiresAt;
   if (op === "tabs") {
     try {
       const tabs = await chrome.tabs.query({});
+      if (!ownsWork()) return;
       __bridgeSendOk(ws, id, tabs.map((t) => ({ tabId: t.id, title: t.title || null, url: t.url || null })));
     } catch (err) {
       __bridgeSendError(ws, id, "TABS_FAILED", `Could not list tabs: ${err.message || err}`);
     }
     return;
   }
-  if (op === "snapshot" || op === "highlight") {
+  if (op === "snapshot" || op === "highlight" || op === "execute" || op === "read_section") {
+    const p = params || {};
+    const invalid = op === "execute" ? __bridgeValidTargetParams(p, "action")
+      : op === "read_section" ? __bridgeValidTargetParams(p, "read")
+      : op === "highlight" ? __bridgeValidTargetParams(p, false)
+      : null; // snapshot needs no target params
+    if (invalid) { __bridgeSendError(ws, id, "INVALID_REQUEST", invalid); return; }
     const checked = await __bridgeCheckTab(tabId);
     if (checked.error) { __bridgeSendError(ws, id, checked.error.code, checked.error.message); return; }
+    // Ownership is rechecked after the tab lookup and immediately
+    // before forwarding: a superseded connection performs no page work,
+    // least of all a mutation.
+    if (!ownsWork()) { __bridgeLog(`dropped ${op} for superseded connection before dispatch`); return; }
+    if (expired()) {
+      __bridgeLog(`dropped ${op} request ${id}: deadline expired before forwarding`);
+      __bridgeSendError(ws, id, "REQUEST_EXPIRED", "The request deadline expired before it could be forwarded; nothing was dispatched.");
+      return;
+    }
     try {
       let res;
       if (op === "snapshot") {
         res = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_SNAPSHOT_DOM" });
         if (!res || !res.ok) throw new Error((res && res.error) || "Empty snapshot response.");
         __bridgeSendOk(ws, id, res.snapshot);
-      } else {
-        const p = params || {};
+      } else if (op === "highlight") {
         res = await chrome.tabs.sendMessage(tabId, {
           type: "SEEYABLE_HIGHLIGHT_ID",
           elementId: p.elementId, documentSessionId: p.documentSessionId, revision: p.revision,
@@ -177,6 +246,41 @@ async function __bridgeHandleRequest(ws, msg) {
           return;
         }
         __bridgeSendOk(ws, id, { highlighted: res.highlighted });
+      } else if (op === "execute") {
+        // The ONE shared executor. Only these fields cross; approval-shaped
+        // fields are dropped by construction, and the audit source is set
+        // here — never by the MCP caller.
+        res = await chrome.tabs.sendMessage(tabId, {
+          type: "SEEYABLE_EXECUTE_ACTION",
+          request: {
+            action: p.action,
+            elementId: p.elementId,
+            documentSessionId: p.documentSessionId,
+            revision: p.revision,
+            value: p.action === "click" ? undefined : p.value,
+            source: "mcp",
+            // The same deadline is re-checked inside the executor,
+            // after its asynchronous waits, at the dispatch boundary.
+            ...(expiresAt !== null ? { deadline: expiresAt } : {}),
+          },
+        });
+        if (!res || typeof res.ok !== "boolean") throw new Error("Empty executor response.");
+        if (!res.ok && res.error && res.error.code === "CONFIRMATION_REQUIRED" && res.confirmation) {
+          __bridgeNotifyPanelOfHold(tabId);
+        }
+        __bridgeSendOk(ws, id, res);
+      } else {
+        res = await chrome.tabs.sendMessage(tabId, {
+          type: "SEEYABLE_READ_SECTION",
+          elementId: p.elementId, documentSessionId: p.documentSessionId, revision: p.revision,
+          maxChars: p.maxChars,
+        });
+        if (!res || !res.ok) {
+          const e = res && res.error && typeof res.error === "object" ? res.error : null;
+          __bridgeSendError(ws, id, e ? e.code || "READ_SECTION_FAILED" : "READ_SECTION_FAILED", e ? e.message || "Section read failed." : String((res && res.error) || "Empty section response."));
+          return;
+        }
+        __bridgeSendOk(ws, id, res.section);
       }
     } catch (err) {
       const text = String(err && err.message ? err.message : err);
@@ -189,6 +293,21 @@ async function __bridgeHandleRequest(ws, msg) {
     return;
   }
   __bridgeSendError(ws, id, "INVALID_REQUEST", `Unknown bridge op ${JSON.stringify(op)}.`);
+}
+
+function __bridgeOwnRequest(id) {
+  const seen = __seeyableBridge.seenRequestIds;
+  if (seen.has(id)) return false;
+  seen.set(id, Date.now());
+  if (seen.size > 200) {
+    // Bounded: forget the oldest ids. Server request ids are unique per
+    // call, so forgetting an answered id cannot cause a replay.
+    for (const key of seen.keys()) {
+      if (seen.size <= 200) break;
+      seen.delete(key);
+    }
+  }
+  return true;
 }
 
 async function __seeyableBridgeConnectInner() {
@@ -242,8 +361,12 @@ async function __seeyableBridgeConnectInner() {
     }
     if (!__seeyableBridge.authed) return; // no requests before pairing is confirmed
     if (msg.type === "request" && typeof msg.id === "string") {
+      if (!__bridgeOwnRequest(msg.id)) {
+        __bridgeLog(`dropped duplicate request frame ${msg.id} (already owned; nothing re-dispatched)`);
+        return;
+      }
       __bridgeLog(`request ${msg.id} op=${msg.op} tab=${msg.tabId}`);
-      __bridgeHandleRequest(socket, msg);
+      __bridgeHandleRequest(socket, msg, isCurrent);
       return;
     }
     __bridgeLog(`ignored unexpected frame: ${msg.type}`);

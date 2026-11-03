@@ -13,6 +13,10 @@
  *  - The Origin header must look like a chrome-extension:// page. This is
  *    defense-in-depth only, not authentication: the token is the auth.
  *  - One extension connection at a time; extras are refused.
+ *  - Optional shared-bridge peers (local MCP stdio processes, see
+ *    shared-bridge.mjs) use a separate path and must NOT carry an Origin
+ *    header (browsers always send one, so no webpage can take the peer
+ *    role); they authenticate there with an HMAC proof of the same token.
  *
  * Protocol (JSON text frames):
  *  ext -> srv  {"type":"auth","token":"..."}            first frame, then
@@ -60,17 +64,26 @@ export class BridgeError extends Error {
  * @param {string} [opts.token] - pairing token; generated when omitted.
  * @param {number} [opts.requestTimeoutMs]
  * @param {(...args) => void} [opts.log] - diagnostics sink (stderr in prod).
+ * @param {(ws, req) => void} [opts.onPeerConnection] - shared-bridge peer
+ *   handler for connections on opts.peerPath (no Origin header allowed).
+ * @param {string} [opts.peerPath]
+ * @param {(connected: boolean) => void} [opts.onExtensionChange]
  */
 export function createBridge(opts = {}) {
   const port = opts.port ?? DEFAULT_PORT;
   const token = opts.token ?? generatePairingToken();
   const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const log = opts.log ?? (() => {});
+  const onExtensionChange = opts.onExtensionChange ?? (() => {});
   const httpServer = createServer((_req, res) => {
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("seeyable bridge: websocket only\n");
   });
   const wss = new WebSocketServer({ server: httpServer, maxPayload: 16 * 1024 * 1024 });
+  // ws re-emits http server errors (e.g. EADDRINUSE) on the
+  // WebSocketServer; without a listener that became an unhandled 'error'
+  // that killed the process even though start() rejects with it.
+  wss.on("error", (err) => log(`[bridge] server error: ${err && err.code ? err.code : err}`));
 
   let client = null; // the one authenticated extension socket
   let seq = 0;
@@ -92,12 +105,22 @@ export function createBridge(opts = {}) {
       client = null;
       log(`[bridge] extension detached (${reason}); failing ${pending.size} pending request(s), no replay`);
       failPending(new BridgeError("NO_EXTENSION", `Extension disconnected (${reason}). Reconnect and retry; nothing was replayed.`));
+      try { onExtensionChange(false); } catch {}
     }
   }
 
   wss.on("connection", (ws, req) => {
     sockets.add(ws);
     ws.on("close", () => sockets.delete(ws));
+    if (opts.onPeerConnection && opts.peerPath && String(req.url || "").split("?")[0] === opts.peerPath) {
+      if (req.headers.origin !== undefined) {
+        log("[bridge] refused peer connection carrying an Origin header");
+        ws.close(4403, "peer role is not available to web origins");
+        return;
+      }
+      opts.onPeerConnection(ws, req);
+      return;
+    }
     const origin = String(req.headers.origin || "");
     if (!origin.startsWith("chrome-extension://")) {
       log(`[bridge] refused connection with non-extension origin ${JSON.stringify(origin.slice(0, 80))}`);
@@ -134,6 +157,7 @@ export function createBridge(opts = {}) {
           client = ws;
           log("[bridge] extension authenticated");
           ws.send(JSON.stringify({ type: "auth_ok" }));
+          try { onExtensionChange(true); } catch {}
         } else {
           clearTimeout(authTimer);
           log("[bridge] rejected wrong or missing pairing token");
@@ -199,20 +223,37 @@ export function createBridge(opts = {}) {
     /**
      * Send one request to the connected extension and await its response.
      * Never retries; callers decide whether a retry is safe.
+     *
+     * opts.expiresAt is an upstream deadline supplied by trusted
+     * transport code (the shared-bridge hub passes the one its peer set
+     * at issue time). It can only SHORTEN this side's own validity,
+     * never extend it; an already-expired request is refused unsent.
      */
-    request(op, tabId, params = {}) {
+    request(op, tabId, params = {}, opts = {}) {
       return new Promise((resolve, reject) => {
         if (!client || client.readyState !== 1) {
           reject(new BridgeError("NO_EXTENSION", "No extension is connected. Pair the extension, then retry."));
           return;
         }
-        const id = `r${Date.now().toString(36)}-${++seq}`;
+        const now = Date.now();
+        const upstream = Number.isFinite(opts.expiresAt) ? opts.expiresAt : Infinity;
+        // Bounded request validity travels with the frame: the extension
+        // enforces expiresAt before forwarding and the executor
+        // re-checks it at its final dispatch boundary, so a request
+        // this side has already timed out can never mutate the page
+        // afterwards.
+        const expiresAt = Math.min(now + requestTimeoutMs, upstream);
+        if (expiresAt <= now) {
+          reject(new BridgeError("REQUEST_EXPIRED", "The request deadline expired before it reached the extension; nothing was dispatched."));
+          return;
+        }
+        const id = `r${now.toString(36)}-${++seq}`;
         const timer = setTimeout(() => {
           pending.delete(id);
-          reject(new BridgeError("TIMEOUT", `Extension did not answer ${op} within ${requestTimeoutMs} ms.`));
-        }, requestTimeoutMs);
+          reject(new BridgeError("TIMEOUT", `Extension did not answer ${op} before its deadline (${expiresAt - now} ms).`));
+        }, expiresAt - now);
         pending.set(id, { resolve, reject, timer, op });
-        client.send(JSON.stringify({ type: "request", id, op, tabId, params }), (err) => {
+        client.send(JSON.stringify({ type: "request", id, op, tabId, params, expiresAt }), (err) => {
           if (err) {
             clearTimeout(timer);
             pending.delete(id);

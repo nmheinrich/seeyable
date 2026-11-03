@@ -7,6 +7,19 @@ disconnected until re-pairing, and old-document targets are rejected after
 reload while a fresh snapshot restores valid highlighting. Thin slice only,
 not the full MCP toolset.
 
+> Issue #19 builds the full six-tool MCP server on this transport —
+> see `docs/features/feature-19-mcp-server.md`. Everything here
+> remains the transport/pairing/lifecycle reference.
+>
+> **Listener ownership changed (2026-11-02, cross-chat fix).** The stdio
+> server no longer binds the bridge port itself: one shared, detached
+> bridge process per port (`bridge-daemon.mjs`) owns 127.0.0.1:6123 and
+> the extension pairing, and every stdio process joins it as an
+> HMAC-authenticated peer. The extension side, its protocol, pairing
+> rules, heartbeat, and no-replay behaviour below are unchanged. Token
+> handling and cleanup changed as noted in this file; the full design is
+> in feature-19 under "Shared bridge (cross-chat lifecycle)".
+
 ## Project-manager headed evidence — 2026-10-30
 
 Using native Chrome UI automation against the actual Inspector GUI, the
@@ -60,7 +73,10 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory apps
 ```
 
 For repeatable local runs the token can be fixed with
-`SEEYABLE_BRIDGE_TOKEN=<hex>`; otherwise it is generated per start.
+`SEEYABLE_BRIDGE_TOKEN=<hex>`; otherwise it is generated once into
+`~/.seeyable/bridge-<port>.token` (0600) and reused by every stdio
+process and bridge restart, so the extension stays paired across
+chats (superseding the earlier "generated per start").
 Tokens are never committed and never sent to webpages. The one
 startup display is the deliberate pairing step, not logging: after
 that, the token never appears in diagnostics on either side (the
@@ -189,12 +205,18 @@ pairing-UI regression).
 | Unknown/stale target | `UNKNOWN_TARGET` / `STALE_TARGET` / `WRONG_SESSION` from the content script's own validation |
 | Slow extension | `TIMEOUT` after 15 s; late answers dropped |
 | Disconnect mid-request | Pending fails as `NO_EXTENSION`; reconnect replays nothing |
+| Port held by a non-Seeyable service or older server (2026-11-02) | MCP still initializes; tools return `PORT_CONFLICT`; nothing sent; owner untouched |
+| Peer request reaches the shared bridge after its issue-time deadline (2026-11-02) | `REQUEST_EXPIRED`, not forwarded; the caller already saw `TIMEOUT` (`outcome_unknown` for mutations) |
+| Shared bridge process dies (2026-11-02) | Pending fails as `BRIDGE_UNAVAILABLE` (`outcome_unknown` for mutations); a peer restarts it; extension re-pairs; nothing replayed |
 
 ## Cleanup and reconnection
 
-Disconnect in the panel (discards the token), or just stop the
-server (`SIGINT` closes the bridge cleanly). To reconnect, restart
-the server and pair again with the fresh token. No state survives on
+Disconnect in the panel (discards the token). Stopping one stdio
+server now leaves the shared bridge running for other chats; the
+bridge exits after 5 minutes with no MCP peers, or on `SIGTERM`
+(`pkill -f bridge-daemon.mjs`). A restarted bridge uses the same token,
+so the extension re-pairs on its own; rotate by deleting the token
+file (or changing `SEEYABLE_BRIDGE_TOKEN`) and pairing again. No state survives on
 either side: the server keeps no sessions and the extension keeps no
 queued work.
 
@@ -204,7 +226,7 @@ queued work.
   verified above; the Product Owner confirmed the final explicit-disconnect/
   re-pair and stale-target/fresh-snapshot recovery checks passed. The CLI's per-invocation
   server lifecycle makes CLI-driven extension calls racy.
-- Single extension connection; fixed loopback port per server run
+- Single extension connection; one shared bridge per loopback port
   (host permission is port-specific).
 - No executor tools yet. When they come, they must reuse
   `SEEYABLE_EXECUTE_ACTION` and the Feature #11 confirmation flow;

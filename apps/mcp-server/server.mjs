@@ -1,24 +1,40 @@
 #!/usr/bin/env node
 "use strict";
 /*
- * Issue #28 spike: local stdio MCP server for Seeyable.
+ * Seeyable local MCP server (Issue #28 transport; Issue #19 full toolset).
  *
- * Flow: MCP Inspector -> stdio JSON-RPC here -> loopback WebSocket bridge
+ * Flow: MCP client -> stdio JSON-RPC here -> loopback WebSocket bridge
  * -> extension service worker -> chrome.tabs.sendMessage -> the existing
- * content-script interfaces (snapshot engine, overlay highlight).
+ * content-script interfaces (snapshot engine, overlay highlight, the ONE
+ * shared executor, bounded section reading). No planner proxy or
+ * MODEL_API_KEY is involved: the MCP client supplies the intelligence,
+ * Seeyable supplies page information and guarded actions.
+ *
+ * Shared bridge (cross-chat fix): MCP desktop clients start one stdio
+ * process per chat (and short-lived ones for tool discovery). This
+ * process no longer binds the bridge port itself. It answers MCP
+ * `initialize` first, then joins the ONE shared, authenticated loopback
+ * bridge process for the port (lib/shared-bridge.mjs), starting it
+ * detached if nothing is listening. Closing this process never closes
+ * the bridge or another chat's session. If the port is held by anything
+ * that cannot prove the pairing token, tools report PORT_CONFLICT and
+ * nothing is sent to it.
  *
  * stdout is reserved for MCP protocol traffic (the SDK owns it).
- * All diagnostics go to stderr. The pairing token is printed once at
- * startup so the operator can paste it into the extension's Developer
- * view; it is never logged again and never sent to webpages.
+ * All diagnostics go to stderr. A newly generated pairing token is
+ * printed once so the operator can paste it into the extension's
+ * Developer view; it is never logged again and never sent to webpages.
  *
  * Usage: node server.mjs [--port 6123]
- *   SEEYABLE_BRIDGE_TOKEN=... overrides the generated token (local dev).
+ *   SEEYABLE_BRIDGE_TOKEN=... sets the token (otherwise one is kept in
+ *   ~/.seeyable/bridge-<port>.token, mode 0600; SEEYABLE_STATE_DIR moves it).
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import { createBridge, DEFAULT_PORT, LOOPBACK_HOST, BridgeError } from "./lib/bridge.mjs";
+import { DEFAULT_PORT, LOOPBACK_HOST, BridgeError } from "./lib/bridge.mjs";
+import { createPeerClient } from "./lib/shared-bridge.mjs";
+import { resolveToken, spawnHubProcess } from "./lib/hub-launch.mjs";
+import { toolHandlers } from "./lib/tools.mjs";
 
 const errlog = (...args) => console.error(...args);
 
@@ -30,75 +46,86 @@ function parsePort(argv) {
   return p;
 }
 
-function toolText(payload) {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-}
 function toolError(err) {
   const code = err instanceof BridgeError ? err.code : "INTERNAL_ERROR";
   return { content: [{ type: "text", text: `${code}: ${err && err.message ? err.message : err}` }], isError: true };
 }
 
+function unavailableBridge(err) {
+  const why = { code: "PAIRING_UNAVAILABLE", message: `Pairing token unavailable: ${err && err.message ? err.message : err}` };
+  return {
+    isConnected: () => false,
+    lastError: () => why,
+    ensure: async () => false,
+    request: async () => { throw new BridgeError(why.code, `${why.message} Nothing was sent.`); },
+    close: async () => {},
+  };
+}
+
 async function main() {
   const port = parsePort(process.argv.slice(2));
-  const token = process.env.SEEYABLE_BRIDGE_TOKEN || undefined; // undefined => generated
-  const bridge = createBridge({ port, token, log: errlog });
-  await bridge.start();
+  let pairing = null;
+  let pairingError = null;
+  try { pairing = resolveToken({ port }); } catch (err) { pairingError = err; }
+  const { token, source, path } = pairing || {};
+  // An unusable token file must not stop MCP initialize: tools then
+  // report PAIRING_UNAVAILABLE and no bridge connection is attempted.
+  const bridge = pairing ? createPeerClient({
+    port, token, log: errlog,
+    spawnHub: () => spawnHubProcess({ port, token, log: errlog }),
+  }) : unavailableBridge(pairingError);
 
-  // Pairing instructions for the local operator. This is the only place
-  // the token is ever printed; per-connection code never logs it.
-  errlog(`[seeyable-mcp] bridge on ${LOOPBACK_HOST}:${port} (loopback only)`);
-  errlog(`[seeyable-mcp] pairing token (paste into the extension Developer view, MCP bridge section):`);
-  errlog(bridge.token);
+  // Pairing instructions for the local operator. Only a token generated
+  // just now is printed; existing tokens are referenced, not repeated.
+  errlog(`[seeyable-mcp] shared bridge port ${LOOPBACK_HOST}:${port} (loopback only)`);
+  if (source === "generated") {
+    errlog(`[seeyable-mcp] new pairing token (paste into the extension Developer view, MCP bridge section; also kept in ${path}):`);
+    errlog(token);
+  } else if (source === "file") {
+    errlog(`[seeyable-mcp] using the existing pairing token in ${path}`);
+  } else if (source === "env") {
+    errlog("[seeyable-mcp] using the pairing token from SEEYABLE_BRIDGE_TOKEN");
+  } else {
+    errlog(`[seeyable-mcp] pairing token unavailable: ${pairingError && pairingError.message}`);
+  }
 
-  const server = new McpServer({ name: "seeyable", version: "0.1.0-spike" });
+  const server = new McpServer({ name: "seeyable", version: "0.2.0" });
 
-  server.registerTool("list_tabs", {
-    description: "List open browser tabs (id, title, URL) so the caller can pick an explicit tabId. Never guesses a tab.",
-    inputSchema: {},
-  }, async () => {
-    try {
-      const tabs = await bridge.request("tabs", null);
-      return toolText({ tabs });
-    } catch (err) { return toolError(err); }
-  });
+  // Tool contracts live in lib/tools.mjs (strict schemas, outcome
+  // mapping). Registration is a thin loop; handlers return both text
+  // and structuredContent so SDK clients get either form.
+  for (const def of toolHandlers(bridge)) {
+    server.registerTool(def.name, {
+      description: def.description,
+      inputSchema: def.inputSchema,
+    }, async (args) => {
+      try {
+        return await def.handler(args || {});
+      } catch (err) { return toolError(err); }
+    });
+  }
 
-  server.registerTool("page_snapshot", {
-    description: "Return the production DOM/ARIA snapshot (schema v2, redacted) from the explicitly chosen tab. No canned data.",
-    inputSchema: { tabId: z.number().int().describe("Tab id from list_tabs. Required; no active-tab fallback.") },
-  }, async ({ tabId }) => {
-    try {
-      const snapshot = await bridge.request("snapshot", tabId);
-      return toolText(snapshot);
-    } catch (err) { return toolError(err); }
-  });
-
-  server.registerTool("highlight_target", {
-    description: "Highlight one snapshot target by its stable id on the explicitly chosen tab (scrolls into view, draws the ring). Read-only: no clicks, fills, or executor actions.",
-    inputSchema: {
-      tabId: z.number().int().describe("Tab id from list_tabs."),
-      elementId: z.string().describe("Stable snapshot id, e.g. el-12."),
-      documentSessionId: z.string().describe("documentSessionId from the snapshot this id belongs to."),
-      revision: z.number().int().describe("Snapshot revision this id belongs to."),
-    },
-  }, async ({ tabId, elementId, documentSessionId, revision }) => {
-    try {
-      const result = await bridge.request("highlight", tabId, { elementId, documentSessionId, revision });
-      return toolText(result);
-    } catch (err) { return toolError(err); }
-  });
-
+  // Answer MCP initialize before touching the bridge: a busy or broken
+  // port must never prevent this chat's session from starting.
   const transport = new StdioServerTransport();
   await server.connect(transport);
   errlog("[seeyable-mcp] stdio transport connected; stdout reserved for MCP traffic");
+  bridge.ensure().catch((err) => errlog(`[seeyable-mcp] bridge join failed: ${err && err.message ? err.message : err}`));
 
-  const shutdown = async () => {
-    errlog("[seeyable-mcp] shutting down");
+  let stopping = false;
+  const shutdown = async (why) => {
+    if (stopping) return;
+    stopping = true;
+    errlog(`[seeyable-mcp] shutting down (${why}); the shared bridge stays up for other chats`);
     try { await transport.close(); } catch {}
     try { await bridge.close(); } catch {}
     process.exit(0);
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  // The MCP client closing our stdin ends this session; the open bridge
+  // socket must not keep an orphaned process alive.
+  process.stdin.on("end", () => shutdown("stdin closed"));
+  process.stdin.on("close", () => shutdown("stdin closed"));
 }
-
 main().catch((err) => { errlog(`[seeyable-mcp] fatal: ${err && err.message ? err.message : err}`); process.exit(1); });

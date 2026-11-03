@@ -465,6 +465,10 @@ function bindSnapshot(tabId, snapshot, viaContentScript) {
   populateTargets(snapshot, preserveId);
   renderPageLine();
   if (selectedTargetId() !== preserveId) $("valueInput").value = "";
+  // A hold placed by the MCP tools while the panel was elsewhere is
+  // picked up when this tab's snapshot binds. Deferred one microtask so
+  // the acquiring lock that wraps binding has cleared first.
+  queueMicrotask(() => { void adoptPendingConfirmation(tabId); });
 }
 
 // Page identity from data already in hand (no new permissions): the
@@ -516,43 +520,106 @@ function invalidateExecution(reason) {
   updateExecuteEnabled();
 }
 
-async function takeSnapshot(originLabel) {
-  if (state.pending || state.acquiring || commandPending) return; // mutually exclusive with execution/acquisition/commands; no queue
+/* --- Automatic snapshot acquisition (panel open / tab activation) ---------
+ * Opening the panel or switching the active tab automatically binds a
+ * fresh production snapshot for that tab, after which the existing
+ * bind path discovers any authoritative pending confirmation. This is
+ * read-only: it never reloads the page, toggles overlays, calls the
+ * model, replays an action, or approves anything, and it preserves tag
+ * visibility exactly. Only the LATEST tab intent is retained while an
+ * operation owns the panel; lock-release drains revalidate ownership
+ * before acquiring. Failures are reported once per intent — no
+ * retries, no polling, no new permissions. */
+let autoAcquireIntent = null; // { tabId, gen } awaiting automatic acquisition
+
+function requestAutoSnapshot(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  if (state.boundTabId === tabId && state.snapshot) { autoAcquireIntent = null; return; }
+  // The intent is stamped with the generation that submitted it; a
+  // later activation/navigation supersedes it, and the drain refuses
+  // to act on a stale stamp.
+  autoAcquireIntent = { tabId, gen: state.generation };
+  drainAutoAcquire();
+}
+
+function drainAutoAcquire() {
+  if (autoAcquireIntent === null) return;
+  if (autoAcquireIntent.gen !== state.generation) { autoAcquireIntent = null; return; } // superseded intent never acquires
+  const tabId = autoAcquireIntent.tabId;
+  if (state.boundTabId === tabId && state.snapshot) { autoAcquireIntent = null; return; }
+  if (state.pending || state.acquiring || commandPending || pendingPlan) return; // latest intent retained
+  autoAcquireIntent = null;
+  // Floating by design; a panel closing mid-acquisition must not turn
+  // teardown races into unhandled rejections.
+  void takeSnapshot("Loading this page", { auto: true, tabId }).catch(() => {});
+}
+
+async function takeSnapshot(originLabel, opts = {}) {
+  if (state.pending || state.acquiring || commandPending) {
+    // Automatic acquisition that cannot start yet keeps only its latest
+    // tab intent; the lock-release drains retry it. Manual clicks keep
+    // the existing no-queue behavior.
+    if (opts.auto && Number.isInteger(opts.tabId)) autoAcquireIntent = { tabId: opts.tabId, gen: state.generation };
+    return;
+  }
   // Identity is captured BEFORE any asynchronous work (incl. tab lookup),
   // and ownership is retained until the whole acquisition settles.
   const gen = state.generation;
   const myOp = ++state.opSeq;
   state.acquiring = true;
+  if (Number.isInteger(opts.tabId)) state.opTabId = opts.tabId;
   updateExecuteEnabled();
   try {
-    const tab = await activeTab();
+    const tab = Number.isInteger(opts.tabId) ? { id: opts.tabId } : await activeTab();
     if (!tab || tab.id === undefined) { setStatus("No active tab.", true); return; }
     if (gen !== state.generation || myOp !== state.opSeq) return;
     state.opTabId = tab.id;
-    setStatus(`${originLabel}…`);
+    // Automatic acquisitions are status-quiet about outcomes another
+    // operation produced: when an error/discard status already stands,
+    // the auto acquisition writes nothing at all (binding state is
+    // visible in the targets, chips, and page line); otherwise it
+    // writes its progress text and reports only if nothing else has
+    // written since. Manual acquisition always reports.
+    const quietAuto = Boolean(opts.auto) && $("status").classList.contains("error");
+    if (!quietAuto) setStatus(`${originLabel}…`);
+    const statusUntouched = () => !opts.auto || (!quietAuto && $("status").textContent === `${originLabel}…`);
     const { snapshot, viaContentScript } = await fetchSnapshot(tab.id);
     if (gen !== state.generation || myOp !== state.opSeq) return; // invalidated or superseded
-    bindSnapshot(tab.id, snapshot, viaContentScript);
-    lastKind = "dom-aria";
-    const fresh = snapshot.fresh === false ? " · STALE" : "";
-    showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${snapshot.url || ""}`);
-    if (viaContentScript) {
-      setStatus(`Found ${snapshot.elementCount} controls on this page.`);
-    } else {
-      setStatus("Snapshot obtained through the scripting fallback. Execution is disabled: reload the tab and reopen the panel so the full content script is available.", true);
+    try {
+      bindSnapshot(tab.id, snapshot, viaContentScript);
+      lastKind = "dom-aria";
+      const fresh = snapshot.fresh === false ? " · STALE" : "";
+      showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${snapshot.url || ""}`);
+      if (!statusUntouched()) {
+        // outcome of another operation stands
+      } else if (viaContentScript) {
+        setStatus(`Found ${snapshot.elementCount} controls on this page.`);
+      } else {
+        setStatus("Snapshot obtained through the scripting fallback. Execution is disabled: reload the tab and reopen the panel so the full content script is available.", true);
+      }
+    } catch (bindErr) {
+      // Automatic acquisition runs unattended: if the panel is closing
+      // while it settles, dropping the result quietly is correct.
+      if (!opts.auto) throw bindErr;
     }
   } catch (err) {
     if (gen !== state.generation || myOp !== state.opSeq) return;
     // A failed refresh must not leave the previous snapshot execution-ready.
     if (state.snapshot) state.executorReady = false;
     console.error(err);
-    setStatus(`DOM snapshot failed: ${err.message || err}`, true);
-  } finally {
-    if (myOp === state.opSeq) {
-      state.acquiring = false;
-      state.opTabId = null;
+    if (!opts.auto || $("status").textContent === `${originLabel}…`) {
+      try { setStatus(`DOM snapshot failed: ${err.message || err}`, true); } catch { if (!opts.auto) throw err; }
     }
-    updateExecuteEnabled();
+  } finally {
+    try {
+      if (myOp === state.opSeq) {
+        state.acquiring = false;
+        state.opTabId = null;
+      }
+      updateExecuteEnabled();
+      drainAutoAcquire();
+      drainDeferredAdoption();
+    } catch (finErr) { if (!opts.auto) throw finErr; }
   }
 }
 
@@ -787,6 +854,8 @@ async function runShowTags(opts = {}) {
       state.opTabId = null;
     }
     updateExecuteEnabled();
+    drainAutoAcquire();
+    drainDeferredAdoption();
   }
 }
 
@@ -817,6 +886,8 @@ async function runHideTags(tabId, opts = {}) {
   } finally {
     state.acquiring = false;
     updateExecuteEnabled();
+    drainAutoAcquire();
+    drainDeferredAdoption();
   }
 }
 
@@ -896,6 +967,12 @@ let commandPending = false;
 // generation, and interaction; review callbacks close over it and do
 // nothing once it is no longer the current one.
 let pendingPlan = null;
+// Remote-confirmation adoption ownership (Issue #19): per-tab lookup
+// sequence plus at most one deferred discovery tab. Declared with the
+// panel state because preview clearing (which can run early) drains it.
+let adoptLookupSeq = 0;
+const adoptLookupsInFlight = new Map(); // tabId -> seq
+let deferredAdoptTabId = null;
 // Voice review authority: what was displayed when the user started the
 // current recognition session. Set only by Start listening.
 let listenContext = null;
@@ -1306,6 +1383,8 @@ async function runClarifiedChoice(elementId, clarification) {
     commandPending = false;
     updateExecuteEnabled();
     updateVoiceControls();
+    drainAutoAcquire();
+    drainDeferredAdoption();
   }
 }
 
@@ -1946,6 +2025,10 @@ function clearPlanPreview() {
   }
   planFocusReturn = null;
   if (typeof updateExecuteEnabled === "function") updateExecuteEnabled();
+  // A plan review no longer owns the panel: run any confirmation
+  // discovery that was deferred behind it (approve/cancel/edit and
+  // supersede/invalidate all clear the preview through here).
+  if (had && typeof drainDeferredAdoption === "function") { drainAutoAcquire(); drainDeferredAdoption(); }
   return had;
 }
 function closePlanEdit() {
@@ -2315,6 +2398,8 @@ function finishCommandOutcome(outcome, { gen, seq, acting, fallbackSummary, fall
       : `Command discarded — the tab or document changed while it was running; its result was discarded.${late}`, true);
     settleVoiceAfterCommand();
     updateVoiceControls();
+    drainAutoAcquire();
+    if (state.boundTabId !== null) void adoptPendingConfirmation(state.boundTabId);
     return;
   }
   discardMessage = null;
@@ -2339,6 +2424,8 @@ function finishCommandOutcome(outcome, { gen, seq, acting, fallbackSummary, fall
   }
   settleVoiceAfterCommand();
   updateVoiceControls();
+  drainAutoAcquire();
+  if (state.boundTabId !== null) void adoptPendingConfirmation(state.boundTabId);
 }
 
 async function dispatchCommand(rawText, source, meta = {}) {
@@ -2787,6 +2874,10 @@ $("btnExecute").addEventListener("click", async () => {
   } finally {
     state.pending = false;
     updateExecuteEnabled();
+    // The manual-operation lock has cleared: run any confirmation
+    // discovery deferred behind it (e.g. an MCP hold hinted mid-refresh).
+    drainAutoAcquire();
+    drainDeferredAdoption();
   }
 });
 
@@ -2906,6 +2997,63 @@ const APPROVAL_STAGE_CODES = new Set([
   "UNTRUSTED_APPROVAL", "EXECUTION_PAUSED", "EXECUTION_STOPPED", "EXECUTION_BUSY",
 ]);
 
+/* --- Remote (MCP) confirmation adoption (Issue #19) -------------------------
+ * A held action can originate outside this panel (the local MCP tools).
+ * The executor in that tab's document stays authoritative: the panel
+ * asks it for the pending challenge over the trusted route and shows
+ * the existing card. The service worker's runtime hint only prompts
+ * this lookup — it carries no authority — and binding a snapshot
+ * re-checks, so a hold is also picked up when the panel was closed at
+ * hold time. Adoption never displaces an operation already in flight,
+ * a plan under review, or a confirmation already shown. */
+// Lookup ownership is per tab and generation-scoped, never a single
+// global flag: an in-flight lookup for tab A neither suppresses
+// discovery for the newly bound tab B nor may populate the card once
+// it is obsolete. A monotonically increasing sequence supersedes older
+// lookups for the same tab. When discovery is deferred because an
+// operation or a plan review owns the panel, the tab is remembered
+// and retried when that blocker clears (see drainDeferredAdoption) —
+// no polling, and focus moves only once the blocker has ended.
+// (State variables live with the other panel state declarations.)
+function adoptionBlocked() {
+  return Boolean(state.confirmation || state.pending || state.acquiring || commandPending || pendingPlan);
+}
+
+async function adoptPendingConfirmation(tabId) {
+  if (!Number.isInteger(tabId) || tabId !== state.boundTabId) {
+    if (deferredAdoptTabId === tabId) deferredAdoptTabId = null;
+    return;
+  }
+  if (adoptionBlocked()) { deferredAdoptTabId = tabId; return; }
+  const seq = ++adoptLookupSeq;
+  const gen = state.generation;
+  adoptLookupsInFlight.set(tabId, seq);
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: "SEEYABLE_GET_PENDING_CONFIRMATION" });
+    const stillCurrent = state.boundTabId === tabId && gen === state.generation
+      && adoptLookupsInFlight.get(tabId) === seq;
+    if (!stillCurrent) return; // obsolete lookup: discard; the newer tab/lookup owns discovery
+    if (adoptionBlocked()) { deferredAdoptTabId = tabId; return; }
+    if (res && res.ok && res.confirmation) {
+      if (state.snapshot && res.confirmation.documentSessionId !== state.snapshot.documentSessionId) return;
+      if (deferredAdoptTabId === tabId) deferredAdoptTabId = null;
+      showConfirmation(res.confirmation, tabId);
+    }
+  } catch { /* content script unavailable; the hold still waits in the executor */ } finally {
+    if (adoptLookupsInFlight.get(tabId) === seq) adoptLookupsInFlight.delete(tabId);
+  }
+}
+
+// Runs a discovery that was deferred behind an operation or plan
+// review once that blocker has cleared. Stale tabs are forgotten.
+function drainDeferredAdoption() {
+  if (deferredAdoptTabId === null) return;
+  const tabId = deferredAdoptTabId;
+  deferredAdoptTabId = null;
+  if (tabId !== state.boundTabId) return;
+  void adoptPendingConfirmation(tabId); // re-defers itself if still blocked
+}
+
 // The click and the bound voice phrase (Issue #15) share this one path:
 // it approves only the challenge it was given, and only while that exact
 // challenge is still the one displayed. Expiry, fingerprint binding,
@@ -2963,6 +3111,7 @@ async function approveHeldChallenge(expectedChallengeId) {
     state.pending = false;
     updateExecuteEnabled();
     void fetchActionLog(tabId);
+    void adoptPendingConfirmation(tabId); // surface any further waiting hold
     return;
   }
   setConfirmStatus(response.ok ? "Approved action finished. See the execution result above." : "Human approval was supplied and consumed; the action itself did not complete (see its code above). Request a fresh confirmation to try again.", !response.ok);
@@ -2973,6 +3122,7 @@ async function approveHeldChallenge(expectedChallengeId) {
     updateExecuteEnabled();
   }
   void fetchActionLog(tabId);
+  void adoptPendingConfirmation(tabId); // surface any further waiting hold
 }
 $("btnApproveOnce").addEventListener("click", () => {
   void approveHeldChallenge(state.confirmation && state.confirmation.challengeId);
@@ -2993,6 +3143,7 @@ $("btnCancelChallenge").addEventListener("click", async () => {
     setConfirmStatus("Cancelled in the panel. The challenge also expires on its own within a minute; nothing was approved here.");
   }
   void fetchActionLog(tabId);
+  void adoptPendingConfirmation(tabId); // surface any further waiting hold
 });
 
 async function gateTabId() {
@@ -3128,17 +3279,39 @@ $("btnClearLog").addEventListener("click", async () => {
 
 /* --- Tab/document ownership --- */
 refreshTabInfo();
+// Issue #19: the bridge service worker hints when an MCP action was held
+// in some tab. The hint is unauthoritative (tab id only); adoption
+// re-fetches the pending challenge over the trusted route.
+if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage
+    && typeof chrome.runtime.onMessage.addListener === "function") {
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message && message.type === "SEEYABLE_MCP_CONFIRMATION_HINT" && Number.isInteger(message.tabId)) {
+      void adoptPendingConfirmation(message.tabId);
+    }
+    return false;
+  });
+}
 chrome.tabs.onActivated.addListener((info) => {
   refreshTabInfo();
   if ((recognizer && recognizer.isActive()) || commandPending || (speechOutput && speechOutput.isSpeaking())) {
     cancelVoiceInteraction("listening and pending command results were discarded because the active tab changed.");
   }
   // Invalidate even when nothing is bound yet: an in-flight initial
-  // snapshot for another tab must never populate or authorize.
+  // snapshot for another tab must never populate or authorize. The
+  // generation bump happens whenever the active tab differs from
+  // anything the panel owns or is acquiring, so late responses for a
+  // previous tab are always discarded; the explanatory status is only
+  // shown when there was state to discard.
   const ownedTab = state.boundTabId !== null ? state.boundTabId : state.opTabId;
-  if (ownedTab !== null && info.tabId !== ownedTab) {
-    invalidateExecution("Active tab changed. The previous execution selection was discarded; take a snapshot in this tab.");
+  if (info.tabId !== ownedTab) {
+    invalidateExecution(ownedTab !== null || state.snapshot
+      ? "Active tab changed. The previous execution selection was discarded."
+      : null);
   }
+  // Automatically bind a fresh snapshot for the newly active tab
+  // (read-only; discovers any pending confirmation via the bind path).
+  // Rapid switches retain only the latest intent.
+  requestAutoSnapshot(info.tabId);
 });
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.title || info.url) refreshTabInfo();
@@ -3152,3 +3325,19 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 renderTargets(); // empty state until the first snapshot binds
 updateExecuteEnabled();
+// Panel open: automatically acquire the active tab's snapshot (same
+// read-only auto path as tab activation; deduplicated against manual
+// acquisition by the shared locks and the bound-tab check). Ownership
+// is captured BEFORE the asynchronous lookup: a newer activation,
+// navigation, or acquisition supersedes this intent, and its late
+// result is discarded without submitting any intent at all.
+void (async () => {
+  const startupGen = state.generation;
+  const startupOp = state.opSeq;
+  try {
+    const tab = await activeTab();
+    if (startupGen !== state.generation || startupOp !== state.opSeq) return; // superseded while looking up
+    if (state.boundTabId !== null || state.snapshot) return; // a newer binding already owns the panel
+    if (tab && Number.isInteger(tab.id)) requestAutoSnapshot(tab.id);
+  } catch { /* the tab line already reports unavailability */ }
+})();
