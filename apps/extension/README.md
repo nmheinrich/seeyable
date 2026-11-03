@@ -1,5 +1,8 @@
 # Seeyable (extension)
 
+For the complete setup, commands, planner pairing, and MCP connection, start
+with the [repository setup guide](../../README.md).
+
 MV3 extension that captures a labelled snapshot of a page's interactive
 controls using DOM/ARIA, with an optional debug-only CDP comparison,
 numbered word tags, a validated single-action executor, push-to-talk
@@ -12,7 +15,8 @@ and a redacted action log. It contains no planner or MCP server.
 1. Open `chrome://extensions`, enable Developer mode.
 2. **Load unpacked** → select this folder (`apps/extension`).
 3. Default path uses `manifest.json`: permissions are
-   `activeTab`, `scripting`, `sidePanel`, `storage`. No `debugger`
+   `activeTab`, `scripting`, `sidePanel`, `storage`, `tabs`, plus loopback
+   host permissions for the planner and MCP bridge. No `debugger`
    permission is declared in any form (Chrome forbids it as an optional
    permission); the CDP button explains this in-panel. This is the
    product-shaped path. Permission rationale: `CHROMEWEBSTORE.md`.
@@ -36,10 +40,11 @@ execution, and the detailed action log — live in the collapsible
 **Developer view**. Risky actions pause for one explicit approval;
 nothing is submitted, paid, deleted, sent, or published without it.
 
-1. Serve/open the demo survey (`apps/demo-survey/index.html`, any static
-   server or `file://`).
+1. Serve the local survey over HTTP as described in the root setup guide
+   (`file://` requires a separate Chrome file-access grant).
 2. Click the extension action to open the side panel.
-3. Take a DOM/ARIA snapshot (Developer view), then Show tags.
+3. The panel automatically acquires a snapshot. Turn on Tags; refresh
+   the snapshot in Developer view if needed.
    Say or type “show tags” / “hide tags” to toggle them, or
    “click …” / “fill … with …” to act on a named control through
    the same guarded executor (risky ones still pause for approval).
