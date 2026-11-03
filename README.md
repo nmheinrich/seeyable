@@ -11,8 +11,7 @@ consequential actions. This grounds model-generated plans in actual page control
 
 ## Hackathon submission overview
 
-- **Track / theme:** Indie Developer / Push the Frontier (intended selection;
-  verify in the submission portal).
+- **Track / theme:** Indie Developer / Push the Frontier.
 - **Runtime Meta model:** `muse-spark-1.3` through Meta Model API. The local
   proxy provides a pruned page snapshot and request; Muse returns a structured
   plan, validated before preview and guarded execution.
