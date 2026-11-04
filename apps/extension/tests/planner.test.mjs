@@ -476,8 +476,10 @@ test("planner: unpaired compound gets help plus pairing hint, zero tab sends", a
   await tick(); await tick();
   assert.ok(panel.calls.send.slice(baseline).every((c) => c.msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION"),
     "unpaired fast-fail dispatches and acquires nothing (only read-only confirmation discovery may recur)");
-  assert.match(panel.$("status").textContent, /Supported commands/);
+  assert.match(panel.$("status").textContent, /Unsupported command/);
   assert.match(panel.$("status").textContent, /planner proxy/);
+  assert.equal(panel.$("recoverBox").hidden, false, "the recovery card explains what to do");
+  assert.match(panel.$("recoverCopy").textContent, /fill Full name with Ada/);
   assert.equal(panel.$("voiceState").textContent, "Voice: idle.");
   panel.dom.window.close();
 });
@@ -543,7 +545,8 @@ test("planner: step failure stops the sequence; later steps never send", async (
   await tick(); await tick(); await tick(); await tick();
   await approvePlan(panel);
   assert.equal(panel.calls.execute, 2, "step 3 never dispatches");
-  assert.match(panel.$("status").textContent, /Stopped: step 2 failed: TARGET_DISABLED/);
+  assert.match(panel.$("status").textContent, /Stopped: step 2 failed on .*: it.s disabled/);
+  assert.match(panel.$("execResult").textContent, /TARGET_DISABLED/, "the raw code stays in the Developer view");
   assert.match(panel.$("status").textContent, /Completed 1 of 3 first/);
   panel.dom.window.close();
 });
@@ -1288,7 +1291,8 @@ test("context: rejected sensitive, ordinary, and multi-step values never reach l
   panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
   sendTyped(panel, "fill Password with SYNTHETIC_SECRET"); // rejected sensitive fill
   await tick(); await tick();
-  assert.match(panel.$("status").textContent, /SENSITIVE_FIELD/);
+  assert.match(panel.$("status").textContent, /passwords and payment details are yours to enter/);
+  assert.match(panel.$("execResult").textContent, /SENSITIVE_FIELD/, "the raw code stays in the Developer view");
   sendTyped(panel, "fill Nickname with ORDINARY_VALUE"); // ordinary fill with a value
   await tick(); await tick();
   sendTyped(panel, "fill in Full name as MULTI_ONE and Nickname as MULTI_TWO"); // multi-step values

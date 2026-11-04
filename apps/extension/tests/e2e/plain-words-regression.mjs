@@ -202,9 +202,13 @@ try {
   const version = await waitFor(() => fetch(`http://127.0.0.1:${cdpPort}/json/version`).then((r) => r.json()), "chrome");
   const browser = connect(version.webSocketDebuggerUrl);
   await browser.ready;
+  // Opened before the extension loads, so it has no content script: the
+  // real case the Reload button exists for.
+  const olderTab = await browser.send("Target.createTarget", { url: `http://127.0.0.1:${demoPort}/demo-survey/older/index.html` });
+  await sleep(500);
   const { id: extId } = await browser.send("Extensions.loadUnpacked", { path: EXT });
-  await browser.send("Target.createTarget", { url: `http://127.0.0.1:${demoPort}/demo-survey/index.html` });
-  const demo = await attach((t) => t.url.includes("/demo-survey/"), "demo");
+  const demoTarget = await browser.send("Target.createTarget", { url: `http://127.0.0.1:${demoPort}/demo-survey/index.html` });
+  const demo = await attach((t) => t.id === demoTarget.targetId, "demo");
   await sleep(800);
 
   const opener = await browser.send("Target.createTarget", { url: `chrome-extension://${extId}/mic-setup.html` });
@@ -257,17 +261,45 @@ try {
     await browser.send("Target.activateTarget", { targetId: demo.targetId });
     await sleep(200);
   }
+  // The marker proves the check reads the reloaded panel, not the old page
+  // that can still show a control count while the reload is starting.
+  async function reloadPanel(label) {
+    await panel.ev("window.__beforeReload = true");
+    await panel.send("Page.reload");
+    await waitFor(() => panel.ev(`!window.__beforeReload && document.readyState === "complete" && /\\d+ controls/.test(document.getElementById("pageMeta").textContent)`), label);
+  }
   async function freshPage() {
     await bringDemoForward();
     await demo.send("Page.reload");
     await waitFor(() => demo.ev("document.readyState === 'complete'"), "demo reload");
     await sleep(400);
     await installSubmitCounter();
-    await panel.send("Page.reload");
-    await waitFor(() => panel.ev(`/\\d+ controls/.test(document.getElementById("pageMeta").textContent)`), "panel bound");
+    await reloadPanel("panel bound");
   }
 
   await freshPage();
+
+  /* --- Before the planner is paired: recovery and examples ---------------- */
+  await command("Update my profile");
+  check("an unpaired request shows the recovery card", await visible("recoverBox"));
+  check("an unpaired request changes nothing on the page", (await value(NAME)) === "");
+  await panel.shot("recovery");
+  await click("btnRecoverDeveloper");
+  check("the recovery card opens the planner settings", await panel.ev(`document.activeElement.id === "plannerHeading" && document.getElementById("developerView").open`));
+  await panel.ev(`(document.getElementById("developerView").open = false, showScreen("Assist"), 1)`);
+  const chip = await panel.ev(`(() => { const b = document.querySelector("#tryChips button"); return b && b.textContent; })()`);
+  check("the example comes from a field on this page", /^Fill .+ with Ada$/.test(chip || ""));
+  check("no example offers Submit", !(await panel.ev(`/submit/i.test(document.getElementById("tryChips").textContent)`)));
+  await panel.shot("ready-with-examples");
+  await panel.ev(`document.querySelector("#tryChips button").click()`);
+  await sleep(200);
+  check("a chip does not act on the page", (await value(NAME)) === "" && (await panel.ev(`document.getElementById("commandInput").value`)) === chip);
+  await panel.ev(`document.getElementById("btnSendCommand").click()`);
+  await sleep(150);
+  await idle();
+  check("the example works with no planner", (await value(NAME)) === "Ada");
+  await freshPage();
+
   await panel.ev(`(() => {
     showScreen("Settings");
     document.getElementById("developerView").open = true;
@@ -293,11 +325,20 @@ try {
   check("approved plan fills the bio", (await value(BIO)) === "Fictional visitor.");
 
   /* --- Undo -------------------------------------------------------------- */
+  const undoName = await panel.ev(`document.getElementById("btnUndo").textContent`);
+  check("Done names the target Undo will restore", /^Undo .*bio/i.test(undoName));
+  check("Done says the earlier changes stay", /only\./.test(await panel.ev(`document.getElementById("resultUndoNote").textContent`)));
   await undo();
+  check("Undo goes back to its generic name", (await panel.ev(`document.getElementById("btnUndo").textContent`)) === "Undo last change");
   check("undo restores the last fill", (await value(BIO)) === "");
   check("undo leaves earlier changes alone", (await value(NAME)) === "Ada Example" && (await value(ROLE)) === "designer");
   await undo();
   check("second undo changes nothing", (await value(NAME)) === "Ada Example" && (await value(ROLE)) === "designer" && (await value(BIO)) === "");
+
+  await freshPage();
+  await command("fill nickname with Spoken");
+  await command("undo that");
+  check("\u201Cundo that\u201D reverses the last change", (await value(NICK)) === "");
 
   await freshPage();
   await command("fill nickname with Ace");
@@ -393,8 +434,7 @@ try {
   await demo.send("Page.navigate", { url: `http://127.0.0.1:${demoPort}/demo-survey/${"x".repeat(200)}/index.html?form=${"y".repeat(200)}` });
   await waitFor(() => demo.ev("document.readyState === 'complete' && location.pathname.length > 100"), "long URL load");
   await sleep(400);
-  await panel.send("Page.reload");
-  await waitFor(() => panel.ev(`/\\d+ controls/.test(document.getElementById("pageMeta").textContent)`), "panel bound to long URL");
+  await reloadPanel("panel bound to long URL");
   await panel.ev(`(showScreen("Settings"), document.getElementById("developerView").open = true, document.getElementById("btnDom").click(), 1)`);
   await waitFor(() => panel.ev(`document.getElementById("meta").textContent.length > 0`), "snapshot line");
   await sleep(200);
@@ -404,6 +444,34 @@ try {
   await panel.ev(`(document.getElementById("developerView").open = false, showScreen("Assist"), 1)`);
   await demo.send("Page.navigate", { url: `http://127.0.0.1:${demoPort}/demo-survey/index.html` });
   await waitFor(() => demo.ev("document.readyState === 'complete' && location.search === '' && location.pathname.length < 50"), "demo back");
+
+  /* --- Pages Seeyable cannot operate -------------------------------------- */
+  await freshPage();
+  await demo.send("Page.navigate", { url: "chrome://version/" });
+  await waitFor(async () => (await view()) === "unavailable", "closed page view");
+  check("a chrome page shows the unavailable view", true);
+  check("a chrome page offers no Reload", !(await visible("btnReloadPage")));
+  check("a chrome page hides the mic and input", !(await visible("btnListen")) && !(await visible("commandInput")));
+  check("Stop and the screens stay available there", (await visible("btnStopExec")) && (await panel.ev(`document.querySelector(".screen-nav button").offsetParent !== null`)));
+  check("Tags is off and disabled there", await panel.ev(`document.getElementById("tagsChip").disabled && document.getElementById("tagsChip").getAttribute("aria-pressed") === "false"`));
+  await panel.shot("unavailable-closed");
+  await demo.send("Page.navigate", { url: `http://127.0.0.1:${demoPort}/demo-survey/index.html` });
+  await waitFor(async () => (await view()) === "ready" && (await panel.ev(`/\\d+ controls/.test(document.getElementById("pageMeta").textContent)`)), "back from closed page");
+  check("returning to a normal page recovers with no panel reload", true);
+  await command("fill nickname with Back");
+  await waitFor(async () => (await value(NICK)) === "Back", "fill after closed page");
+  check("actions work after returning", true);
+
+  await browser.send("Target.activateTarget", { targetId: olderTab.targetId });
+  await waitFor(async () => (await view()) === "unavailable", "older tab view");
+  check("a tab with no content script asks for a reload", await visible("btnReloadPage"));
+  await panel.shot("unavailable-reload");
+  await click("btnReloadPage");
+  await waitFor(async () => (await view()) === "ready" && (await panel.ev(`/\\d+ controls/.test(document.getElementById("pageMeta").textContent)`)), "older tab recovered");
+  check("Reload connects the page", true);
+  await browser.send("Target.closeTarget", { targetId: olderTab.targetId });
+  await bringDemoForward();
+  await sleep(300);
 
   /* --- MCP: same gate, same Stop ----------------------------------------- */
   await freshPage();

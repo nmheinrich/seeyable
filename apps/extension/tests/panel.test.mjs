@@ -390,7 +390,8 @@ test("missing receiver: fallback snapshot is viewable but execution stays disabl
   await takeSnapshot(panel);
   assert.equal(panel.$("targetSelect").options.length, 2, "placeholder plus fallback target still populates for inspection");
   assert.equal(panel.$("btnExecute").disabled, true);
-  assert.match(panel.$("status").textContent, /Execution is disabled/);
+  assert.match(panel.$("status").textContent, /can.t act on it yet/);
+  assert.match(panel.$("execStatus").textContent, /execution is disabled/);
   panel.dom.window.close();
 });
 
@@ -669,7 +670,7 @@ test("voice/typed parity: typed show/hide use the shared flows and speak only af
   panel.$("btnSendCommand").click();
   await tick();
   assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 1);
-  assert.match(panel.$("status").textContent, /^Tags shown \(\d+ controls, revision \d+\)\.$/, "count-free message stays truthful without placement precision");
+  assert.match(panel.$("status").textContent, /^Tags shown\.$/, "count-free message stays truthful without placement precision");
   assert.deepEqual(speech.spoken, ["Tags shown"]);
   panel.$("commandInput").value = "hide tags.";
   panel.$("btnSendCommand").click();
@@ -948,7 +949,8 @@ test("page-action: typed click exact match executes once through the shared cont
   assert.deepEqual(JSON.parse(JSON.stringify(execs[0].msg.request)), {
     action: "click", elementId: "el-1", documentSessionId: "doc-A", revision: 1, source: "manual",
   });
-  assert.match(panel.$("status").textContent, /Clicked Full name\. Completed and verified/);
+  assert.match(panel.$("status").textContent, /^Clicked Full name\. Checked on the page\.$/);
+  assert.match(panel.$("execResult").textContent, /Completed and verified/, "the raw outcome stays in the Developer view");
   assert.deepEqual(speech.spoken, ["Clicked Full name."]);
   panel.dom.window.close();
 });
@@ -1037,7 +1039,8 @@ test("page-action: compound, negated, and incomplete commands send nothing", asy
   assert.ok(panel.calls.send.slice(baseline).every((c) => c.msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION"),
     "rejected parses dispatch and acquire nothing (only read-only confirmation discovery may recur)");
   assert.equal(panel.calls.execute, 0);
-  assert.match(panel.$("status").textContent, /Supported commands/);
+  assert.match(panel.$("status").textContent, /needs the planner proxy/);
+  assert.equal(panel.$("recoverBox").hidden, false, "the recovery card explains what still works");
   panel.dom.window.close();
 });
 
@@ -1056,7 +1059,9 @@ test("page-action: disabled exact match is rejected by the executor, not redirec
   const execs = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_EXECUTE_ACTION");
   assert.equal(execs.length, 1);
   assert.equal(JSON.parse(JSON.stringify(execs[0].msg.request)).elementId, "el-5");
-  assert.match(panel.$("status").textContent, /Could not click Save draft: TARGET_DISABLED/);
+  assert.match(panel.$("status").textContent, /Could not click Save draft: it.s disabled/);
+  assert.doesNotMatch(panel.$("status").textContent, /TARGET_DISABLED/);
+  assert.match(panel.$("execResult").textContent, /TARGET_DISABLED/, "the raw code stays in the Developer view");
   panel.dom.window.close();
 });
 
@@ -1151,7 +1156,9 @@ test("page-action: sensitive fill is blocked by the executor; value stays out of
   sendTyped(panel, "fill Account PIN with 1234");
   await tick(); await tick();
   assert.equal(panel.calls.execute, 1);
-  assert.match(panel.$("status").textContent, /Could not fill Account PIN: SENSITIVE_FIELD/);
+  assert.match(panel.$("status").textContent, /Could not fill Account PIN: passwords and payment details are yours to enter/);
+  assert.match(panel.$("execResult").textContent, /SENSITIVE_FIELD/, "the raw code stays in the Developer view");
+  assert.ok(!panel.$("execResult").textContent.includes("1234"), "rejected value is not echoed there either");
   assert.ok(!panel.$("status").textContent.includes("1234"), "rejected value is not echoed");
   assert.deepEqual(speech.spoken, [], "failures are not spoken as success");
   panel.dom.window.close();
@@ -1167,7 +1174,8 @@ test("page-action: paused executor surfaces honestly through commands", async ()
   sendTyped(panel, "click Full name");
   await tick(); await tick();
   assert.equal(panel.calls.execute, 1, "one attempt, no replay around the pause");
-  assert.match(panel.$("status").textContent, /EXECUTION_PAUSED/);
+  assert.match(panel.$("status").textContent, /Seeyable is stopped, so press Resume first/);
+  assert.match(panel.$("execResult").textContent, /EXECUTION_PAUSED/, "the raw code stays in the Developer view");
   panel.dom.window.close();
 });
 
@@ -1392,7 +1400,7 @@ test("commands: unknown, negated, and empty input execute nothing and list suppo
   assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0);
   assert.equal(tagCalls(panel, "SEEYABLE_HIDE_TAGS"), 0);
   assert.equal(panel.calls.execute, 0);
-  assert.match(panel.$("status").textContent, /Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>"/);
+  assert.match(panel.$("status").textContent, /No command was entered\. Try .show tags./);
   panel.dom.window.close();
 });
 
@@ -1966,7 +1974,8 @@ test("auto: an unavailable tab is reported once, binds nothing, and is not retri
   });
   await tick(); await tick(); await tick(); await tick();
   assert.equal(snapshotCalls, 1, "one honest attempt, no retry loop");
-  assert.match(panel.$("status").textContent, /DOM snapshot failed/, "the failure is reported, not hidden");
+  assert.match(panel.$("status").textContent, /Could not read this page/, "the failure is reported, not hidden");
+  assert.match(panel.$("execStatus").textContent, /DOM snapshot failed/, "with the raw reason in the Developer view");
   assert.equal(panel.$("targetSelect").options.length, 1, "nothing binds, so nothing is executable");
   assert.equal(panel.$("btnExecute").disabled, true);
   assert.equal(panel.calls.execute, 0);

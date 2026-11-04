@@ -212,7 +212,19 @@ body[data-voice="idle"][data-voice-msg="quiet"] #voiceState { display: none; }
 body[data-view="plan"] #commandHeading, body[data-view="edit"] #commandHeading,
 body[data-view="gate"] #commandHeading, body[data-view="repair"] #commandHeading,
 body[data-view="acting"] #commandHeading, body[data-view="done"] #commandHeading { display: none; }
-body:not([data-view="ready"]):not([data-view="stopped"]) .hero-copy { display: none; }
+body:not([data-view="ready"]):not([data-view="stopped"]):not([data-view="unavailable"]) .hero-copy { display: none; }
+body[data-view="unavailable"] #btnListen, body[data-view="unavailable"] .request-label, body[data-view="unavailable"] #voiceState { display: none; }
+body[data-view="unavailable"] #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+body[data-recover="true"] #commandHeading, body[data-recover="true"] .hero-copy, body[data-recover="true"] #tryBox { display: none; }
+body:not([data-view="ready"]) #tryBox { display: none; }
+.recover { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 22px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--error-ink); }
+.recover[hidden] { display: none; }
+.recover-title { margin: 0; font-size: 20px; font-weight: 500; color: var(--error-ink); }
+.recover .sub { margin: 0; }
+.try { display: flex; flex-direction: column; gap: 8px; }
+.try-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.try-chip { min-height: 44px; padding: 0 16px; border-radius: 999px; overflow-wrap: anywhere; }
+#btnUndo { overflow-wrap: anywhere; }
 body[data-view="plan"] #btnListen, body[data-view="edit"] #btnListen, body[data-view="gate"] #btnListen,
 body[data-view="repair"] #btnListen, body[data-view="acting"] #btnListen, body[data-view="done"] #btnListen,
 body[data-view="working"] #btnListen { display: none; }

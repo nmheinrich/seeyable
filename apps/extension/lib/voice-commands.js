@@ -55,6 +55,8 @@ const REVIEW_PHRASES = {
   "cancel the plan": "cancel-plan",
   "undo last change": "undo",
   "undo the last change": "undo",
+  "undo that": "undo",
+  "undo it": "undo",
   "approve this action": "approve-action",
 };
 const EDIT_PLAN = /^\s*edit (?:the )?plan\s*[:,.\-–—]?\s*(.*?)\s*$/i;

@@ -36,7 +36,7 @@ function makeRecognitionClass() {
   return { FakeRecognition, instances };
 }
 
-function makePanel({ onExecute, plan, executeGate, recognition, undo } = {}) {
+function makePanel({ onExecute, plan, executeGate, recognition, undo, elements = base, tabsGet, snapshotError, scriptedSnapshot, sessionExtra } = {}) {
   const dom = new JSDOM(html, { url: "chrome-extension://test/sidepanel.html", runScripts: "dangerously", pretendToBeVisual: true });
   const win = dom.window;
   const calls = { send: [], execute: 0, fetch: 0 };
@@ -48,13 +48,18 @@ function makePanel({ onExecute, plan, executeGate, recognition, undo } = {}) {
     const body = JSON.parse(init.body);
     return { json: async () => ({ ok: true, plan: plan(body), repaired: false, documentSessionId: body.snapshot.documentSessionId, revision: body.snapshot.revision }) };
   };
-  const session = { plannerToken: "t", plannerPort: 6124 };
+  const session = { plannerToken: "t", plannerPort: 6124, ...sessionExtra };
+  calls.reload = [];
+  listeners.storage = [];
   win.chrome = {
     tabs: {
       query: async () => [{ id: 111, title: "Demo survey" }],
       sendMessage: async (tabId, msg) => {
         calls.send.push(msg);
-        if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap(base) };
+        if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
+          if (snapshotError && snapshotError()) throw new Error("Receiving end does not exist.");
+          return { ok: true, snapshot: snap(elements) };
+        }
         if (msg.type === "SEEYABLE_EXECUTE_ACTION") {
           calls.execute += 1;
           if (onExecute) return onExecute(msg.request);
@@ -74,13 +79,15 @@ function makePanel({ onExecute, plan, executeGate, recognition, undo } = {}) {
         throw new Error("unexpected " + msg.type);
       },
       create: async () => ({ id: 5 }),
+      get: async (id) => (tabsGet ? tabsGet(id) : { id, url: "http://localhost/form", status: "complete" }),
+      reload: async (id) => { calls.reload.push(id); },
       onActivated: { addListener: (fn) => listeners.activated.push(fn) },
       onUpdated: { addListener: (fn) => listeners.updated.push(fn) },
     },
-    scripting: { executeScript: async () => [{ result: null }] },
+    scripting: { executeScript: async () => [{ result: scriptedSnapshot ? snap(elements) : null }] },
     runtime: { sendMessage: async () => ({ ok: false }), getURL: (p) => `chrome-extension://test/${p}` },
     permissions: { contains: async () => false },
-    storage: { local: { get: async () => ({}), set: async () => {} }, session: { get: async (k) => Object.fromEntries([].concat(k).map((x) => [x, session[x]])), set: async () => {}, remove: async () => {} } },
+    storage: { onChanged: { addListener: (fn) => listeners.storage.push(fn) }, local: { get: async () => ({}), set: async () => {} }, session: { get: async (k) => Object.fromEntries([].concat(k).map((x) => [x, session[x]])), set: async () => {}, remove: async () => {} } },
   };
   for (const js of scripts) win.eval(js);
   const $ = (id) => win.document.getElementById(id);
@@ -632,5 +639,376 @@ test("plain words: the snapshot line shows host and path, not the query string",
   await tick(); await tick(); await tick();
   assert.match(p.$("meta").textContent, /docs\.google\.com\/forms\/d\/e\/abc\/viewform$/);
   assert.ok(!p.$("meta").textContent.includes("secret"));
+  p.dom.window.close();
+});
+
+/* --- Slice 2: words, recovery, examples, unavailable page, clearer undo --- */
+const fills = (...ids) => () => ({ version: "seeyable-plan-1", outcome: "steps", steps: ids.map((id) => (
+  id === "el-20" ? { action: "click", elementId: id } : { action: "fill", elementId: id, value: "x" }
+)) });
+const verified = { ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 1 };
+const fourFields = [el("el-1", "Full name"), el("el-2", "Nickname"), el("el-3", "City"), el("el-7", "Short bio"), el("el-20", "Save draft", { role: "button", tag: "button" })];
+async function runPlan(p) {
+  await typed(p, "please do these things in order");
+  assert.equal(p.view(), "plan");
+  p.$("btnApprovePlan").click();
+  await tick(); await tick(); await tick(); await tick();
+}
+
+test("undo words: Done names the last target and says what stays, for a plan ending in a fill", async () => {
+  const p = makePanel({ plan: fills("el-1", "el-7") });
+  await tick();
+  assert.equal(p.$("btnUndo").textContent, "Undo last change", "generic before anything ran");
+  await typed(p, "please do these things in order");
+  assert.equal(p.view(), "plan");
+  assert.equal(p.$("btnUndo").textContent, "Undo last change", "generic during review");
+  p.$("btnApprovePlan").click();
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(p.view(), "done");
+  assert.equal(p.$("btnUndo").textContent, "Undo Short bio");
+  assert.equal(p.$("resultUndoNote").textContent, "Undo reverts Short bio only. Full name stays as it is.");
+  p.dom.window.close();
+});
+
+test("undo words: the Done note covers one step, several steps, and a plan ending in a click", async () => {
+  const cases = [
+    { ids: ["el-7"], label: "Undo Short bio", note: "Undo puts Short bio back as it was." },
+    { ids: ["el-1", "el-2", "el-7"], label: "Undo Short bio", note: "Undo reverts Short bio only. Full name and Nickname stay as they are." },
+    { ids: ["el-1", "el-2", "el-3", "el-7"], label: "Undo Short bio", note: "Undo reverts Short bio only. The other 3 changes stay as they are." },
+    { ids: ["el-1", "el-20"], label: "Undo last change", note: "This ended with a click, so these changes can’t be undone from here." },
+    { ids: ["el-20"], label: "Undo last change", note: "This was a click, so it can’t be undone from here." },
+  ];
+  for (const c of cases) {
+    const p = makePanel({ plan: fills(...c.ids), elements: fourFields });
+    await tick();
+    await runPlan(p);
+    assert.equal(p.view(), "done", c.ids.join());
+    assert.equal(p.$("btnUndo").textContent, c.label, c.ids.join());
+    assert.equal(p.$("resultUndoNote").textContent, c.note, c.ids.join());
+    p.dom.window.close();
+  }
+});
+
+test("undo words: a last step that changed nothing names no target, because the executor would undo an earlier change", async () => {
+  let n = 0;
+  const p = makePanel({
+    plan: fills("el-1", "el-7"),
+    onExecute: () => { n += 1; return n === 2 ? { ...verified, result: { alreadyInDesiredState: true } } : verified; },
+  });
+  await tick();
+  await runPlan(p);
+  assert.equal(p.view(), "done");
+  assert.equal(p.$("btnUndo").textContent, "Undo last change");
+  assert.match(p.$("resultUndoNote").textContent, /^Undo restores the last change only/);
+  p.dom.window.close();
+});
+
+test("undo words: a very long name keeps the generic button label", async () => {
+  const long = "What is the full name you would like us to use";
+  const p = makePanel({ plan: fills("el-7"), elements: [el("el-7", long)] });
+  await tick();
+  await runPlan(p);
+  assert.equal(p.$("btnUndo").textContent, "Undo last change");
+  p.dom.window.close();
+});
+
+test("undo words: the name is dropped by a new command, Stop, a tab change, and New request", async () => {
+  const leave = {
+    "new command": async (p) => { await typed(p, "show tags"); },
+    stop: async (p) => { p.$("btnStopExec").click(); await tick(); await tick(); },
+    "tab change": async (p) => { for (const fn of p.listeners.activated) fn({ tabId: 222 }); await tick(); await tick(); },
+    "new request": async (p) => { p.$("btnNewRequest").click(); await tick(); },
+  };
+  for (const [name, act] of Object.entries(leave)) {
+    const p = makePanel({ plan: fills("el-1", "el-7") });
+    await tick();
+    await runPlan(p);
+    assert.equal(p.$("btnUndo").textContent, "Undo Short bio", name);
+    await act(p);
+    assert.equal(p.$("btnUndo").textContent, "Undo last change", name);
+    assert.notEqual(p.view(), "done", name);
+    p.dom.window.close();
+  }
+});
+
+test("undo words: an agent bridge keeps everything generic, whether wanted at the start or connected later", async () => {
+  const wanted = makePanel({ plan: fills("el-1", "el-7"), sessionExtra: { bridgeWanted: true } });
+  await tick();
+  await runPlan(wanted);
+  assert.equal(wanted.view(), "done");
+  assert.equal(wanted.$("btnUndo").textContent, "Undo last change");
+  assert.match(wanted.$("resultUndoNote").textContent, /^Undo restores the last change only/);
+  wanted.dom.window.close();
+
+  const later = makePanel({ plan: fills("el-1", "el-7") });
+  await tick();
+  await runPlan(later);
+  assert.equal(later.$("btnUndo").textContent, "Undo Short bio");
+  for (const fn of later.listeners.storage) fn({ bridgeWanted: { newValue: true } }, "session");
+  await tick();
+  assert.equal(later.$("btnUndo").textContent, "Undo last change", "connecting an agent drops the name");
+  for (const fn of later.listeners.storage) fn({ bridgeWanted: {} }, "session");
+  await tick();
+  assert.equal(later.$("btnUndo").textContent, "Undo Short bio", "disconnecting restores it while Done stands");
+  later.dom.window.close();
+});
+
+test("undo phrases: each accepted phrase reaches undo with no planner call; near-misses never do", async () => {
+  for (const phrase of ["undo last change", "Undo the last change.", "undo that", "Undo it"]) {
+    let undos = 0;
+    const p = makePanel({ plan: twoFill, undo: () => { undos += 1; return { ok: false, error: { code: "NOTHING_TO_UNDO", message: "There is no change to undo." } }; } });
+    await tick();
+    await typed(p, phrase);
+    assert.equal(undos, 1, phrase);
+    assert.equal(p.calls.fetch, 0, phrase);
+    p.dom.window.close();
+  }
+  for (const phrase of ["don't undo that", "undo that please", "please undo it", "undo", "and do that", "undo everything"]) {
+    let undos = 0;
+    const p = makePanel({ plan: twoFill, undo: () => { undos += 1; return { ok: true, result: {} }; } });
+    await tick();
+    await typed(p, phrase);
+    assert.equal(undos, 0, phrase);
+    p.dom.window.close();
+  }
+});
+
+test("undo phrases: during plan review the new phrases behave exactly like “undo last change” and never run the plan", async () => {
+  for (const phrase of ["undo last change", "undo that", "undo it"]) {
+    let undos = 0;
+    const p = makePanel({ plan: twoFill, undo: () => { undos += 1; return { ok: false, error: { code: "NOTHING_TO_UNDO", message: "There is no change to undo." } }; } });
+    await tick();
+    await typed(p, "please do these things in order");
+    assert.equal(p.view(), "plan", phrase);
+    await typed(p, phrase);
+    assert.equal(undos, 1, phrase);
+    assert.equal(p.calls.execute, 0, `${phrase}: nothing in the plan ran`);
+    assert.notEqual(p.view(), "plan", `${phrase}: the plan under review is discarded, as before`);
+    p.dom.window.close();
+  }
+});
+
+test("undo phrases: a held action stays held and is never approved by an undo phrase", async () => {
+  for (const phrase of ["undo last change", "undo that", "undo it"]) {
+    let undos = 0;
+    const p = makePanel({
+      plan: twoFill,
+      onExecute: () => heldResponse("2099-01-01T00:00:00.000Z"),
+      undo: () => { undos += 1; return { ok: false, error: { code: "NOTHING_TO_UNDO", message: "There is no change to undo." } }; },
+    });
+    await tick();
+    await typed(p, "click Submit survey");
+    assert.equal(p.view(), "gate", phrase);
+    await typed(p, phrase);
+    assert.equal(undos, 1, phrase);
+    assert.equal(p.view(), "gate", `${phrase}: still held`);
+    assert.equal(p.calls.send.filter((m) => m.type === "SEEYABLE_APPROVE_CHALLENGE").length, 0, phrase);
+    p.dom.window.close();
+  }
+});
+
+test("words: an unverified click says so in plain words and never claims a check", async () => {
+  const p = makePanel({
+    plan: twoFill,
+    onExecute: () => ({ ok: true, result: { dispatched: true, verified: false }, newSnapshotDiff: null, diffUnavailableReason: "x", documentSessionId: "doc-A", revision: 1 }),
+    elements: fourFields,
+  });
+  await tick();
+  await typed(p, "click Save draft");
+  assert.equal(p.$("status").textContent, "Clicked Save draft. I can’t confirm the page responded, so please check it.");
+  assert.match(p.$("execResult").textContent, /NOT verified/, "the raw outcome stays in the Developer view");
+  p.dom.window.close();
+});
+
+test("words: already-set values and a lost connection are told honestly", async () => {
+  const same = makePanel({ plan: twoFill, onExecute: () => ({ ...verified, result: { alreadyInDesiredState: true } }), elements: fourFields });
+  await tick();
+  await typed(same, "fill Short bio with x");
+  assert.match(same.$("status").textContent, /Short bio was already set that way/);
+  same.dom.window.close();
+  const lost = makePanel({ plan: twoFill, onExecute: () => { throw new Error("gone"); }, elements: fourFields });
+  await tick();
+  await typed(lost, "fill Short bio with x");
+  assert.match(lost.$("status").textContent, /lost contact with the page, so I can.t tell whether Short bio changed/);
+  lost.dom.window.close();
+});
+
+test("recovery: an unpaired request shows the card, opens Developer view, and clears on the next command", async () => {
+  const p = makePanel({ plan: twoFill, sessionExtra: { plannerToken: undefined, plannerPort: undefined } });
+  await tick();
+  assert.equal(p.$("recoverBox").hidden, true);
+  await typed(p, "please fill this form");
+  assert.equal(p.calls.fetch, 0);
+  assert.equal(p.$("recoverBox").hidden, false);
+  assert.equal(p.doc.body.dataset.recover, "true");
+  assert.equal(p.$("recoverTitle").textContent.includes("I can’t plan that yet"), true);
+  assert.match(p.$("recoverCopy").textContent, /Simple commands like .fill Full name with Ada. work now/);
+  assert.doesNotMatch(p.$("status").textContent, /`|node apps|server\.mjs/, "no command line in the status");
+  p.$("btnRecoverDeveloper").click();
+  await tick();
+  assert.equal(p.$("screenSettings").hidden, false);
+  assert.equal(p.$("developerView").open, true);
+  assert.equal(p.doc.activeElement, p.$("plannerHeading"));
+  assert.equal(p.$("status").textContent, "", "the handled error does not linger");
+  assert.equal(p.$("recoverBox").hidden, true);
+  p.dom.window.close();
+
+  const q = makePanel({ plan: twoFill, sessionExtra: { plannerToken: undefined, plannerPort: undefined } });
+  await tick();
+  await typed(q, "please fill this form");
+  assert.equal(q.$("recoverBox").hidden, false);
+  await typed(q, "show tags");
+  assert.equal(q.$("recoverBox").hidden, true, "a working command clears it");
+  await typed(q, "please fill this form");
+  q.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.equal(q.$("recoverBox").hidden, true, "Stop clears it");
+  q.dom.window.close();
+});
+
+test("examples: chips come from a real field, only fill the input, and the example runs with no planner", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  assert.equal(p.$("commandInput").placeholder, "Fill Full name with Ada");
+  const chips = [...p.$("tryChips").querySelectorAll("button")];
+  assert.deepEqual(chips.map((c) => c.textContent), ["Fill Full name with Ada", "Show tags"]);
+  const sent = p.calls.send.length;
+  chips[0].click();
+  await tick(); await tick();
+  assert.equal(p.$("commandInput").value, "Fill Full name with Ada");
+  assert.equal(p.doc.activeElement, p.$("commandInput"));
+  assert.ok(p.calls.send.slice(sent).every((m) => m.type !== "SEEYABLE_EXECUTE_ACTION"), "a chip never sends");
+  assert.equal(p.calls.execute, 0);
+  p.$("btnSendCommand").click();
+  await tick(); await tick(); await tick();
+  assert.equal(p.calls.execute, 1);
+  assert.equal(p.calls.fetch, 0, "works without the planner");
+  assert.equal(p.calls.send.find((m) => m.type === "SEEYABLE_EXECUTE_ACTION").request.elementId, "el-1");
+  p.dom.window.close();
+});
+
+test("examples: never offered for Submit, secrets, unsuitable, filled, or look-alike fields", async () => {
+  const none = [
+    el("el-1", "Password", { state: { redacted: true } }),
+    el("el-2", "Disabled one", { state: { disabled: true } }),
+    el("el-3", "Locked one", { state: { readonly: true } }),
+    el("el-4", "Already filled", { state: { value: "mine" } }),
+    el("el-5", "Work email"),
+    el("el-6", "A label that is much too long to read as an example"),
+    el("el-7", "Twin"), el("el-8", "Twin"),
+    el("el-20", "Submit survey", { role: "button", tag: "button" }),
+  ];
+  const p = makePanel({ plan: twoFill, elements: none });
+  await tick(); await tick();
+  assert.equal(p.$("commandInput").placeholder, "e.g. Fill in this form");
+  assert.deepEqual([...p.$("tryChips").querySelectorAll("button")].map((c) => c.textContent), ["Show tags"]);
+  assert.doesNotMatch(p.$("tryChips").textContent, /Submit/);
+  p.dom.window.close();
+});
+
+test("examples: page names are data, never markup", async () => {
+  const p = makePanel({ plan: twoFill, elements: [el("el-1", "<b>Nick</b>")] });
+  await tick(); await tick();
+  const chip = p.$("tryChips").querySelector("button");
+  assert.equal(chip.querySelector("b"), null);
+  assert.equal(chip.textContent, "Fill <b>Nick</b> with Ada");
+  p.dom.window.close();
+});
+
+test("unavailable: a closed page explains itself with no Reload, no mic path, and safety and nav intact", async () => {
+  for (const url of ["chrome://newtab/", "about:blank", "chrome-extension://abc/page.html", "https://chromewebstore.google.com/detail/x", "https://chrome.google.com/webstore/detail/x"]) {
+    const rec = makeRecognitionClass();
+    const p = makePanel({ plan: twoFill, recognition: rec, snapshotError: () => true, tabsGet: (id) => ({ id, url, status: "complete" }) });
+    await tick(); await tick(); await tick();
+    assert.equal(p.view(), "unavailable", url);
+    assert.equal(p.$("modeLabel").textContent, "~n/a", url);
+    assert.equal(p.$("stateChip").textContent, "Unavailable", url);
+    assert.match(p.$("commandHeading").textContent, /can.t work on this page/, url);
+    assert.equal(p.$("btnReloadPage").hidden, true, `${url}: Reload cannot help`);
+    assert.equal(p.$("tagsChip").textContent, "Tags: off", url);
+    assert.equal(p.$("tagsChip").disabled, true, url);
+    assert.equal(p.$("btnStopExec").disabled, false, url);
+    assert.equal(p.$("btnUndo").disabled, false, url);
+    const alt = new p.win.KeyboardEvent("keydown", { altKey: true, code: "KeyS", bubbles: true, cancelable: true });
+    p.doc.body.dispatchEvent(alt);
+    await tick();
+    assert.equal(rec.instances.length, 0, `${url}: Alt+S starts nothing`);
+    p.dom.window.close();
+  }
+  const css = read("../sidepanel.css");
+  assert.match(css, /body\[data-view="unavailable"\] #btnListen, body\[data-view="unavailable"\] \.request-label, body\[data-view="unavailable"\] #voiceState \{ display: none; \}/);
+});
+
+test("unavailable: an ordinary page without the content script offers Reload, then recovers after it", async () => {
+  let broken = true;
+  const p = makePanel({ plan: twoFill, snapshotError: () => broken });
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "unavailable");
+  assert.match(p.$("commandHeading").textContent, /needs a reload/);
+  assert.match(p.$("heroCopy").textContent, /anything you typed into the page may be lost/);
+  assert.equal(p.$("btnReloadPage").hidden, false);
+  p.$("btnReloadPage").click();
+  await tick();
+  assert.deepEqual(p.calls.reload, [111], "only the click reloads, and only this tab");
+  broken = false;
+  for (const fn of p.listeners.updated) fn(111, { status: "loading" });
+  await tick();
+  assert.notEqual(p.view(), "unavailable");
+  for (const fn of p.listeners.updated) fn(111, { status: "complete" });
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "ready");
+  assert.equal(p.$("tagsChip").disabled, false);
+  assert.equal(p.$("targetSelect").options.length, 4, "the page is bound again");
+  p.dom.window.close();
+});
+
+test("unavailable: a slow-loading page is never called unavailable; the finished load decides", async () => {
+  let broken = true;
+  let status = "loading";
+  const p = makePanel({ plan: twoFill, snapshotError: () => broken, tabsGet: (id) => ({ id, url: "https://slow.example/", status }) });
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "ready", "still loading: no verdict");
+  broken = false;
+  status = "complete";
+  for (const fn of p.listeners.updated) fn(111, { status: "complete" });
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "ready");
+  assert.equal(p.$("targetSelect").options.length, 4);
+  p.dom.window.close();
+});
+
+test("unavailable: a viewable page without the executor is treated as needing a reload", async () => {
+  const p = makePanel({ plan: twoFill, snapshotError: () => true, scriptedSnapshot: true });
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "unavailable");
+  assert.equal(p.$("btnReloadPage").hidden, false);
+  p.dom.window.close();
+});
+
+test("unavailable: a held action outranks the unavailable view", async () => {
+  const p = makePanel({ plan: twoFill, snapshotError: () => true, scriptedSnapshot: true });
+  answer(p, "SEEYABLE_GET_PENDING_CONFIRMATION", () => ({ ok: true, confirmation: { ...heldResponse("2099-01-01T00:00:00.000Z").confirmation, documentSessionId: "doc-A" } }));
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(p.view(), "gate");
+  p.dom.window.close();
+});
+
+test("navigation: a finished load binds the shown tab once, and leaves other tabs alone", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  const count = () => p.calls.send.filter((m) => m.type === "SEEYABLE_SNAPSHOT_DOM").length;
+  const before = count();
+  for (const fn of p.listeners.updated) fn(111, { status: "complete" });
+  await tick(); await tick();
+  assert.equal(count(), before, "already bound: nothing to do");
+  for (const fn of p.listeners.updated) fn(999, { status: "complete" });
+  await tick(); await tick();
+  assert.equal(count(), before, "a background tab is ignored");
+  for (const fn of p.listeners.updated) fn(111, { status: "loading" });
+  await tick();
+  for (const fn of p.listeners.updated) fn(111, { status: "complete" });
+  await tick(); await tick(); await tick();
+  assert.equal(count(), before + 1, "a reload binds the fresh page");
+  assert.match(p.$("status").textContent, /^Found \d+ controls/, "the reload notice does not linger when nothing was lost");
   p.dom.window.close();
 });

@@ -36,6 +36,11 @@ let transcriptEmpty = true;
 let lastExecVerified = false;  // the latest execution result was verified
 let statusAboutHold = false;   // the status line was written while an action was held
 let statusFromOtherTab = false; // an error written before the active tab changed
+let plannerRecovery = false;   // the last request needs the planner proxy: show the recovery card
+let pageUnavailable = null;    // { kind: "restricted" | "reload", tabId } when this page cannot be operated
+// Unknown counts as wanted: an agent may act on the page, so the panel must
+// not name a target for Undo until it knows no bridge is in use.
+let agentBridgeWanted = true;
 
 function setStatus(text, isError) {
   const el = $("status");
@@ -288,6 +293,7 @@ function renderState() {
     else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
     else if (voicePhase === "finishing") { label = "Finishing"; cls = "is-listening"; }
     else if (gateClosed) { label = "Stopped"; cls = "is-error"; }
+    else if (pageUnavailable) { label = "Unavailable"; }
     else if (lastExecVerified) { label = "\u25A0 Done"; cls = "is-success"; }
     chip.className = "chip" + (cls ? " " + cls : "");
     chip.textContent = label;
@@ -306,9 +312,20 @@ function renderState() {
   if (heroHeading) heroHeading.textContent = voicePhase === "listening" ? "Listening"
     : voicePhase === "finishing" ? "Finishing"
     : view === "stopped" ? "Stopped."
-    : view === "working" ? "Working\u2026" : "Ready when you are.";
+    : view === "working" ? "Working\u2026"
+    : view === "unavailable" ? UNAVAILABLE_COPY[pageUnavailable.kind].title
+    : "Ready when you are.";
   const heroCopy = $("heroCopy");
-  if (heroCopy) heroCopy.textContent = view === "stopped" ? STOPPED_COPY : READY_COPY;
+  if (heroCopy) heroCopy.textContent = view === "stopped" ? STOPPED_COPY
+    : view === "unavailable" ? UNAVAILABLE_COPY[pageUnavailable.kind].copy
+    : READY_COPY;
+  const recovering = plannerRecovery && view === "ready";
+  document.body.dataset.recover = recovering ? "true" : "false";
+  $("recoverBox").hidden = !recovering;
+  if (recovering) $("recoverCopy").textContent = recoverCopy();
+  $("btnReloadPage").hidden = !(view === "unavailable" && pageUnavailable.kind === "reload");
+  $("btnUndo").textContent = undoLabel(view);
+  renderExamples();
   const gateTalk = $("gateTalk");
   if (gateTalk) gateTalk.hidden = !state.confirmation;
   renderListenHints();
@@ -323,9 +340,20 @@ function renderState() {
  * ownership, locks, plan binding, or approval authority. */
 const READY_COPY = "Say or type what you want done on this page. Plans are shown for review before anything changes, and Submit, Pay, Delete, and Send always stop for your approval.";
 const STOPPED_COPY = "Nothing new will run until you resume. Anything waiting for approval was withdrawn, and nothing that was stopped will run again.";
+const UNAVAILABLE_COPY = {
+  restricted: {
+    title: "Seeyable can\u2019t work on this page.",
+    copy: "Chrome keeps pages like this one closed to extensions. Switch to a regular web page to continue.",
+  },
+  reload: {
+    title: "This page needs a reload.",
+    copy: "Seeyable can\u2019t reach this page yet, usually because it was opened before Seeyable was installed or updated. Reloading connects it, but anything you typed into the page may be lost.",
+  },
+};
 const VIEW_MODES = {
   ready: "~ready", listening: "~listening", plan: "~plan", edit: "~edit", repair: "~you",
   gate: "~you", acting: "~you", working: "~you", done: "~done", stopped: "~stopped",
+  unavailable: "~n/a",
 };
 function currentView() {
   if (state.confirmation) return "gate";
@@ -335,6 +363,7 @@ function currentView() {
   if (pendingClarification) return "repair";
   if (state.pending || commandPending) return planProgress ? "acting" : "working";
   if (gateClosed) return "stopped";
+  if (pageUnavailable) return "unavailable";
   if (lastRun) return "done";
   return "ready";
 }
@@ -343,7 +372,97 @@ function currentView() {
  * from the validated plan and the reviewed snapshot (the same words the
  * review showed); they live only in this view and are never logged. */
 let planProgress = null; // { steps: [{ text, el, risky }], index }
-let lastRun = null;      // { steps: [{ text, el }] } after a verified plan
+let lastRun = null;      // { steps: [{ text, el, action, name, changed }] } after a verified plan
+
+/* Undo wording. The executor reverses only its last recorded change, and a
+ * verified no-op leaves the earlier record in place, so a target is named
+ * only when the plan's last step really changed that target. An agent on the
+ * bridge can act at any time, so its presence keeps the wording generic.
+ * Presentation only: the executor still decides what can be undone. */
+const UNDO_GENERIC = "Undo last change";
+const UNDO_NOTE_GENERIC = "Undo restores the last change only. Clicks, and anything the page did in response, are not reversed.";
+const REVERSIBLE_STEPS = new Set(["fill", "select", "check", "uncheck"]);
+const UNDO_NAME_MAX = 28;
+function lastStepIfReversible() {
+  const last = lastRun && !agentBridgeWanted ? lastRun.steps[lastRun.steps.length - 1] : null;
+  return last && last.changed && REVERSIBLE_STEPS.has(last.action) ? last : null;
+}
+function undoLabel(view) {
+  const last = view === "done" ? lastStepIfReversible() : null;
+  return last && last.name.length <= UNDO_NAME_MAX ? `Undo ${last.name}` : UNDO_GENERIC;
+}
+function undoNote(steps) {
+  if (agentBridgeWanted) return UNDO_NOTE_GENERIC;
+  const last = steps[steps.length - 1];
+  if (last.action === "click") {
+    return steps.length === 1
+      ? "This was a click, so it can\u2019t be undone from here."
+      : "This ended with a click, so these changes can\u2019t be undone from here.";
+  }
+  if (!lastStepIfReversible()) return UNDO_NOTE_GENERIC;
+  const others = [...new Set(steps.slice(0, -1).map((step) => step.name))].filter((name) => name !== last.name);
+  if (others.length === 0) return `Undo puts ${last.name} back as it was.`;
+  if (others.length === 1) return `Undo reverts ${last.name} only. ${others[0]} stays as it is.`;
+  if (others.length === 2) return `Undo reverts ${last.name} only. ${others[0]} and ${others[1]} stay as they are.`;
+  return `Undo reverts ${last.name} only. The other ${others.length} changes stay as they are.`;
+}
+
+/* Try chips and the input hint, built from a real field on this page. The
+ * example is offered only if the on-device resolver would pick that exact
+ * field, so it works without the planner. Page names are data: they reach
+ * the DOM through textContent and the placeholder property only. Chips fill
+ * the input and never send. */
+const DEFAULT_PLACEHOLDER = "e.g. Fill in this form";
+const EXAMPLE_NAME_MAX = 24;
+const NOT_A_NAME_FIELD = /e-?mail|phone|tel\b|date|url|website|number|zip|postcode|amount|search|\bpin\b/i;
+let exampleCache = { snapshot: undefined, command: null };
+function exampleFillCommand() {
+  const snapshot = state.snapshot;
+  if (exampleCache.snapshot === snapshot) return exampleCache.command;
+  let command = null;
+  const api = globalThis.SeeyableCommands;
+  const elements = snapshot && state.executorReady && Array.isArray(snapshot.elements) ? snapshot.elements : [];
+  if (api) {
+    for (const el of elements) {
+      const st = (el && el.state) || {};
+      if (!el || el.role !== "textbox" || st.disabled || st.readonly || st.redacted || st.value) continue;
+      const name = String(el.name || "").replace(/[\s*]+$/, "").trim();
+      if (!name || name.length > EXAMPLE_NAME_MAX || NOT_A_NAME_FIELD.test(name)) continue;
+      const candidate = `Fill ${name} with Ada`;
+      const parsed = api.parseLocalCommand(candidate);
+      if (!parsed || parsed.kind !== "fill") continue;
+      const matched = api.matchTarget(elements, parsed.target);
+      if (matched.status === "match" && matched.element.id === el.id) { command = candidate; break; }
+    }
+  }
+  exampleCache = { snapshot, command };
+  return command;
+}
+let renderedExamples = null;
+function renderExamples() {
+  const fill = exampleFillCommand();
+  const tags = $("tagsChip").getAttribute("aria-pressed") === "true" ? "Hide tags" : "Show tags";
+  const key = `${fill}|${tags}`;
+  if (key === renderedExamples) return;
+  renderedExamples = key;
+  $("commandInput").placeholder = fill || DEFAULT_PLACEHOLDER;
+  $("tryChips").replaceChildren(...[fill, tags].filter(Boolean).map((text) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "try-chip";
+    chip.textContent = text;
+    chip.addEventListener("click", () => {
+      $("commandInput").value = text;
+      $("commandInput").focus();
+    });
+    return chip;
+  }));
+}
+function recoverCopy() {
+  const fill = exampleFillCommand();
+  const example = fill ? `\u201C${fill.charAt(0).toLowerCase()}${fill.slice(1)}\u201D` : "\u201Cshow tags\u201D";
+  return `Simple commands like ${example} work now. Longer requests need the planner proxy: start it, then paste its pairing token in Developer view.`;
+}
 
 /* Step states on the page's word tags (acting / done / held), sent as one
  * complete picture to the bound tab over the trusted-panel route. "done"
@@ -407,6 +526,7 @@ function renderProgress() {
     const n = lastRun.steps.length;
     $("resultTitle").textContent = `${n} change${n === 1 ? "" : "s"} made.`;
     $("resultSteps").replaceChildren(...lastRun.steps.map((item) => stepItem(item, "done")));
+    $("resultUndoNote").textContent = undoNote(lastRun.steps);
   }
 }
 
@@ -504,7 +624,7 @@ function renderPageLine() {
       return;
     } catch { /* fall through to the empty state */ }
   }
-  meta.textContent = "No snapshot yet";
+  meta.textContent = pageUnavailable ? "Seeyable can\u2019t reach this page" : "No snapshot yet";
 }
 
 function invalidateExecution(reason) {
@@ -517,6 +637,7 @@ function invalidateExecution(reason) {
   setTagsChip("unknown");
   planProgress = null;
   lastRun = null;
+  plannerRecovery = false;
   if (state.confirmation) {
     const held = state.confirmation;
     try {
@@ -525,6 +646,7 @@ function invalidateExecution(reason) {
     } catch { /* the document is gone; its challenges died with it */ }
     clearConfirmation("The pending confirmation was discarded because the tab or document changed. If its action had already been dispatched to the page, it may still have taken effect; verify page state before continuing.", true, { restoreFocus: false });
   }
+  pageUnavailable = null;
   state.opTabId = null;
   state.snapshot = null;
   state.executorReady = false;
@@ -552,7 +674,7 @@ let autoAcquireIntent = null; // { tabId, gen } awaiting automatic acquisition
 
 function requestAutoSnapshot(tabId) {
   if (!Number.isInteger(tabId)) return;
-  if (state.boundTabId === tabId && state.snapshot) { autoAcquireIntent = null; return; }
+  if (state.boundTabId === tabId && state.snapshot && state.executorReady) { autoAcquireIntent = null; return; }
   // The intent is stamped with the generation that submitted it; a
   // later activation/navigation supersedes it, and the drain refuses
   // to act on a stale stamp.
@@ -564,12 +686,39 @@ function drainAutoAcquire() {
   if (autoAcquireIntent === null) return;
   if (autoAcquireIntent.gen !== state.generation) { autoAcquireIntent = null; return; } // superseded intent never acquires
   const tabId = autoAcquireIntent.tabId;
-  if (state.boundTabId === tabId && state.snapshot) { autoAcquireIntent = null; return; }
+  if (state.boundTabId === tabId && state.snapshot && state.executorReady) { autoAcquireIntent = null; return; }
   if (state.pending || state.acquiring || commandPending || pendingPlan) return; // latest intent retained
   autoAcquireIntent = null;
   // Floating by design; a panel closing mid-acquisition must not turn
   // teardown races into unhandled rejections.
   void takeSnapshot("Loading this page", { auto: true, tabId }).catch(() => {});
+}
+
+/* Why this page cannot be operated, from the tab itself. A tab still loading
+ * is never called unavailable: the "complete" update acquires again. Only
+ * changes what is shown; the executor's own checks are untouched. */
+const CLOSED_SCHEMES = /^(chrome|chrome-extension|chrome-search|chrome-untrusted|devtools|edge|about|view-source|file|data):/i;
+function isClosedUrl(url) {
+  if (CLOSED_SCHEMES.test(url)) return true;
+  try {
+    const u = new URL(url);
+    return u.hostname === "chromewebstore.google.com"
+      || (u.hostname === "chrome.google.com" && u.pathname.startsWith("/webstore"));
+  } catch { return false; }
+}
+async function classifyUnavailable(tabId) {
+  let tab = null;
+  try { tab = await chrome.tabs.get(tabId); } catch { return null; }
+  if (!tab) return null;
+  const url = tab.url || tab.pendingUrl || "";
+  if (url && isClosedUrl(url)) return { kind: "restricted", tabId };
+  return tab.status === "complete" ? { kind: "reload", tabId } : null;
+}
+function applyUnavailable(found) {
+  pageUnavailable = found;
+  if (found) setTagsChip("off");
+  renderPageLine();
+  renderState();
 }
 
 async function takeSnapshot(originLabel, opts = {}) {
@@ -585,6 +734,7 @@ async function takeSnapshot(originLabel, opts = {}) {
   const gen = state.generation;
   const myOp = ++state.opSeq;
   let progressWrite = -1; // the status write holding this acquisition's progress text
+  let snapshotTabId = Number.isInteger(opts.tabId) ? opts.tabId : null;
   state.acquiring = true;
   if (Number.isInteger(opts.tabId)) state.opTabId = opts.tabId;
   updateExecuteEnabled();
@@ -593,6 +743,7 @@ async function takeSnapshot(originLabel, opts = {}) {
     if (!tab || tab.id === undefined) { setStatus("No active tab.", true); return; }
     if (gen !== state.generation || myOp !== state.opSeq) return;
     state.opTabId = tab.id;
+    snapshotTabId = tab.id;
     // Automatic acquisitions are status-quiet about outcomes another
     // operation produced: when an error/discard status already stands,
     // the auto acquisition writes nothing at all (binding state is
@@ -606,6 +757,7 @@ async function takeSnapshot(originLabel, opts = {}) {
     if (gen !== state.generation || myOp !== state.opSeq) return; // invalidated or superseded
     try {
       bindSnapshot(tab.id, snapshot, viaContentScript);
+      if (viaContentScript) applyUnavailable(null);
       lastKind = "dom-aria";
       const fresh = snapshot.fresh === false ? " · STALE" : "";
       showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${pageLocation(snapshot.url)}`);
@@ -614,7 +766,10 @@ async function takeSnapshot(originLabel, opts = {}) {
       } else if (viaContentScript) {
         setStatus(`Found ${snapshot.elementCount} controls on this page.`);
       } else {
-        setStatus("Snapshot obtained through the scripting fallback. Execution is disabled: reload the tab and reopen the panel so the full content script is available.", true);
+        setExecStatus("Snapshot obtained through the scripting fallback; execution is disabled until the tab is reloaded.", true);
+        setStatus("Seeyable can see this page but can\u2019t act on it yet. Reload the tab to connect it.", true);
+        const found = await classifyUnavailable(tab.id);
+        if (gen === state.generation && myOp === state.opSeq) applyUnavailable(found);
       }
     } catch (bindErr) {
       // Automatic acquisition runs unattended: if the panel is closing
@@ -626,8 +781,14 @@ async function takeSnapshot(originLabel, opts = {}) {
     // A failed refresh must not leave the previous snapshot execution-ready.
     if (state.snapshot) state.executorReady = false;
     console.error(err);
+    const found = snapshotTabId === null ? null : await classifyUnavailable(snapshotTabId);
+    if (gen !== state.generation || myOp !== state.opSeq) return;
+    applyUnavailable(found);
     if (!opts.auto || statusWrites === progressWrite) {
-      try { setStatus(`DOM snapshot failed: ${err.message || err}`, true); } catch { if (!opts.auto) throw err; }
+      try {
+        setExecStatus(`DOM snapshot failed: ${err.message || err}`, true);
+        setStatus("Could not read this page.", true);
+      } catch { if (!opts.auto) throw err; }
     }
   } finally {
     try {
@@ -862,9 +1023,9 @@ async function runShowTags(opts = {}) {
       setTagsChip("on");
       renderTargets(); // refresh "Shown in panel" marks from this show's report
       if (unplacedIds.size > 0) {
-        return { ok: true, message: `Tags shown (${res.total} controls, revision ${res.revision}). Some word tags stay in the panel \u2014 see Targets.` };
+        return { ok: true, message: "Tags shown. Some word tags stay in the panel \u2014 see Targets." };
       }
-      return { ok: true, message: `Tags shown (${res.total} controls, revision ${res.revision}).` };
+      return { ok: true, message: "Tags shown." };
     }
     return { ok: false, message: `Show tags failed: ${(res && res.error) || "no response"}` };
   } catch (err) {
@@ -1052,7 +1213,7 @@ function updateVoiceControls() {
   $("btnSendCommand").disabled = commandPending || panelBusy;
   $("commandInput").disabled = commandPending;
   // The tags toggle and Undo dispatch through the same typed flow and lock.
-  if ($("tagsChip")) $("tagsChip").disabled = commandPending || panelBusy;
+  if ($("tagsChip")) $("tagsChip").disabled = commandPending || panelBusy || Boolean(pageUnavailable);
   if ($("btnUndo")) $("btnUndo").disabled = commandPending || panelBusy;
   // Speak prompts are the same Start control, offered where an answer fits.
   for (const id of ["btnTalkPlan", "btnTalkGate", "btnTalkDone"]) {
@@ -1180,7 +1341,9 @@ function presentCommandHelp(prefix) {
   // One authoritative command-error message, announced once: the
   // status surface carries it. The voice area keeps only microphone
   // truth, so typed failures are never duplicated as voice failures.
-  const message = `${prefix}Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>".`;
+  const fill = exampleFillCommand();
+  const example = fill ? `\u201C${fill.charAt(0).toLowerCase()}${fill.slice(1)}\u201D, ` : "";
+  const message = `${prefix}Try \u201Cshow tags\u201D, ${example}or a request.`;
   setStatus(message, true);
   settleVoiceAfterCommand();
 }
@@ -1243,12 +1406,13 @@ async function ensureCommandSnapshot(tabId, gen, seq, opts = {}) {
     showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${pageLocation(snapshot.url)}`);
     lastKind = "dom-aria";
     if (!viaContentScript) {
-      return { error: "The page is not ready for commands. Reload the tab and send the command again." };
+      return { error: "This page isn\u2019t ready for commands. Reload the tab and send the command again." };
     }
     return { snapshot };
   } catch (err) {
     if (gen !== state.generation || seq !== interactionSeq || myOp !== state.opSeq) return { discarded: true };
-    return { error: `Could not read the page: ${err.message || err}` };
+    setExecStatus(`Could not read the page: ${err.message || err}`, true);
+    return { error: "Could not read this page. Reload the tab and send the command again." };
   } finally {
     if (myOp === state.opSeq) state.opTabId = null;
   }
@@ -1256,6 +1420,37 @@ async function ensureCommandSnapshot(tabId, gen, seq, opts = {}) {
 
 function commandTargetName(element) {
   return (element && (element.name || element.role || element.id)) || "that control";
+}
+
+/* Plain words for executor refusals. Raw codes and diffs stay in the
+ * Developer view; an unlisted code gets the honest fallback. */
+const FAILURE_WORDS = {
+  TARGET_DISABLED: "it\u2019s disabled right now",
+  TARGET_READONLY: "it\u2019s read-only",
+  TARGET_HIDDEN: "it\u2019s hidden right now",
+  STALE_TARGET: "it\u2019s no longer on the page",
+  UNKNOWN_ID: "it\u2019s no longer on the page",
+  STALE_SNAPSHOT: "the page changed first, so I left it alone",
+  STALE_REVISION: "the page changed first, so I left it alone",
+  SNAPSHOT_BASELINE_REQUIRED: "the page changed first, so I left it alone",
+  WRONG_SESSION: "the page changed first, so I left it alone",
+  SENSITIVE_FIELD: "passwords and payment details are yours to enter",
+  INCOMPATIBLE_TARGET: "that kind of control can\u2019t do this",
+  OPTION_NOT_FOUND: "that choice isn\u2019t in the list",
+  OPTION_DISABLED: "that choice is disabled",
+  VALUE_REQUIRED: "no value was given",
+  UNSUPPORTED_MULTISELECT: "lists with several choices aren\u2019t supported yet",
+  UNSUPPORTED_RADIO_UNCHECK: "a radio button can\u2019t be cleared on its own",
+  EXECUTION_STOPPED: "Seeyable is stopped, so press Resume first",
+  EXECUTION_PAUSED: "Seeyable is stopped, so press Resume first",
+  EXECUTION_BUSY: "another action is still running",
+  EXECUTION_CANCELLED: "it was cancelled",
+  DEADLINE_EXPIRED: "the page took too long to respond, so please check it",
+  ACTION_FAILED: "something went wrong on the page, so please check it",
+  ACTION_NOT_VERIFIED: "I can\u2019t confirm the page responded, so please check it",
+};
+function failureWords(error) {
+  return FAILURE_WORDS[error && error.code] || "something went wrong, so please check the page (details in the Developer view)";
 }
 
 function presentPipelineOutcome(action, name, result) {
@@ -1283,18 +1478,20 @@ function presentPipelineOutcome(action, name, result) {
   if (result.outcome === "completed") {
     const response = result.response;
     if (!response.ok) {
-      return { ok: false, message: `Could not ${action} ${name}: ${response.error.code} — ${response.error.message}`, contextOutcome: `failed: ${response.error.code}` };
+      return { ok: false, message: `Could not ${action} ${name}: ${failureWords(response.error)}.`, contextOutcome: `failed: ${response.error.code}` };
     }
-    const detail = describeOutcome(response);
     if (isConfirmedOutcome(response)) {
-      return { ok: true, message: `${past} ${name}. ${detail} ${executionDiffLine(response)}`, spoken: `${past} ${name}.`, contextOutcome: "completed" };
+      const said = response.result && response.result.alreadyInDesiredState
+        ? `${name} was already set that way, so nothing needed changing.`
+        : `${past} ${name}. Checked on the page.`;
+      return { ok: true, message: said, spoken: `${past} ${name}.`, contextOutcome: "completed" };
     }
-    return { ok: true, message: `${past} ${name}, but ${detail} ${executionDiffLine(response)}`, spoken: "That may not have finished. Check the page.", contextOutcome: "completed unverified" };
+    return { ok: true, message: `${past} ${name}. I can\u2019t confirm the page responded, so please check it.`, spoken: "That may not have finished. Check the page.", contextOutcome: "completed unverified" };
   }
   if (result.outcome === "transport") {
-    return { ok: false, message: `Transport failure — outcome unknown. Nothing about ${name} is implied.`, contextOutcome: "transport failure" };
+    return { ok: false, message: `I lost contact with the page, so I can\u2019t tell whether ${name} changed. Please check it.`, contextOutcome: "transport failure" };
   }
-  return { ok: false, message: "The executor gave no usable answer. Nothing was confirmed.", contextOutcome: "malformed response" };
+  return { ok: false, message: "The page gave no usable answer, so nothing is confirmed. Please check it.", contextOutcome: "malformed response" };
 }
 
 async function runPageActionCommand(local, source, gen, seq) {
@@ -1619,15 +1816,11 @@ async function runCorrectionCommand(correction, source, gen, seq) {
   };
 }
 
-function plannerFailureMessage(err, localReason) {
+function plannerFailureMessage(err) {
   const code = err && err.code;
   if (code === "NO_TOKEN" || code === "UNREACHABLE") {
-    const prefix = localReason ? `Unsupported command — ${localReason}. ` : "Unsupported command. ";
-    return {
-      ok: false,
-      message: `${prefix}Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>". `
-        + "Anything beyond that needs the planner proxy: start it with `node apps/planner-proxy/server.mjs` and paste its token into the Developer view.",
-    };
+    // The recovery card carries the instructions; status says what happened.
+    return { ok: false, recover: true, message: "Unsupported command. That request needs the planner proxy." };
   }
   if (code === "NO_API_KEY") return { ok: false, message: `Planner unavailable: ${err.message}` };
   if (code === "PLAN_INVALID") {
@@ -1724,10 +1917,11 @@ async function runPlanSteps(plan, opts) {
       const element = elements.find((e) => e && e.id === step.elementId)
         || opts.pruned.elements.find((e) => e.id === step.elementId);
       const described = describePlanStep(step, element, elements);
-      return { text: described.text, el: step.elementId, risky: Boolean(described.note) };
+      return { text: described.text, el: step.elementId, risky: Boolean(described.note), action: step.action, name: commandTargetName(element), changed: false };
     }),
   };
   lastRun = null;
+  plannerRecovery = false;
   renderState();
   try {
     const outcome = await runPlanStepsInner(plan, opts);
@@ -1768,7 +1962,7 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
     if (!target) {
       return {
         ok: false,
-        message: planStopMessage(done, total, `step ${i + 1} targets ${step.elementId}, which is no longer on the page`),
+        message: planStopMessage(done, total, `step ${i + 1}\u2019s target is no longer on the page`),
         contextSummary: planSummary,
         contextOutcome: `stopped: target gone at step ${i + 1}/${total}`,
       };
@@ -1829,7 +2023,7 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
     if (result.outcome === "transport" || result.outcome === "malformed") {
       return {
         ok: false,
-        message: planStopMessage(done, total, `step ${i + 1} could not reach the executor`),
+        message: planStopMessage(done, total, `I lost contact with the page at step ${i + 1}`),
         contextSummary: planSummary,
         contextOutcome: `stopped: transport at step ${i + 1}/${total}`,
       };
@@ -1838,19 +2032,19 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
     if (!response.ok) {
       return {
         ok: false,
-        message: planStopMessage(done, total, `step ${i + 1} failed: ${response.error.code} — ${response.error.message}`),
+        message: planStopMessage(done, total, `step ${i + 1} failed on ${commandTargetName(target)}: ${failureWords(response.error)}`),
         contextSummary: planSummary,
         contextOutcome: `stopped: ${response.error.code} at step ${i + 1}/${total}`,
       };
     }
-    const detail = describeOutcome(response);
     if (isConfirmedOutcome(response)) {
       done.push(commandTargetName(target));
+      if (planProgress) planProgress.steps[i].changed = isVerifiedResult(response);
       continue;
     }
     return {
       ok: false,
-      message: planStopMessage(done, total, `step ${i + 1} could not be verified: ${detail}`),
+      message: planStopMessage(done, total, `step ${i + 1} could not be verified on the page`),
       contextSummary: planSummary,
       contextOutcome: `stopped: unverified at step ${i + 1}/${total}`,
     };
@@ -1885,7 +2079,7 @@ function startTiming(source) {
   };
 }
 
-async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = {}) {
+async function runPlannerCommand(rawText, source, gen, seq, opts = {}) {
   const plannerApi = globalThis.SeeyablePlanner;
   const planApi = globalThis.SeeyablePlan;
   if (!plannerApi || !planApi) {
@@ -1898,7 +2092,7 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
   // help as the old unsupported branch plus the pairing hint.
   const creds = await plannerCredentials();
   if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
-  if (!creds.token) return plannerFailureMessage({ code: "NO_TOKEN" }, localReason);
+  if (!creds.token) return plannerFailureMessage({ code: "NO_TOKEN" });
   voiceTabId = tab.id;
   setStatus("Planning…");
   const timing = opts.timing || null;
@@ -1942,7 +2136,7 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
     if (timing) timing.log("proxy-error", performance.now() - requestStarted, ` code=${err && err.code ? err.code : "ERROR"}`);
     plannerAbortController = null;
     if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
-    return plannerFailureMessage(err, localReason);
+    return plannerFailureMessage(err);
   }
   plannerAbortController = null;
   if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
@@ -2442,11 +2636,11 @@ async function runUndoCommand(source, gen, seq) {
   const base = { contextSummary: "undo last change" };
   if (transportError) {
     state.executorReady = false;
-    return { ...base, ok: false, message: "Undo transport failure — outcome unknown. Check the page before continuing.", contextOutcome: "transport failure" };
+    return { ...base, ok: false, message: "I lost contact with the page during undo, so I can\u2019t tell what changed. Please check it.", contextOutcome: "transport failure" };
   }
   if (!response || typeof response.ok !== "boolean") {
     state.executorReady = false;
-    return { ...base, ok: false, message: "The executor gave no usable answer to undo. Nothing was confirmed.", contextOutcome: "malformed response" };
+    return { ...base, ok: false, message: "The page gave no usable answer to undo, so nothing is confirmed. Please check it.", contextOutcome: "malformed response" };
   }
   const code = response.error && response.error.code;
   if (response.ok || code === "UNDO_NOT_VERIFIED" || code === "ACTION_FAILED") {
@@ -2513,6 +2707,7 @@ function finishCommandOutcome(outcome, { gen, seq, acting, fallbackSummary, fall
       outcome.contextSummary || fallbackSummary,
       outcome.contextOutcome || (outcome.clarify ? "clarification requested" : outcome.ok ? "completed" : "failed"));
   }
+  if (outcome.recover) plannerRecovery = true;
   setStatus(`${notePrefix || ""}${outcome.message}`, !outcome.ok);
   if (outcome.ok) {
     // A completed command is recovery from any prior recognition error.
@@ -2592,6 +2787,7 @@ async function dispatchCommand(rawText, source, meta = {}) {
   if (!state.confirmation) setConfirmStatus("");
   clearClarification();
   lastRun = null;
+  plannerRecovery = false;
   const supersededPlan = discardPlanReview() && !edited;
   // Typed submission safely resolves any live recognition first:
   // the speech session is cancelled and its utterance discarded.
@@ -2648,7 +2844,7 @@ async function dispatchCommand(rawText, source, meta = {}) {
     } else if (isCorrection) {
       outcome = await runCorrectionCommand(correction, source, gen, seq);
     } else if (isPlanner) {
-      outcome = await runPlannerCommand(text, source, gen, seq, local && local.reason, { edited, timing });
+      outcome = await runPlannerCommand(text, source, gen, seq, { edited, timing });
     } else {
       outcome = await runPageActionCommand(local, source, gen, seq);
     }
@@ -2741,7 +2937,7 @@ document.addEventListener("keydown", (event) => {
   if (!event.altKey || event.ctrlKey || event.metaKey || event.code !== "KeyS" || event.repeat) return;
   const target = event.target;
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
-  if ($("btnListen").disabled) return;
+  if ($("btnListen").disabled || currentView() === "unavailable") return;
   event.preventDefault();
   showScreen("Assist");
   void startListening();
@@ -2775,8 +2971,37 @@ $("btnSendCommand").addEventListener("click", async () => {
 $("btnUndo").addEventListener("click", async () => {
   await dispatchCommand("undo last change", "typed");
 });
+$("btnRecoverDeveloper").addEventListener("click", () => {
+  plannerRecovery = false;
+  setStatus("");
+  $("developerView").open = true;
+  showScreen("Settings");
+  renderState();
+  $("plannerHeading").focus();
+});
+// The extension's own Reload: a click on this button only, on the tab the
+// panel found unreachable. Nothing is approved or replayed afterwards.
+$("btnReloadPage").addEventListener("click", () => {
+  if (!pageUnavailable || pageUnavailable.kind !== "reload") return;
+  void chrome.tabs.reload(pageUnavailable.tabId);
+});
+void (async () => {
+  try {
+    const stored = await chrome.storage.session.get(["bridgeWanted"]);
+    agentBridgeWanted = Boolean(stored && stored.bridgeWanted);
+    renderState();
+  } catch { /* stays generic */ }
+})();
+if (chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "session" || !("bridgeWanted" in changes)) return;
+    agentBridgeWanted = Boolean(changes.bridgeWanted.newValue);
+    renderState();
+  });
+}
 $("btnNewRequest").addEventListener("click", () => {
   lastRun = null;
+  plannerRecovery = false;
   renderState();
   $("commandInput").focus();
 });
@@ -2955,6 +3180,8 @@ async function runExecutionPipeline(tabId, request, gen, ownerSeq = null) {
   // caller's lock covers it; failures mark execution disabled.
   await refreshAfterExecution(tabId, gen, request.documentSessionId);
   void fetchActionLog(tabId);
+  // Raw codes and diffs live here; the status line stays in plain words.
+  $("execResult").textContent = [describeOutcome(response), executionDiffLine(response), "", JSON.stringify(response, null, 2)].join("\n");
   return { outcome: "completed", response };
 }
 
@@ -3135,6 +3362,7 @@ function showConfirmation(confirmation, tabId) {
   // action: the latest-result line belongs to the earlier action.
   $("latestResult").textContent = "";
   lastRun = null;
+  plannerRecovery = false;
   $("confirmBox").hidden = false;
   renderTargets(); // mark the held target in the list from authoritative state
   const title = $("confirmTitle");
@@ -3391,6 +3619,7 @@ $("btnStopExec").addEventListener("click", async () => {
   pendingCorrection = null;
   clearClarification();
   lastRun = null;
+  plannerRecovery = false;
   sendTagStates({});
   if (hadPlan && !commandPending) {
     setStatus("Plan discarded — execution was stopped. Nothing was executed, and Resume does not bring it back.", true);
@@ -3529,7 +3758,7 @@ chrome.tabs.onActivated.addListener((info) => {
     const discardedWork = Boolean(pendingPlan || pendingClarification || state.confirmation
       || commandPending || !$("planEditBox").hidden);
     invalidateExecution(ownedTab !== null || state.snapshot
-      ? "Active tab changed. The previous execution selection was discarded."
+      ? "Active tab changed. Anything waiting on the previous tab was discarded."
       : null);
     statusFromOtherTab = statusIsError && !discardedWork;
   }
@@ -3544,8 +3773,23 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
     cancelVoiceInteraction("listening was discarded because the tab navigated or reloaded.");
   }
   const ownedTab = state.boundTabId !== null ? state.boundTabId : state.opTabId;
+  if (pageUnavailable && pageUnavailable.tabId === tabId && (info.status === "loading" || info.url)) {
+    applyUnavailable(null);
+  }
   if (ownedTab !== null && tabId === ownedTab && (info.status === "loading" || info.url)) {
-    invalidateExecution("The tab navigated or reloaded. The previous execution selection was discarded; take a fresh snapshot.");
+    const discardedWork = Boolean(pendingPlan || pendingClarification || state.confirmation
+      || commandPending || !$("planEditBox").hidden);
+    invalidateExecution("The page navigated or reloaded, so anything waiting on it was discarded.");
+    statusFromOtherTab = statusIsError && !discardedWork;
+  }
+  // A finished load in the tab being shown binds it (the same read-only
+  // automatic path as switching tabs), so the panel never stays on an
+  // unavailable or stale view after a navigation.
+  if (info.status === "complete") {
+    const gen = state.generation;
+    void activeTab().then((tab) => {
+      if (tab && tab.id === tabId && gen === state.generation) requestAutoSnapshot(tabId);
+    }).catch(() => {});
   }
 });
 renderTargets(); // empty state until the first snapshot binds
