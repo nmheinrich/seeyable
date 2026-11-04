@@ -41,8 +41,9 @@ flowchart LR
     executor -. "consequential action held" .-> panel
 ```
 
-The planner runs `muse-spark-1.3` through the Meta Model API. It can only propose
-plans. It cannot click, fill or approve anything.
+The planner runs `muse-spark-1.3` through the Meta Model API. It can propose
+plans for live execution to be completed by the extension. Alternatively, other 
+AI agents can perform actions by invoking the tools available via MCP. 
 
 ## Engineering decisions
 
