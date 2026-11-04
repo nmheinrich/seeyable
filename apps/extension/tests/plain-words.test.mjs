@@ -510,3 +510,127 @@ test("panel logic reads state flags, never display text", () => {
     assert.ok(!pattern.test(source), `display text used as logic: ${pattern}`);
   }
 });
+
+test("source: a long snapshot URL wraps instead of widening the screen", () => {
+  const css = read("../sidepanel.css");
+  assert.match(css, /\.meta \{[^}]*overflow-wrap: anywhere/);
+  assert.match(css, /\.toolbar \.meta \{ flex: 1 1 100%/);
+});
+
+const heldResponse = (expiresAt) => ({
+  ok: false, error: { code: "CONFIRMATION_REQUIRED", message: "Approval required." },
+  confirmation: { challengeId: "ch-1", elementId: "el-20", action: "click", targetName: "Submit survey", consequence: "Submits.", expiresAt },
+  documentSessionId: "doc-A", revision: 1,
+});
+
+test("plain words: cancelling a hold removes the held notice and reports the outcome once", async () => {
+  const p = makePanel({ plan: twoFill, onExecute: () => heldResponse("2099-01-01T00:00:00.000Z") });
+  await typed(p, "click Submit survey");
+  assert.equal(p.view(), "gate");
+  assert.match(p.$("status").textContent, /^Held/);
+  p.$("btnCancelChallenge").click();
+  await tick(); await tick();
+  assert.notEqual(p.view(), "gate");
+  assert.equal(p.$("status").textContent, "", "nothing still claims an action is held");
+  assert.match(p.$("confirmStatus").textContent, /Cancelled/);
+  await typed(p, "show tags");
+  assert.equal(p.$("confirmStatus").textContent, "", "the next command clears the old outcome");
+  p.dom.window.close();
+});
+
+test("plain words: Stop clears an old gate outcome", async () => {
+  const p = makePanel({ plan: twoFill, onExecute: () => heldResponse("2099-01-01T00:00:00.000Z") });
+  await typed(p, "click Submit survey");
+  p.$("btnCancelChallenge").click();
+  await tick(); await tick();
+  p.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.equal(p.$("confirmStatus").textContent, "");
+  p.dom.window.close();
+});
+
+test("plain words: the gate counts down for sight and announces once", async () => {
+  const p = makePanel({ plan: twoFill, onExecute: () => heldResponse(new Date(Date.now() + 60000).toISOString()) });
+  await typed(p, "click Submit survey");
+  const countdown = p.$("confirmCountdown");
+  assert.equal(countdown.hidden, false);
+  assert.match(countdown.textContent, /^Expires in [01]:\d\d$/);
+  assert.equal(countdown.getAttribute("aria-hidden"), "true", "the ticking text is never announced");
+  assert.equal(countdown.getAttribute("role"), null);
+  assert.match(p.$("confirmCopy").querySelector(".sr-only").textContent, /about a minute/);
+  assert.ok(!p.$("confirmBox").getAttribute("aria-describedby").includes("confirmCountdown"));
+  p.$("btnCancelChallenge").click();
+  await tick(); await tick();
+  assert.equal(countdown.hidden, true);
+  p.dom.window.close();
+});
+
+test("plain words: an expired countdown says so and leaves refusal to the executor", async () => {
+  const p = makePanel({ plan: twoFill, onExecute: () => heldResponse(new Date(Date.now() - 1000).toISOString()) });
+  await typed(p, "click Submit survey");
+  assert.match(p.$("confirmCountdown").textContent, /expired/);
+  assert.equal(p.$("confirmBox").hidden, false, "the card stays until the person acts");
+  assert.equal(p.calls.send.filter((m) => m.type === "SEEYABLE_APPROVE_CHALLENGE").length, 0);
+  p.dom.window.close();
+});
+
+test("plain words: an error from another tab gives way to a good snapshot, a discarded plan does not", async () => {
+  const p = makePanel({ plan: twoFill });
+  await typed(p, "click qqqqqq");
+  assert.ok(p.$("status").classList.contains("error"), "starts from a real error");
+  for (const fn of p.listeners.activated) fn({ tabId: 222 });
+  await tick(); await tick(); await tick();
+  assert.match(p.$("status").textContent, /^Found \d+ controls/, "the old tab's error is gone");
+  assert.ok(!p.$("status").classList.contains("error"));
+  p.dom.window.close();
+
+  const q = makePanel({ plan: twoFill });
+  await typed(q, "put Grace Hopper in Full name and Pilot in Short bio");
+  assert.equal(q.view(), "plan");
+  for (const fn of q.listeners.activated) fn({ tabId: 222 });
+  await tick(); await tick(); await tick();
+  assert.match(q.$("status").textContent, /Active tab changed/, "losing a plan stays reported");
+  q.dom.window.close();
+});
+
+// Replaces one tab reply on an already built panel.
+function answer(p, type, reply) {
+  const original = p.win.chrome.tabs.sendMessage;
+  p.win.chrome.tabs.sendMessage = async (tabId, msg) => (msg.type === type ? reply(msg) : original(tabId, msg));
+}
+
+test("plain words: Activity uses local time, plain words and names, and never implies success", async () => {
+  const p = makePanel({ plan: twoFill });
+  const stamp = "2026-11-04T03:24:13.000Z";
+  answer(p, "SEEYABLE_GET_ACTION_LOG", () => ({ ok: true, entries: [
+    { timestamp: stamp, source: "manual", action: "click", elementId: "el-20", targetName: null, decision: "EXECUTION_STOPPED" },
+    { timestamp: stamp, source: "manual", action: "gate-resume", elementId: null, targetName: null, decision: "resumed" },
+    { timestamp: stamp, source: "mcp", action: "fill", elementId: "el-99", targetName: null, decision: "SOME_NEW_CODE" },
+  ] }));
+  await typed(p, "show tags");
+  p.doc.querySelector('.screen-nav [data-screen="Activity"]').click();
+  await tick(); await tick();
+  const rows = [...p.$("activityList").querySelectorAll(".activity-row")].reverse();
+  const local = new Date(stamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  assert.equal(rows[0].querySelector(".when").textContent, local);
+  assert.match(rows[0].textContent, /click “Submit survey”/, "a missing log name falls back to the snapshot");
+  assert.match(rows[0].textContent, /not run, Seeyable was stopped/);
+  assert.ok(!/EXECUTION_STOPPED/.test(rows[0].textContent));
+  assert.match(rows[1].textContent, /Resume/);
+  assert.ok(!/gate-resume/.test(rows[1].textContent));
+  assert.match(rows[2].textContent, /fill target 99 · by an assistant/);
+  assert.match(rows[2].textContent, /did not complete/);
+  p.dom.window.close();
+});
+
+test("plain words: the snapshot line shows host and path, not the query string", async () => {
+  const p = makePanel({ plan: twoFill });
+  answer(p, "SEEYABLE_SNAPSHOT_DOM", () => ({ ok: true, snapshot: {
+    ...snap(base), url: "https://docs.google.com/forms/d/e/abc/viewform?usp=pp_url&secret=1",
+  } }));
+  p.$("btnDom").click();
+  await tick(); await tick(); await tick();
+  assert.match(p.$("meta").textContent, /docs\.google\.com\/forms\/d\/e\/abc\/viewform$/);
+  assert.ok(!p.$("meta").textContent.includes("secret"));
+  p.dom.window.close();
+});

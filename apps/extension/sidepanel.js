@@ -34,6 +34,8 @@ let statusIsError = false;
 let voiceMessageQuiet = true;  // the voice line says nothing beyond idle
 let transcriptEmpty = true;
 let lastExecVerified = false;  // the latest execution result was verified
+let statusAboutHold = false;   // the status line was written while an action was held
+let statusFromOtherTab = false; // an error written before the active tab changed
 
 function setStatus(text, isError) {
   const el = $("status");
@@ -41,6 +43,8 @@ function setStatus(text, isError) {
   el.classList.toggle("error", Boolean(isError));
   statusWrites += 1;
   statusIsError = Boolean(isError);
+  statusAboutHold = Boolean(state.confirmation);
+  statusFromOtherTab = false;
   console.info("[seeyable panel]", text);
   renderState();
 }
@@ -49,6 +53,11 @@ function setExecStatus(text, isError) {
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
   renderState();
+}
+// Host and path only: full URLs can be long and can carry sensitive query
+// values. The complete URL stays in the snapshot JSON.
+function pageLocation(url) {
+  try { const u = new URL(url); return `${u.host}${u.pathname}`; } catch { return url || ""; }
 }
 function showJson(obj, metaText) {
   lastJson = JSON.stringify(obj, null, 2);
@@ -590,7 +599,7 @@ async function takeSnapshot(originLabel, opts = {}) {
     // visible in the targets, chips, and page line); otherwise it
     // writes its progress text and reports only if nothing else has
     // written since. Manual acquisition always reports.
-    const quietAuto = Boolean(opts.auto) && statusIsError;
+    const quietAuto = Boolean(opts.auto) && statusIsError && !statusFromOtherTab;
     if (!quietAuto) { setStatus(`${originLabel}…`); progressWrite = statusWrites; }
     const statusUntouched = () => !opts.auto || statusWrites === progressWrite;
     const { snapshot, viaContentScript } = await fetchSnapshot(tab.id);
@@ -599,7 +608,7 @@ async function takeSnapshot(originLabel, opts = {}) {
       bindSnapshot(tab.id, snapshot, viaContentScript);
       lastKind = "dom-aria";
       const fresh = snapshot.fresh === false ? " · STALE" : "";
-      showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${snapshot.url || ""}`);
+      showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${pageLocation(snapshot.url)}`);
       if (!statusUntouched()) {
         // outcome of another operation stands
       } else if (viaContentScript) {
@@ -839,7 +848,7 @@ async function runShowTags(opts = {}) {
           const { snapshot, viaContentScript } = await fetchSnapshot(tab.id);
           if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
           bindSnapshot(tab.id, snapshot, viaContentScript);
-          showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${snapshot.url || ""}`);
+          showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${pageLocation(snapshot.url)}`);
           lastKind = "dom-aria";
         } catch { /* tags still shown; execution binding stays unset */ }
       }
@@ -1231,7 +1240,7 @@ async function ensureCommandSnapshot(tabId, gen, seq, opts = {}) {
       return { discarded: true };
     }
     bindSnapshot(tabId, snapshot, viaContentScript);
-    showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${snapshot.url || ""}`);
+    showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${pageLocation(snapshot.url)}`);
     lastKind = "dom-aria";
     if (!viaContentScript) {
       return { error: "The page is not ready for commands. Reload the tab and send the command again." };
@@ -2580,6 +2589,7 @@ async function dispatchCommand(rawText, source, meta = {}) {
   // A new command invalidates any pending clarification choices and any
   // plan waiting for review (Issue #15: a superseding request).
   interactionSeq += 1;
+  if (!state.confirmation) setConfirmStatus("");
   clearClarification();
   lastRun = null;
   const supersededPlan = discardPlanReview() && !edited;
@@ -3040,6 +3050,36 @@ function setConfirmStatus(text, isError) {
   renderState();
 }
 
+const CONFIRM_COUNTDOWN_MAX_MS = 10 * 60 * 1000;
+let confirmCountdownTimer = null;
+function stopCountdownTimer() {
+  if (confirmCountdownTimer !== null) clearInterval(confirmCountdownTimer);
+  confirmCountdownTimer = null;
+}
+function stopConfirmCountdown() {
+  stopCountdownTimer();
+  const el = $("confirmCountdown");
+  if (el) el.hidden = true;
+}
+function renderConfirmCountdown(expiresAt) {
+  const el = $("confirmCountdown");
+  const left = Math.ceil((expiresAt - Date.now()) / 1000);
+  if (left <= 0) {
+    el.textContent = "This approval has expired. Cancel and ask again.";
+    stopCountdownTimer();
+    return;
+  }
+  el.textContent = `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+}
+function startConfirmCountdown(expiresAt) {
+  stopCountdownTimer();
+  const el = $("confirmCountdown");
+  if (!el) return;
+  el.hidden = false;
+  confirmCountdownTimer = setInterval(() => renderConfirmCountdown(expiresAt), 1000);
+  renderConfirmCountdown(expiresAt);
+}
+
 let confirmFocusReturn = null;
 let confirmFocusMoved = false;
 
@@ -3066,7 +3106,21 @@ function showConfirmation(confirmation, tabId) {
   $("confirmPage").textContent = confirmationPageLine(confirmation.pageUrl);
   const expires = new Date(confirmation.expiresAt);
   const expiresText = Number.isNaN(expires.getTime()) ? "" : ` The approval expires at ${expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`;
-  $("confirmCopy").textContent = `Nothing has run yet. Approving runs this one action once.${expiresText}`;
+  const copy = $("confirmCopy");
+  const expiresAt = expires.getTime();
+  if (expiresAt - Date.now() <= CONFIRM_COUNTDOWN_MAX_MS) {
+    // A live countdown for sight; one description for screen readers, so
+    // nothing is announced every second. The executor enforces the expiry.
+    copy.textContent = "Nothing has run yet. Approving runs this one action once. ";
+    const spoken = document.createElement("span");
+    spoken.className = "sr-only";
+    spoken.textContent = "The approval expires in about a minute.";
+    copy.append(spoken);
+    startConfirmCountdown(expiresAt);
+  } else {
+    stopConfirmCountdown();
+    copy.textContent = `Nothing has run yet. Approving runs this one action once.${expiresText}`;
+  }
   // Full, unshortened facts for anyone who wants them.
   const lines = [
     `Page: ${confirmation.pageUrl || "(current page)"}`,
@@ -3105,6 +3159,10 @@ function confirmationPageLine(pageUrl) {
 
 function clearConfirmation(statusText, isError, opts) {
   state.confirmation = null;
+  stopConfirmCountdown();
+  // "Held: waiting…" stops being true the moment the hold ends. The outcome
+  // is reported once, in confirmStatus.
+  if (statusAboutHold) setStatus("");
   if (Object.values(tagStates).includes("held")) {
     sendTagStates(Object.fromEntries(Object.entries(tagStates).filter(([, st]) => st !== "held")));
   }
@@ -3322,6 +3380,7 @@ async function sendGateCommand(command) {
  * nothing. The executor's separate `pause` command is kept, unused here. */
 const STOP_REASON = "execution was stopped; pending page commands, choices, and listening were discarded.";
 $("btnStopExec").addEventListener("click", async () => {
+  if (!state.confirmation) setConfirmStatus("");
   if (gateClosed) {
     await sendGateCommand("resume");
     return;
@@ -3353,7 +3412,36 @@ const DECISION_WORDS = {
   "approval-revoked-stop": "approval withdrawn by Stop",
   "approval-revoked-pause": "approval withdrawn by Pause",
   stopped: "stopped", paused: "paused", resumed: "resumed",
+  EXECUTION_STOPPED: "not run, Seeyable was stopped",
+  EXECUTION_PAUSED: "not run, Seeyable was paused",
+  EXECUTION_CANCELLED: "cancelled before it ran",
+  NOTHING_TO_UNDO: "nothing to undo",
+  UNDO_NOT_REVERSIBLE: "cannot be undone",
+  UNDO_CONFLICT: "not undone, it changed since",
+  UNDO_STALE: "not undone, it changed since",
+  UNDO_UNSUPPORTED: "cannot be undone",
+  UNDO_NOT_VERIFIED: "undo sent, not verified",
+  APPROVAL_EXPIRED: "approval expired",
+  APPROVAL_NOT_FOUND: "approval no longer available",
+  APPROVAL_CONSUMED: "approval already used",
+  STALE_SNAPSHOT: "not run, the page changed",
 };
+const ACTION_WORDS = { "gate-stop": "Stop", "gate-resume": "Resume", "gate-pause": "Pause", undo: "Undo", scroll_to: "scroll to" };
+// Unknown error codes read as "did not complete", never as success.
+function decisionWords(decision) {
+  if (DECISION_WORDS[decision]) return DECISION_WORDS[decision];
+  return /^[A-Z_]+$/.test(decision || "") ? "did not complete" : decision;
+}
+function activityTime(timestamp) {
+  const when = new Date(timestamp);
+  return Number.isNaN(when.getTime()) ? "" : when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function activityTarget(entry) {
+  if (entry.targetName) return ` \u201C${entry.targetName}\u201D`;
+  if (!entry.elementId) return "";
+  const known = state.snapshot && state.snapshot.elements.find((el) => el.id === entry.elementId);
+  return known && known.name ? ` \u201C${known.name}\u201D` : ` target ${numberFromId(entry.elementId)}`;
+}
 function renderActivity(entries) {
   const list = $("activityList");
   if (!list) return;
@@ -3369,14 +3457,13 @@ function renderActivity(entries) {
     row.className = "activity-row";
     const when = document.createElement("span");
     when.className = "when";
-    when.textContent = typeof e.timestamp === "string" ? e.timestamp.slice(11, 19) : "";
+    when.textContent = activityTime(e.timestamp);
     const what = document.createElement("span");
     what.className = "what";
-    const target = e.targetName ? ` “${e.targetName}”` : e.elementId ? ` ${numberFromId(e.elementId)}` : "";
-    what.textContent = `${e.action}${target} · ${e.source === "voice" ? "by voice" : e.source === "mcp" ? "by an assistant" : "by you"}`;
+    what.textContent = `${ACTION_WORDS[e.action] || e.action}${activityTarget(e)} · ${e.source === "voice" ? "by voice" : e.source === "mcp" ? "by an assistant" : "by you"}`;
     const decision = document.createElement("span");
     decision.className = "decision";
-    decision.textContent = DECISION_WORDS[e.decision] || e.decision;
+    decision.textContent = decisionWords(e.decision);
     row.append(when, what, decision);
     return row;
   }));
@@ -3437,9 +3524,14 @@ chrome.tabs.onActivated.addListener((info) => {
   // shown when there was state to discard.
   const ownedTab = state.boundTabId !== null ? state.boundTabId : state.opTabId;
   if (info.tabId !== ownedTab) {
+    // Work the switch throws away must stay reported; a plain error from the
+    // other tab says nothing about this one, so a good snapshot may replace it.
+    const discardedWork = Boolean(pendingPlan || pendingClarification || state.confirmation
+      || commandPending || !$("planEditBox").hidden);
     invalidateExecution(ownedTab !== null || state.snapshot
       ? "Active tab changed. The previous execution selection was discarded."
       : null);
+    statusFromOtherTab = statusIsError && !discardedWork;
   }
   // Automatically bind a fresh snapshot for the newly active tab
   // (read-only; discovers any pending confirmation via the bind path).

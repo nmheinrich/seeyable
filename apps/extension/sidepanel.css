@@ -344,6 +344,8 @@ button.wide, #btnApprovePlan { display: flex; justify-content: space-between; al
 .gate-question[hidden] { display: none; }
 .gate-page { font-size: 14px; color: #3A3A38; overflow-wrap: anywhere; }
 .gate-copy { font-size: 15px; line-height: 1.4; }
+.gate-countdown { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.gate-countdown[hidden] { display: none; }
 .gate-details > summary {
   min-height: 44px; display: flex; align-items: center; cursor: pointer;
   font-size: 15px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px;
@@ -469,7 +471,8 @@ details.sec > summary {
 .status.error { color: var(--error-ink); font-weight: 500; }
 .result-line { overflow-wrap: anywhere; }
 .result-line:empty { display: none; }
-.meta { font-size: 12px; color: var(--text-muted); }
+.meta { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; min-width: 0; }
+.toolbar .meta { flex: 1 1 100%; } /* long lines wrap instead of widening the screen */
 
 /* --- Developer view (inside Settings › Advanced) ------------------------- */
 details.developer > *:not(summary) { margin: 10px 0; }

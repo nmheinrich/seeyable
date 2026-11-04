@@ -58,7 +58,7 @@ function listen(server) {
 }
 const demoPort = await listen(createHttpServer((req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
-  if (path !== "/demo-survey/index.html") { res.writeHead(404); res.end(); return; }
+  if (!path.startsWith("/demo-survey/") || !path.endsWith("/index.html")) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { "content-type": "text/html" });
   res.end(readFileSync(join(ROOT, "apps/demo-survey/index.html")));
 }));
@@ -327,10 +327,22 @@ try {
   await panel.shot("gate");
   check("Submit is held for approval", await visible("btnApproveOnce"));
   check("held Submit has not fired", (await submits()) === 0);
+  await waitFor(() => demo.ev(`(() => {
+    const r = [...document.querySelectorAll("button")].find((b) => b.textContent === "Submit survey").getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= innerHeight;
+  })()`), "held target in view", 3000).then(
+    () => check("held target is fully in view on the page", true),
+    () => check("held target is fully in view on the page", false),
+  );
   check("fills before the hold completed", (await value(BIO)) === "Fictional visitor.");
   await click("btnCancelChallenge");
   await waitFor(async () => (await view()) !== "gate", "gate closed by cancel");
   await sleep(400);
+  await panel.shot("after-cancel");
+  await panel.ev(`document.querySelector('[data-screen="Activity"]').click()`);
+  await sleep(400);
+  await panel.shot("activity");
+  await panel.ev(`document.querySelector('[data-screen="Assist"]').click()`);
   check("cancelled Submit does not fire", (await submits()) === 0);
 
   await freshPage();
@@ -375,6 +387,23 @@ try {
   await command("fill nickname with Allowed");
   await waitFor(async () => (await value(NICK)) === "Allowed", "fill after resume");
   check("actions work again after Resume", true);
+
+  /* --- Long URLs never widen the panel ------------------------------------ */
+  await bringDemoForward();
+  await demo.send("Page.navigate", { url: `http://127.0.0.1:${demoPort}/demo-survey/${"x".repeat(200)}/index.html?form=${"y".repeat(200)}` });
+  await waitFor(() => demo.ev("document.readyState === 'complete' && location.pathname.length > 100"), "long URL load");
+  await sleep(400);
+  await panel.send("Page.reload");
+  await waitFor(() => panel.ev(`/\\d+ controls/.test(document.getElementById("pageMeta").textContent)`), "panel bound to long URL");
+  await panel.ev(`(showScreen("Settings"), document.getElementById("developerView").open = true, document.getElementById("btnDom").click(), 1)`);
+  await waitFor(() => panel.ev(`document.getElementById("meta").textContent.length > 0`), "snapshot line");
+  await sleep(200);
+  await panel.ev(`document.getElementById("meta").scrollIntoView({ block: "center" })`);
+  await panel.shot("long-url-developer-view");
+  check("a long URL does not scroll the panel sideways", await panel.ev(`(() => { const s = document.getElementById("screens"); return s.scrollWidth <= s.clientWidth; })()`));
+  await panel.ev(`(document.getElementById("developerView").open = false, showScreen("Assist"), 1)`);
+  await demo.send("Page.navigate", { url: `http://127.0.0.1:${demoPort}/demo-survey/index.html` });
+  await waitFor(() => demo.ev("document.readyState === 'complete' && location.search === '' && location.pathname.length < 50"), "demo back");
 
   /* --- MCP: same gate, same Stop ----------------------------------------- */
   await freshPage();
