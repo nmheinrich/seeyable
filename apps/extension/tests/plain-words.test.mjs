@@ -1650,3 +1650,18 @@ test("manifest: the description fits Chrome's limit, says what ships, and adds n
   assert.deepEqual(manifest.permissions, ["activeTab", "scripting", "sidePanel", "storage", "tabs"]);
   assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1:6123/*", "http://127.0.0.1:6124/*"]);
 });
+
+test("manifest: both manifests declare the same icons, and each file is a real PNG of its size", () => {
+  const manifest = JSON.parse(read("../manifest.json"));
+  const debug = JSON.parse(read("../manifest.debug.json"));
+  assert.deepEqual(Object.keys(manifest.icons), ["16", "32", "48", "128"]);
+  assert.deepEqual(manifest.action.default_icon, manifest.icons);
+  assert.deepEqual(debug.icons, manifest.icons);
+  assert.deepEqual(debug.action.default_icon, manifest.icons);
+  for (const [size, path] of Object.entries(manifest.icons)) {
+    const png = readFileSync(join(here, "..", path));
+    assert.equal(png.toString("latin1", 1, 4), "PNG", path);
+    assert.equal(png.readUInt32BE(16), Number(size), `${path} width`);
+    assert.equal(png.readUInt32BE(20), Number(size), `${path} height`);
+  }
+});

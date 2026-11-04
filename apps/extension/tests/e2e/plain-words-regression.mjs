@@ -225,6 +225,7 @@ try {
   await helper.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 50, y: 50, button: "left", clickCount: 1 });
   const panel = await attach((t) => t.url.endsWith("/sidepanel.html"), "side panel");
   check("genuine side panel opens", true);
+  check("the extension loads with its declared icons", await panel.ev(`(async () => { const { icons } = chrome.runtime.getManifest(); const sizes = await Promise.all(Object.values(icons).map((p) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i.naturalWidth); i.onerror = () => ok(0); i.src = chrome.runtime.getURL(p); }))); return sizes.join() === "16,32,48,128"; })()`));
   await browser.send("Target.closeTarget", { targetId: opener.targetId });
   await panel.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
 
