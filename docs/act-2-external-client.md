@@ -171,7 +171,7 @@ In a new conversation, confirm the Seeyable tools are listed:
      client log may print the newly generated token once; later
      processes only name the file.
 3. In Seeyable, open **Settings → Advanced → Developer view → MCP bridge
-   (local spike)**. Enter that same effective token locally, keep port
+   (local)**. Enter that same effective token locally, keep port
    `6123`, and choose **Connect bridge**.
 4. Ask Claude Desktop to call `list_tabs` again. It should list the demo
    tab without another pairing step.
