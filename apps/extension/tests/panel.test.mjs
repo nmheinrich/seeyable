@@ -48,7 +48,7 @@ function makePanel(sendImpl, opts = {}) {
   const dom = new JSDOM(html, { url: "chrome-extension://test/sidepanel.html", runScripts: "dangerously", pretendToBeVisual: true });
   const win = dom.window;
   const calls = { send: [], execute: 0, storage: 0, tabsCreated: [] };
-  const listeners = { activated: [], updated: [], runtime: [] };
+  const listeners = { activated: [], updated: [], runtime: [], storage: [] };
   const logs = [];
   win.console = { info: (...a) => logs.push(a.join(" ")), warn: () => {}, error: () => {} };
   if (opts.speechRecognition) win.SpeechRecognition = opts.speechRecognition;
@@ -81,6 +81,7 @@ function makePanel(sendImpl, opts = {}) {
     },
     permissions: { contains: async () => false },
     storage: {
+      onChanged: { addListener: (fn) => listeners.storage.push(fn) },
       local: { get: async () => { calls.storage += 1; return {}; }, set: async () => { calls.storage += 1; } },
       session: makeSessionStorage(opts.session),
     },
@@ -2325,5 +2326,44 @@ test("surface: typed-command completion settles to Ready, never stuck acting", a
   await tick(); await tick(); await tick();
   assert.match(panel.$("stateChip").textContent, /Ready/);
   assert.equal(panel.dom.window.document.body.dataset.voice, "idle");
+  panel.dom.window.close();
+});
+
+
+test("gate: session hold signal discovers an MCP challenge when its runtime hint is lost", async () => {
+  let pending = null;
+  const panel = makePanel(async (_tabId, msg) => {
+    if (msg.type === "SEEYABLE_SNAPSHOT_DOM") return { ok: true, snapshot: snap([el("el-2", "Submit feedback")]) };
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") return { ok: true, confirmation: pending };
+    if (msg.type === "SEEYABLE_GET_ACTION_LOG") return { ok: true, entries: [] };
+    if (msg.type === "SEEYABLE_TAG_STATE") return { ok: true };
+    throw new Error("unexpected " + msg.type);
+  });
+  await tick(); await tick();
+  panel.doc.querySelector('[data-screen="Settings"]').click();
+  const signal = (tabId, area = "session") => {
+    for (const fn of panel.listeners.storage) fn({ mcpConfirmationHint: { newValue: { tabId, nonce: "test" } } }, area);
+  };
+  signal(111);
+  await tick();
+  assert.equal(panel.$("confirmBox").hidden, true, "a hint alone cannot mint a challenge");
+  pending = heldConfirmation("storage-hold", "doc-A");
+  signal(111, "local");
+  signal(222);
+  signal("111");
+  await tick();
+  assert.equal(panel.$("confirmBox").hidden, true, "wrong area, tab and malformed hints cannot populate the card");
+  signal(111);
+  await tick();
+  assert.equal(panel.$("confirmBox").hidden, false, "storage independently discovers the executor's hold");
+  assert.equal(panel.$("screenAssist").hidden, false);
+  assert.equal(panel.doc.activeElement.id, "confirmTitle");
+  // The duplicate runtime delivery cannot replace the challenge or refocus it.
+  panel.$("btnCancelChallenge").focus();
+  for (const fn of panel.listeners.runtime) fn({ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId: 111 });
+  await tick();
+  assert.equal(panel.doc.activeElement.id, "btnCancelChallenge");
+  assert.equal(panel.calls.execute, 0, "both hints only look up; neither executes or approves");
+  assert.equal(panel.calls.send.some(({ msg }) => msg.type === "SEEYABLE_APPROVE_CHALLENGE"), false);
   panel.dom.window.close();
 });

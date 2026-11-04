@@ -183,12 +183,25 @@ function __bridgeValidTargetParams(p, needsValue) {
 // card. The runtime message is only a HINT (tab id, no authority): the
 // panel re-fetches the authoritative pending challenge from the content
 // script over its trusted route before showing anything.
-function __bridgeNotifyPanelOfHold(tabId) {
+async function __bridgeNotifyPanelOfHold(tabId) {
+  // Independent channels: a failed runtime send must not leave an already
+  // open panel idle until its next snapshot. Session storage changes wake
+  // that panel's discovery too. Keep only one small, non-authoritative hint;
+  // the nonce makes consecutive holds on the same tab distinct events.
+  // Neither channel carries a challenge, request, value, or approval.
+  const deliveries = [];
   try {
-    if (typeof chrome === "undefined" || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") return;
-    const sent = chrome.runtime.sendMessage({ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId });
-    if (sent && typeof sent.catch === "function") sent.catch(() => {});
-  } catch { /* no panel listening: the hold still waits in the executor */ }
+    deliveries.push(chrome.runtime.sendMessage({ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId }));
+  } catch { deliveries.push(Promise.reject(new Error("runtime hint unavailable"))); }
+  try {
+    deliveries.push(chrome.storage.session.set({
+      mcpConfirmationHint: { tabId, nonce: `${Date.now()}-${Math.random()}` },
+    }));
+  } catch { deliveries.push(Promise.reject(new Error("session hint unavailable"))); }
+  const results = await Promise.allSettled(deliveries);
+  if (results.every((result) => result.status === "rejected")) {
+    __bridgeLog("held-action notification unavailable; the executor still holds the action until human decision or expiry");
+  }
 }
 
 async function __bridgeHandleRequest(ws, msg, isCurrent) {
@@ -266,7 +279,7 @@ async function __bridgeHandleRequest(ws, msg, isCurrent) {
         });
         if (!res || typeof res.ok !== "boolean") throw new Error("Empty executor response.");
         if (!res.ok && res.error && res.error.code === "CONFIRMATION_REQUIRED" && res.confirmation) {
-          __bridgeNotifyPanelOfHold(tabId);
+          await __bridgeNotifyPanelOfHold(tabId);
         }
         __bridgeSendOk(ws, id, res);
       } else {

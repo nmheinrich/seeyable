@@ -22,6 +22,8 @@ function makeWorld() {
     sessionGetImpl: async () => ({ ...store }),
     tabsGetImpl: null,
     sendMessageImpl: null,
+    runtimeSendImpl: null,
+    sessionSetImpl: null,
     tabsCalls: [],
     sentMessages: [],
     runtimeMessages: [],
@@ -61,7 +63,7 @@ function makeWorld() {
       storage: {
         session: {
           get: (...a) => world.sessionGetImpl(...a),
-          set: async (obj) => Object.assign(store, obj),
+          set: async (obj) => world.sessionSetImpl ? world.sessionSetImpl(obj) : Object.assign(store, obj),
           remove: async (keys) => { for (const k of [].concat(keys)) delete store[k]; },
         },
       },
@@ -81,7 +83,7 @@ function makeWorld() {
         },
       },
       runtime: {
-        sendMessage: async (msg) => { world.runtimeMessages.push(msg); return {}; },
+        sendMessage: async (msg) => { world.runtimeMessages.push(msg); return world.runtimeSendImpl ? world.runtimeSendImpl(msg) : {}; },
       },
     },
   };
@@ -484,3 +486,23 @@ test("bridge-client: fired reconnect timer from a superseded generation does not
   assert.equal(t.sockets.length, 1, "stale timer must not open a new socket");
   assert.equal(t.api.status().wanted, false);
 });
+
+
+for (const failedChannel of ["runtime", "session", "both"]) {
+  test(`bridge-client: a held action survives ${failedChannel} notification failure without replay`, async () => {
+    const { t, sock } = await pairedWorld();
+    const hold = { ok: false, error: { code: "CONFIRMATION_REQUIRED" }, confirmation: { challengeId: "private-challenge" } };
+    t.world.sendMessageImpl = async () => hold;
+    if (failedChannel !== "session") t.world.runtimeSendImpl = async () => { throw new Error("no runtime receiver"); };
+    if (failedChannel !== "runtime") t.world.sessionSetImpl = async () => { throw new Error("storage unavailable"); };
+    sock.emit("message", { data: JSON.stringify({ type: "request", id: "held", op: "execute", tabId: 7, params: { action: "click", elementId: "el-1", documentSessionId: "doc-A", revision: 1 } }) });
+    await flush();
+    assert.equal(t.world.sentMessages.length, 1, "notification failures never retry the executor");
+    assert.deepEqual(JSON.parse(JSON.stringify(responseFrames(sock)[0].payload)), hold, "the executor's held response stays authoritative");
+    assert.equal(t.world.runtimeMessages[0].type, "SEEYABLE_MCP_CONFIRMATION_HINT");
+    if (failedChannel === "runtime") {
+      assert.equal(t.store.mcpConfirmationHint.tabId, 7);
+      assert.deepEqual(Object.keys(t.store.mcpConfirmationHint).sort(), ["nonce", "tabId"], "session fallback stores no challenge or action data");
+    }
+  });
+}

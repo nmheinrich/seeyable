@@ -1,0 +1,66 @@
+{
+  "date": "2026-11-04",
+  "extension_tests": {
+    "passed": 429,
+    "failed": 0
+  },
+  "focused_browser_checks": {
+    "normal": {
+      "passed": 15,
+      "failed": 0,
+      "assertions": [
+        "genuine side panel opens",
+        "the extension loads with its declared icons",
+        "agent sees the demo tab",
+        "agent fill Full name verifies",
+        "agent fill Work email verifies",
+        "agent select Your role verifies",
+        "agent fill Short bio verifies",
+        "agent Submit is held, not run",
+        "hold switches from Settings to visible approval card",
+        "panel reload recovers the held challenge without approval",
+        "cancel does not submit",
+        "filled values survive hold and cancel",
+        "a second hold on the same tab dispatches nothing",
+        "consecutive holds deliver distinct notifications",
+        "all holds cancelled with zero submissions"
+      ]
+    },
+    "runtime_hint_rejected": {
+      "passed": 15,
+      "failed": 0,
+      "assertions": [
+        "genuine side panel opens",
+        "the extension loads with its declared icons",
+        "agent sees the demo tab",
+        "agent fill Full name verifies",
+        "agent fill Work email verifies",
+        "agent select Your role verifies",
+        "agent fill Short bio verifies",
+        "agent Submit is held, not run",
+        "hold switches from Settings to visible approval card",
+        "panel reload recovers the held challenge without approval",
+        "cancel does not submit",
+        "filled values survive hold and cancel",
+        "a second hold on the same tab dispatches nothing",
+        "consecutive holds deliver distinct notifications",
+        "all holds cancelled with zero submissions"
+      ]
+    }
+  },
+  "headed": {
+    "extension_source": "/Users/hdnm/seeyable/apps/extension",
+    "extension_reloaded": true,
+    "source": "native Chrome UI plus real local MCP tools",
+    "documentSessionId": "doc-yfuwxkl9mw2l3tbc",
+    "revision_before_holds": 5,
+    "revision_after_holds": 5,
+    "holds_from_Settings": 2,
+    "cancelled": 2,
+    "field_values_preserved": true,
+    "stop_resume_replay_observed": false,
+    "approved": false,
+    "submission_observed": false,
+    "submit_event_counter_instrumented": false
+  }
+}

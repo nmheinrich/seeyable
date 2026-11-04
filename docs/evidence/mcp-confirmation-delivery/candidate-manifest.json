@@ -1,0 +1,167 @@
+{
+  "date": "2026-11-04",
+  "version": "0.1.0",
+  "base_commit": "091a36c05e7d0e032af282937b942f823b3c9bef",
+  "commit_status": "owner-authorized local commit; the containing Git commit identifies this candidate",
+  "runtime_manifest_sha256": "e54794550710940c2168ee45e885947b1fbd87bd85b1acb76ea1e15b6a9d40c6",
+  "runtime_files": [
+    {
+      "path": "apps/extension/.gitignore",
+      "sha256": "4d56952b0fb13bf8f9b6c13a6d4c34a075bac3af447636a1df4335d7576e2f97"
+    },
+    {
+      "path": "apps/extension/CHROMEWEBSTORE.md",
+      "sha256": "e0ac32ee450f3f3760bb2ecbe5f93a76277ec610cbfc49c2acb0ce9a6ac7c67e"
+    },
+    {
+      "path": "apps/extension/background.js",
+      "sha256": "093113f9cb480bebb55c05c7a35f8ce4644cd181f247f7192571b8ffdb2930fa"
+    },
+    {
+      "path": "apps/extension/content.js",
+      "sha256": "2222f032cf100edb3b385bc69820ddd02bec1225915fed7fc08f7940a459f40d"
+    },
+    {
+      "path": "apps/extension/fonts/DMMono-400.woff2",
+      "sha256": "fd7521f3531a5ccfc655b25c4f22e9871df3ec141ad79bb27fde20d0df347b6d"
+    },
+    {
+      "path": "apps/extension/fonts/DMMono-500.woff2",
+      "sha256": "0e263db52797086e763679c54f84ded8cc1249879bc27dca2bd5dd446f6d9f36"
+    },
+    {
+      "path": "apps/extension/fonts/Jost-400.woff2",
+      "sha256": "235d8f8964bfdf105fc0c3e4c77b5e70f31bee1dad611d59318b5f2a5cb64d90"
+    },
+    {
+      "path": "apps/extension/fonts/Jost-500.woff2",
+      "sha256": "235d8f8964bfdf105fc0c3e4c77b5e70f31bee1dad611d59318b5f2a5cb64d90"
+    },
+    {
+      "path": "apps/extension/fonts/Jost-600.woff2",
+      "sha256": "235d8f8964bfdf105fc0c3e4c77b5e70f31bee1dad611d59318b5f2a5cb64d90"
+    },
+    {
+      "path": "apps/extension/fonts/OFL-DMMono.txt",
+      "sha256": "2bada5ea45c3c63b7f1ea1f88ce9672c9e4f0c42b2c3b7378949084fe55a3066"
+    },
+    {
+      "path": "apps/extension/fonts/OFL-Jost.txt",
+      "sha256": "3cc70947dfb71a1afa639b26efa7939e792c9dbf32652332aab57c356697f77b"
+    },
+    {
+      "path": "apps/extension/icons/icon-128.png",
+      "sha256": "e0ed568d5a5ebbe8a0028b5a97d1d9a66b0cec5d1b2e1c98b8919caaf42a8513"
+    },
+    {
+      "path": "apps/extension/icons/icon-16.png",
+      "sha256": "1c406a6fa34c862475866483c1e7ad3b5d8650a48eb584b31eb02773d1d738bb"
+    },
+    {
+      "path": "apps/extension/icons/icon-32.png",
+      "sha256": "a3b169cd50fa6aa8fb3cd4a7e777dc6e61d38c7599241619d29cdfd22f95651f"
+    },
+    {
+      "path": "apps/extension/icons/icon-48.png",
+      "sha256": "27764154ad2086a6efb3f57f28902856a30acba2171b78e75ed1a852f8ca889b"
+    },
+    {
+      "path": "apps/extension/icons/icon.svg",
+      "sha256": "48c5616828b3bcb08a33ac25c3f62e9ac12be52f9aedda4344545de07cc3ea28"
+    },
+    {
+      "path": "apps/extension/lib/bridge-client.js",
+      "sha256": "8a91c1be1e0920acb7d69bbf9627ff9080e2d53219ec3ab52c50325eab37f1dc"
+    },
+    {
+      "path": "apps/extension/lib/command-resolver.js",
+      "sha256": "91a3239c8b00b9fcc72b257e4e3195a5e00d0a8e68fbdb9a89b62bc9a9fc04d0"
+    },
+    {
+      "path": "apps/extension/lib/executor.js",
+      "sha256": "f07bc39d3944ff245d6171a04abd6cbbfe2c220e53a37e0f9d6e894e1ad83b7c"
+    },
+    {
+      "path": "apps/extension/lib/meta-voice.js",
+      "sha256": "d4e2d789631bd1d96d88d94da1d8ac58087f9742672b206610a7798c45da76a7"
+    },
+    {
+      "path": "apps/extension/lib/overlay.js",
+      "sha256": "b64b936d1a92b3cdbcc19665ed91c4c3295e9695d4fb05a65e28d656a02eb5f8"
+    },
+    {
+      "path": "apps/extension/lib/plan-schema.js",
+      "sha256": "c1639dea8bc2ff7cbedcd7314423417bd8c1bc8ecd3e30b0f6c6015043d84305"
+    },
+    {
+      "path": "apps/extension/lib/planner.js",
+      "sha256": "520de58f11e8b352c23e9cd0258b2e2b0d13e3bcd831e4f239b1fb03339fd843"
+    },
+    {
+      "path": "apps/extension/lib/snapshot-cdp.js",
+      "sha256": "931af8a70bcae19be2b3845a3cabee1b23429261462d01cc90e4219486c9eedf"
+    },
+    {
+      "path": "apps/extension/lib/snapshot-dom.js",
+      "sha256": "c83ed3c7a55b72b62d90ba76802ebb1743930856ff5792d4283a6a80ec98f535"
+    },
+    {
+      "path": "apps/extension/lib/voice-commands.js",
+      "sha256": "afc82ac31b31249fbf0cdf5518a2fc684ada6968dd3f991cbef934ad198bf19f"
+    },
+    {
+      "path": "apps/extension/manifest.json",
+      "sha256": "bda0cd3cbfa6cf22f08233a34e2e8c7fcc6899f90127871ebeb6940609d465fd"
+    },
+    {
+      "path": "apps/extension/mic-setup.html",
+      "sha256": "93ca9b02090859e6b778a24898efdb898f720c74b0fe7080fbeffaf28432b469"
+    },
+    {
+      "path": "apps/extension/mic-setup.js",
+      "sha256": "a22668775b8522b0ab57bfd1d6aca4316c2089436e6b951e9a0c646a70576ccb"
+    },
+    {
+      "path": "apps/extension/sidepanel.css",
+      "sha256": "4daafe9195b40fe5626844cc98cebbb9d8a36c8a2003c0b083681dde5832a989"
+    },
+    {
+      "path": "apps/extension/sidepanel.html",
+      "sha256": "d19e144a6dca2393b6e0cb5eb05024dfcdd1968ba6935323f6e8821c0e17747b"
+    },
+    {
+      "path": "apps/extension/sidepanel.js",
+      "sha256": "097b7b2d602368ac26e0c1d0352c1339cd4979d5c9911e0057935dc1d0988e08"
+    }
+  ],
+  "change_files": [
+    {
+      "path": "apps/extension/lib/bridge-client.js",
+      "sha256": "8a91c1be1e0920acb7d69bbf9627ff9080e2d53219ec3ab52c50325eab37f1dc"
+    },
+    {
+      "path": "apps/extension/sidepanel.js",
+      "sha256": "097b7b2d602368ac26e0c1d0352c1339cd4979d5c9911e0057935dc1d0988e08"
+    },
+    {
+      "path": "apps/extension/tests/bridge-client.test.mjs",
+      "sha256": "0a0b74188c7df961d34d5747f02fbf1d46ac2805d379700e873ff60c0807713b"
+    },
+    {
+      "path": "apps/extension/tests/e2e/plain-words-regression.mjs",
+      "sha256": "22017242aaca5c06400944f29985517d87bf12be6ab55019e119e465401b14b8"
+    },
+    {
+      "path": "apps/extension/tests/panel.test.mjs",
+      "sha256": "0d5d470325042b74b903edff79e3f3de0c5d8a3f1bdc92252b68af45544d7a8f"
+    },
+    {
+      "path": "docs/features/feature-19-mcp-server.md",
+      "sha256": "d8511ce943b8264000e78b2ff8647db7945753b9775a5f2c8fba02131c0c8345"
+    },
+    {
+      "path": "docs/status.md",
+      "sha256": "3eea7cd5d18c6dfccd99bb704c101f9f7d8d4e802b34bd0d2bf44245984e3a78"
+    }
+  ]
+}
