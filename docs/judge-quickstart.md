@@ -41,6 +41,13 @@ External-agent use requires a compatible local MCP client and the MCP server;
 that path does not require a Meta key in Seeyable. These are separate optional
 setups, documented in the repository:
 
+For easier local agent setup on macOS/Linux, start Docker and run
+`sh setup-mcp.sh` from this folder. Choose your agent, add the generated
+configuration, and paste the copied token into Seeyable.
+Read **MCP-SETUP.md** in this ZIP for details and manual alternatives. It covers automatic
+MCP token generation and ChatGPT desktop/Codex, Claude Desktop/Code, and
+Muse Code configuration, with verification limits for each path.
+
 https://github.com/nmheinrich/seeyable#readme
 
 Never paste a Meta API key into the extension. Planning and MCP share the

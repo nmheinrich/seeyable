@@ -1,3 +1,4 @@
 /dist/
 /docker/.env
+/.seeyable-setup/
 .DS_Store

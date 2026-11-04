@@ -7,8 +7,8 @@ the snapshot evaluation**. It exists so the DOM/ARIA and CDP
 snapshot implementations could be run against an identical, controlled
 page and compared (`docs/spike/`, `docs/decision-snapshot.md`).
 
-- It is a **technical test fixture, not product UI** and not a
-  demonstration page. No demonstration page has been selected yet.
+- It is a **pre-existing technical test fixture, not product UI**. The
+  judging package includes it as a controlled, account-free test target.
 
 ## Contents (20 snapshot-visible controls + 2 hidden)
 
@@ -26,19 +26,14 @@ Measured result (headless Chrome 156): DOM/ARIA snapshot returns the
 nodes. See `docs/spike/dom-snapshot.json` and
 `docs/spike/cdp-snapshot.json`.
 
-## Provenance (from available evidence)
+## Provenance
 
-- The repository's only commit at spike start was `e2b9a1d`
-  ("first commit", README only). No `apps/` directory and no survey
-  page existed in git history or in the workspace when the snapshot
-  evaluation began.
-- This `index.html` was **created on 2026-10-26 specifically as the
-  test target for the snapshot evaluation**. It is not recovered or
-  pre-existing work.
-- An approximately 42-control survey mentioned in earlier planning
-  material was a **proposed specification that was never
-  implemented**. It does not exist as software and must not be
-  described as completed.
+The Product Owner's project brief identifies this survey as a pre-existing
+fixture. It is excluded from claims of hackathon-built Seeyable product
+work. Its appearance in this repository's history does not establish when
+the underlying fixture was originally built. An earlier version of this
+note inferred provenance from repository history and conflicted with that
+brief; follow the owner-provided provenance rather than that inference.
 
 ## Running it
 

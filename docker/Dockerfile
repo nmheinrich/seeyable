@@ -9,6 +9,9 @@ COPY apps/planner-proxy/lib/ apps/planner-proxy/lib/
 COPY packages/shared/plan-schema.js packages/shared/package.json packages/shared/
 COPY apps/demo-survey/index.html apps/demo-survey/index.html
 COPY docker/start.mjs docker/start.mjs
-RUN mkdir -p /home/node/.seeyable && chown node:node /home/node/.seeyable && chmod 700 /home/node/.seeyable
+# ZIP extraction and host umask can leave copied sources readable only by root.
+# These are public application files; private runtime configuration is excluded
+# from the build context and mounted separately under /run/secrets.
+RUN chmod -R a+rX /app && mkdir -p /home/node/.seeyable && chown node:node /home/node/.seeyable && chmod 700 /home/node/.seeyable
 # Launcher reads the private mounted configuration, then immediately drops to node.
 CMD ["node", "docker/start.mjs"]

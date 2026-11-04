@@ -71,5 +71,11 @@ export async function start({ envFile = '/run/secrets/planner-env' } = {}) {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  start().catch(() => { console.error('[seeyable-docker] startup failed; check for occupied ports.'); process.exitCode = 1; });
+  start().catch((error) => {
+    // Report filesystem/socket error identifiers, never configuration contents.
+    const code = typeof error.code === 'string' ? error.code : 'STARTUP_ERROR';
+    const path = typeof error.path === 'string' ? `: ${error.path}` : '';
+    console.error(`[seeyable-docker] startup failed (${code})${path}`);
+    process.exitCode = 1;
+  });
 }
