@@ -36,13 +36,14 @@ function makeRecognitionClass() {
   return { FakeRecognition, instances };
 }
 
-function makePanel({ onExecute, plan, executeGate, recognition, undo, elements = base, tabsGet, snapshotError, scriptedSnapshot, sessionExtra } = {}) {
+function makePanel({ speech, onExecute, plan, executeGate, recognition, undo, elements = base, tabsGet, snapshotError, scriptedSnapshot, sessionExtra } = {}) {
   const dom = new JSDOM(html, { url: "chrome-extension://test/sidepanel.html", runScripts: "dangerously", pretendToBeVisual: true });
   const win = dom.window;
   const calls = { send: [], execute: 0, fetch: 0 };
   const listeners = { activated: [], updated: [] };
   win.console = { info: () => {}, warn: () => {}, error: () => {} };
   if (recognition) win.SpeechRecognition = recognition.FakeRecognition;
+  if (speech) { win.speechSynthesis = speech.synth; win.SpeechSynthesisUtterance = speech.Utterance; }
   win.fetch = async (_url, init) => {
     calls.fetch += 1;
     const body = JSON.parse(init.body);
@@ -1287,5 +1288,274 @@ test("placement: unavailable page keeps Stop and Undo with the card, and a focus
   assert.equal(q.view(), "done");
   assert.equal(q.$("screenAssist").hidden, true);
   assert.equal(q.doc.activeElement.dataset.screen, "Settings", "focus is not lost when the button leaves this screen");
+  q.dom.window.close();
+});
+
+/* --- Slice 4: plan review layout, header, Stopped, smaller fixes --- */
+test("plan review: says nothing changed once, shows the request, and bolds targets with number dots", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  await typed(p, "put Grace in the name and bio");
+  assert.equal(p.view(), "plan");
+  assert.match(p.$("planTitle").textContent, /nothing changed/);
+  assert.equal(p.$("planIntro").textContent, "2 steps, in order");
+  assert.equal(p.$("stateChip").textContent, "Review");
+  assert.match(p.$("status").textContent, /Nothing has changed/, "screen readers still hear the outcome");
+  assert.equal(p.doc.body.dataset.statusQuiet, "true", "and it is not shown a second time");
+  assert.equal(p.$("planFrom").hidden, false);
+  assert.equal(p.$("planFromText").textContent, "“put Grace in the name and bio”");
+  const rows = [...p.$("planSteps").children];
+  assert.equal(rows[0].querySelector("strong").textContent, "“Full name”");
+  assert.equal(rows[0].querySelector(".no").textContent, "1");
+  assert.equal(rows[1].querySelector(".no").textContent, "7");
+  assert.match(rows[1].querySelector(".tx").textContent, /^Fill “Short bio” with “Scientist”$/);
+  assert.equal(p.doc.activeElement, p.$("planTitle"), "focus is on the title, never Approve");
+  assert.ok(p.$("planBox").querySelector(".say-more"), "voice help is folded");
+  assert.equal(p.$("planBox").querySelector(".say-more").open, false);
+  assert.match(p.$("planBox").querySelector(".say-more").textContent, /Approve plan/);
+  assert.ok(!p.$("planBox").querySelector(".say-more").contains(p.$("btnTalkPlan")), "the talk button stays out");
+  p.$("btnCancelPlan").click();
+  await tick();
+  assert.equal(p.$("planFrom").hidden, true);
+  assert.equal(p.$("planFromText").textContent, "", "the words do not linger");
+  p.dom.window.close();
+});
+
+test("plan review: a status with more to say stays visible", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  await typed(p, "please do these things in order");
+  assert.equal(p.doc.body.dataset.statusQuiet, "true");
+  await typed(p, "something else entirely please");
+  assert.match(p.$("status").textContent, /^The earlier plan was discarded/);
+  assert.equal(p.doc.body.dataset.statusQuiet, "false", "the discarded plan is reported on screen");
+  await typed(p, "go ahead with this somehow approved maybe");
+  p.dom.window.close();
+
+  const q = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  await typed(q, "please do these things in order");
+  q.$("btnEditPlan").click();
+  await tick();
+  q.$("planEditInput").value = "a different request";
+  q.$("btnSubmitEdit").click();
+  await tick(); await tick(); await tick();
+  assert.equal(q.view(), "plan");
+  assert.equal(q.doc.body.dataset.statusQuiet, "false", "an edited plan's status stays visible");
+  q.dom.window.close();
+});
+
+test("plan review: a protected step hides the request, so a spoken secret is never echoed", async () => {
+  const secret = [el("el-1", "Full name"), el("el-2", "Password", { state: { redacted: true } })];
+  const p = makePanel({ elements: secret, plan: () => ({ version: "seeyable-plan-1", outcome: "steps", steps: [{ action: "fill", elementId: "el-2", value: "hunter2" }] }) });
+  await tick(); await tick();
+  await typed(p, "my password is hunter2 so please enter it");
+  assert.equal(p.view(), "plan");
+  assert.equal(p.$("planFrom").hidden, true);
+  assert.ok(!p.$("planBox").textContent.includes("hunter2"));
+  p.dom.window.close();
+});
+
+test("plan review: request and names are data, and a value equal to the name does not move the bold", async () => {
+  const p = makePanel({
+    elements: [el("el-1", "<i>Name</i>"), el("el-2", "Role", { role: "combobox", tag: "select", state: { options: [{ value: "Role", label: "Role" }] } })],
+    plan: () => ({ version: "seeyable-plan-1", outcome: "steps", steps: [
+      { action: "fill", elementId: "el-1", value: "x" },
+      { action: "select", elementId: "el-2", value: "Role" },
+    ] }),
+  });
+  await tick(); await tick();
+  await typed(p, "<b>bold</b> request please now");
+  assert.equal(p.$("planFromText").querySelector("b"), null);
+  assert.match(p.$("planFromText").textContent, /<b>bold<\/b>/);
+  const rows = [...p.$("planSteps").children];
+  assert.equal(rows[0].querySelector("i"), null);
+  const tx = rows[1].querySelector(".tx");
+  assert.equal(tx.textContent, "Choose “Role” in “Role”");
+  assert.ok(tx.innerHTML.endsWith("<strong>“Role”</strong>"), "the target is the last quoted part");
+  p.dom.window.close();
+});
+
+test("plan review: a step that will ask for approval keeps its note", async () => {
+  const p = makePanel({ plan: () => ({ version: "seeyable-plan-1", outcome: "steps", steps: [{ action: "click", elementId: "el-20" }] }) });
+  await tick(); await tick();
+  await typed(p, "please send in the survey now");
+  const row = p.$("planSteps").children[0];
+  assert.match(row.querySelector(".step-note").textContent, /stop and ask for its own approval/);
+  assert.ok(row.classList.contains("is-risky"));
+  p.dom.window.close();
+});
+
+test("header: the chip and mode follow the view", async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const p = makePanel({ plan: fills("el-1", "el-7"), onExecute: async () => { await gate; return verified; } });
+  await tick(); await tick();
+  assert.equal(p.$("stateChip").textContent, "Ready");
+  await typed(p, "please do these things in order");
+  p.$("btnApprovePlan").click();
+  await tick(); await tick();
+  assert.equal(p.view(), "acting");
+  assert.match(p.$("stateChip").textContent, /Acting/);
+  assert.equal(p.$("modeLabel").textContent, "~working");
+  release();
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(p.view(), "done");
+  assert.match(p.$("stateChip").textContent, /Done/, "Done, not Ready, after a verified plan");
+  assert.equal(p.$("stateChip").className, "chip is-success");
+  p.$("btnNewRequest").click();
+  await tick();
+  assert.equal(p.$("stateChip").textContent, "Ready", "and it does not outlast the Done view");
+  p.dom.window.close();
+
+  const q = makePanel({ plan: twoFill, elements: [el("el-1", "Twin"), el("el-2", "Twin")] });
+  await tick(); await tick();
+  await typed(q, "fill Twin with x");
+  assert.equal(q.view(), "repair");
+  assert.equal(q.$("stateChip").textContent, "Your choice", "never Ready while a choice waits");
+  q.dom.window.close();
+
+  const r = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  await typed(r, "please do these things in order");
+  r.$("btnEditPlan").click();
+  await tick();
+  assert.equal(r.view(), "edit");
+  assert.equal(r.$("stateChip").textContent, "Editing");
+  r.dom.window.close();
+});
+
+test("header: planning reads Working, not Acting, because nothing is touching the page", async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const p = makePanel({ plan: twoFill });
+  const fetchOriginal = p.win.fetch;
+  p.win.fetch = async (...args) => { await gate; return fetchOriginal(...args); };
+  await tick(); await tick();
+  p.$("commandInput").value = "please do these things in order";
+  p.$("btnSendCommand").click();
+  await tick(); await tick();
+  assert.equal(p.view(), "working");
+  assert.match(p.$("stateChip").textContent, /Working/);
+  assert.equal(p.$("modeLabel").textContent, "~working");
+  assert.equal(p.$("voiceState").textContent, "Voice: idle.", "a typed request is not a voice event");
+  release();
+  await tick(); await tick(); await tick();
+  p.dom.window.close();
+});
+
+test("voice line: says acting for spoken commands only", async () => {
+  const rec = makeRecognitionClass();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const p = makePanel({ plan: twoFill, recognition: rec, onExecute: async () => { await gate; return verified; } });
+  await tick(); await tick();
+  p.$("btnListen").click();
+  await tick();
+  rec.instances[0].fireStart();
+  await tick();
+  rec.instances[0].fireFinal("fill Full name with Ada");
+  await tick();
+  assert.match(p.$("voiceState").textContent, /^Voice: acting/);
+  release();
+  rec.instances[0].fireEnd();
+  await tick(); await tick(); await tick();
+  assert.equal(p.$("voiceState").textContent, "Voice: idle.");
+  p.dom.window.close();
+});
+
+test("stopped: the card carries the message, and screen readers still get the rest", async () => {
+  const p = makePanel({ plan: twoFill, onExecute: () => heldResponse("2099-01-01T00:00:00.000Z") });
+  await tick(); await tick();
+  await typed(p, "click Submit survey");
+  p.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.equal(p.view(), "stopped");
+  assert.match(p.$("gateStatus").textContent, /stopped/);
+  assert.equal(p.$("gateStatus").getAttribute("role"), "status");
+  assert.match(p.$("confirmStatus").textContent, /revoked/);
+  const css = read("../sidepanel.css");
+  assert.match(css, /^\.gate-status:not\(\.error\) \{/m, "shown only when Stop or Resume failed");
+  assert.match(css, /body\[data-view="stopped"\] #confirmStatus \{/);
+  p.dom.window.close();
+});
+
+test("smaller fixes: no input while working; marks are separate; leftover labels are gone", async () => {
+  const css = read("../sidepanel.css");
+  assert.match(css, /body\[data-view="working"\] \.request-label, body\[data-view="acting"\] \.request-label \{ display: none; \}/);
+  const page = read("../sidepanel.html");
+  assert.doesNotMatch(page, /Stop\/Pause/);
+  assert.doesNotMatch(page, /local spike/);
+  assert.doesNotMatch(page, /voiceProviderNote/, "one voice note, not two");
+  const p = makePanel({ plan: twoFill, elements: [el("el-1", "Full name", { state: { disabled: true } })] });
+  await tick(); await tick();
+  const row = p.$("targetList").querySelector("button");
+  assert.equal(row.querySelector(".target-mark").textContent, "(disabled)");
+  assert.match(row.textContent, /^1 · Full name \(disabled\)$/);
+  p.dom.window.close();
+});
+
+test("smaller fixes: a required asterisk leaves display text only, and matching still works", async () => {
+  const p = makePanel({ plan: fills("el-1"), elements: [el("el-1", "Full name *")] });
+  await tick(); await tick();
+  assert.equal(p.$("tryChips").querySelector("button").textContent, "Fill Full name with Ada");
+  assert.doesNotMatch(p.$("targetList").textContent, /\*/);
+  await runPlan(p);
+  assert.equal(p.$("btnUndo").textContent, "Undo Full name");
+  const snapshotCall = p.calls.send.find((m) => m.type === "SEEYABLE_EXECUTE_ACTION");
+  assert.equal(snapshotCall.request.elementId, "el-1");
+  p.dom.window.close();
+  const q = makePanel({ plan: twoFill, elements: [el("el-1", "Full name *")] });
+  await tick(); await tick();
+  await typed(q, "fill Full name with Ada");
+  assert.equal(q.calls.execute, 1, "the resolver still finds the real field");
+  assert.equal(q.calls.fetch, 0);
+  q.dom.window.close();
+});
+
+test("tab change while feedback is playing: speech stops, with no false alarm and no hidden loss", async () => {
+  const makeSpeech = () => {
+    const spoken = [];
+    let cancels = 0;
+    class Utterance { constructor(text) { this.text = text; } }
+    return { spoken, cancels: () => cancels, Utterance, synth: { speak(u) { spoken.push(u.text); }, cancel() { cancels += 1; } } };
+  };
+  // Nothing to lose: speech just stops and no red line appears.
+  const speech = makeSpeech();
+  const rec = makeRecognitionClass();
+  const p = makePanel({ plan: twoFill, recognition: rec, speech, onExecute: async () => verified });
+  await tick(); await tick();
+  p.$("btnListen").click();
+  await tick();
+  rec.instances[0].fireStart();
+  rec.instances[0].fireFinal("fill Full name with Ada");
+  rec.instances[0].fireEnd();
+  await tick(); await tick(); await tick();
+  assert.ok(speech.spoken.length > 0, "feedback really played");
+  const cancelsBefore = speech.cancels();
+  for (const fn of p.listeners.activated) fn({ tabId: 222 });
+  await tick(); await tick(); await tick();
+  assert.ok(speech.cancels() > cancelsBefore, "speech stopped");
+  assert.ok(!p.$("status").classList.contains("error"), "no red line for speech alone");
+  assert.doesNotMatch(p.$("status").textContent, /discarded/);
+  p.dom.window.close();
+
+  // A plan under review is lost by the switch: that must still be reported.
+  const speech2 = makeSpeech();
+  const rec2 = makeRecognitionClass();
+  const q = makePanel({ plan: twoFill, recognition: rec2, speech: speech2 });
+  await tick(); await tick();
+  q.$("btnListen").click();
+  await tick();
+  rec2.instances[0].fireStart();
+  rec2.instances[0].fireFinal("put Grace Hopper in Full name and Pilot in Short bio");
+  rec2.instances[0].fireEnd();
+  await tick(); await tick(); await tick();
+  assert.equal(q.view(), "plan");
+  assert.ok(speech2.spoken.length > 0, "the plan was read out");
+  for (const fn of q.listeners.activated) fn({ tabId: 222 });
+  await tick(); await tick(); await tick();
+  assert.notEqual(q.view(), "plan", "the old tab's plan is gone");
+  assert.match(q.$("status").textContent, /Active tab changed/, "and the loss is reported");
   q.dom.window.close();
 });

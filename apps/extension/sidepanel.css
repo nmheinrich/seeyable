@@ -382,6 +382,24 @@ button.wide, #btnApprovePlan { display: flex; justify-content: space-between; al
 /* While an action is held the card names the page, so the page card steps
    aside and the main card tightens: the decision needs the room. */
 body[data-view="gate"] .page-card { display: none; }
+/* Plan review: the page card shrinks to one line so the plan comes first. */
+body[data-view="plan"] .page-card { padding: 8px 14px; border-radius: 16px; }
+body[data-view="plan"] .page-dot { width: 14px; height: 14px; flex-basis: 14px; border-radius: 4px; }
+body[data-view="plan"] .page-meta { display: none; }
+body[data-view="plan"] .page-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Said once, in the card; screen readers still get the status. */
+body[data-view="plan"][data-status-quiet="true"] #status,
+body[data-view="stopped"] #confirmStatus {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+body[data-view="working"] .request-label, body[data-view="acting"] .request-label { display: none; }
+.said { display: flex; flex-direction: column; gap: 2px; }
+.said[hidden] { display: none; }
+.said-text { font-size: 15px; color: var(--text-secondary); margin: 0; overflow-wrap: anywhere; }
+.steps .tx strong { font-weight: 600; }
+.say-more summary { min-height: 44px; display: flex; align-items: center; font-size: 14px; color: var(--text-secondary); cursor: pointer; }
+.say-more[open] > * + * { margin-top: 6px; }
+.target-mark { display: block; font-size: 13px; color: var(--text-muted); }
 body[data-view="gate"] .commands { padding: 12px 10px; gap: 12px; }
 
 /* --- Chips: colour AND words, never colour alone ------------------------ */
@@ -434,15 +452,16 @@ body[data-safety="inline"][data-view="done"] .safety-controls { flex-direction: 
 body[data-safety="inline"][data-view="stopped"] .stop,
 body[data-safety="inline"][data-view="stopped"] .stop:hover:not(:disabled) { background: var(--action); color: var(--action-label); border-color: var(--action); min-height: 52px; }
 .safety { flex: none; padding: 8px 10px 0; display: flex; flex-direction: column; gap: 4px; background: var(--bg-canvas); }
-.safety-controls { flex-wrap: nowrap; }
+.safety-controls { flex-wrap: nowrap; align-items: stretch; }
 .safety-controls button { flex: 1; min-width: 0; min-height: 52px; white-space: normal; padding-left: 10px; padding-right: 10px; }
 .stop { background: var(--action); color: var(--action-label); border-color: var(--action); }
 .stop:hover:not(:disabled) { background: var(--action); }
 body[data-gate="closed"] .stop { background: var(--surface); color: var(--text); border: 2px solid var(--brick-ring); }
 body[data-gate="closed"] .stop:hover:not(:disabled) { background: var(--surface-hover); }
 .gate-status { font-size: 13px; color: var(--text-muted); padding: 0 6px; margin: 0; }
-/* "Gate: open." is the normal state: kept for screen readers, not shown. */
-body[data-gate="open"] .gate-status:not(.error) {
+/* The card and header chip already say this: kept for screen readers, not
+   shown. A failed Stop or Resume is an error, and that does show. */
+.gate-status:not(.error) {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
 .screen-nav {
@@ -499,6 +518,7 @@ details.sec > summary {
 /* --- Developer view (inside Settings › Advanced) ------------------------- */
 details.developer > *:not(summary) { margin: 10px 0; }
 details.developer section, details.developer .exec { display: flex; flex-direction: column; gap: 8px; }
+details.developer section.controls, details.developer section.toolbar { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
 .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .toolbar button { min-height: 44px; padding: 6px 12px; }
 .highlight { display: block; font-size: 14px; }

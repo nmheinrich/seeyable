@@ -334,15 +334,31 @@ try {
   }
   await panel.send("Emulation.clearDeviceMetricsOverride");
   check("idle: the panel does not scroll sideways", await noSideScroll());
+  await panel.ev(`document.getElementById("commandInput").focus()`);
+  await command("click qqqqqq");
+  check("typing again needs no extra click after a command", await panel.ev(`document.activeElement === document.getElementById("commandInput")`));
   await command("Update my profile");
   await waitView("plan");
   await panel.shot("plan");
+  const shrunk = (id) => panel.ev(`(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return r.width <= 1 && r.height <= 1; })()`);
+  check("plan review: your words are shown", (await visible("planFrom")) && (await panel.ev(`document.getElementById("planFromText").textContent.includes("Update my profile")`)));
+  check("plan review: the outcome is not on screen twice", await shrunk("status"));
+  check("plan review: each step has its number and a bold target", await panel.ev(`[...document.getElementById("planSteps").children].every((r) => r.querySelector(".no") && r.querySelector("strong"))`));
+  check("plan review: Approve is not focused", await panel.ev(`document.activeElement !== document.getElementById("btnApprovePlan")`));
+  check("plan review: voice help starts folded", await panel.ev(`!document.querySelector("#planBox .say-more").open`));
+  check("plan review: Approve shows without scrolling", await panel.ev(`document.getElementById("btnApprovePlan").getBoundingClientRect().bottom <= innerHeight`));
+  await panel.send("Emulation.setDeviceMetricsOverride", { width: 320, height: 765, deviceScaleFactor: 1, mobile: false });
+  await sleep(100);
+  await panel.shot("plan-320");
+  check("plan review: no sideways scroll at 320px", await noSideScroll());
+  await panel.send("Emulation.clearDeviceMetricsOverride");
   check("plan review: Stop sits below the plan controls", await above("btnCancelPlan", "btnStopExec"));
   check("plan review shows Approve", await visible("btnApprovePlan"));
   check("plan review changes nothing on the page", (await value(NAME)) === "" && (await value(ROLE)) === "engineer" && (await value(BIO)) === "");
   await click("btnApprovePlan");
   await waitView("done");
   await panel.shot("done");
+  check("done: the header says done, in the success style", await panel.ev(`document.getElementById("stateChip").classList.contains("is-success")`));
   check("done: Undo sits by the result with Stop below it", (await above("resultUndoNote", "btnUndo")) && (await above("btnUndo", "btnStopExec")));
   await panel.ev(`showScreen("Settings")`);
   check("done: Stop and Undo are not on Settings", !(await visible("btnStopExec")));
@@ -440,6 +456,7 @@ try {
   await waitView("stopped");
   check("Stop withdraws the held Submit", !(await visible("btnApproveOnce")));
   await panel.shot("stopped");
+  check("stopped: the card alone carries the message", await panel.ev(`["gateStatus", "confirmStatus"].every((id) => { const el = document.getElementById(id); return !el.offsetParent || getComputedStyle(el).clipPath !== "none"; })`));
   check("stopped: Resume is in the card above the listen button, with no Undo", (await above("heroCopy", "btnStopExec")) && (await above("btnStopExec", "btnListen")) && !(await visible("btnUndo")));
   await panel.ev(`showScreen("Settings")`);
   check("stopped: the header says so on other screens", (await visible("stateChip")) && (await panel.ev(`document.getElementById("stateChip").textContent`)) === "Stopped" && !(await visible("btnStopExec")));
@@ -474,6 +491,7 @@ try {
   await sleep(200);
   await panel.ev(`document.getElementById("meta").scrollIntoView({ block: "center" })`);
   await panel.shot("long-url-developer-view");
+  check("Developer view: control rows start at the left edge", await panel.ev(`[...document.querySelectorAll("details.developer section.controls, details.developer .toolbar")].filter((c) => c.offsetParent && c.firstElementChild).every((c) => c.firstElementChild.getBoundingClientRect().left - c.getBoundingClientRect().left < 24)`));
   check("a long URL does not scroll the panel sideways", await panel.ev(`(() => { const s = document.getElementById("screens"); return s.scrollWidth <= s.clientWidth; })()`));
   await panel.ev(`(document.getElementById("developerView").open = false, showScreen("Assist"), 1)`);
   await demo.send("Page.navigate", { url: `http://127.0.0.1:${demoPort}/demo-survey/index.html` });

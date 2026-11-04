@@ -36,13 +36,15 @@ let transcriptEmpty = true;
 let lastExecVerified = false;  // the latest execution result was verified
 let statusAboutHold = false;   // the status line was written while an action was held
 let statusFromOtherTab = false; // an error written before the active tab changed
+let statusRepeatsPlan = false; // the status only repeats what the plan card says
+let refocusInput = false;      // a request was sent from the input, which hides while working
 let plannerRecovery = false;   // the last request needs the planner proxy: show the recovery card
 let pageUnavailable = null;    // { kind: "restricted" | "reload", tabId } when this page cannot be operated
 // Unknown counts as wanted: an agent may act on the page, so the panel must
 // not name a target for Undo until it knows no bridge is in use.
 let agentBridgeWanted = true;
 
-function setStatus(text, isError) {
+function setStatus(text, isError, opts = {}) {
   const el = $("status");
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
@@ -50,6 +52,7 @@ function setStatus(text, isError) {
   statusIsError = Boolean(isError);
   statusAboutHold = Boolean(state.confirmation);
   statusFromOtherTab = false;
+  statusRepeatsPlan = Boolean(opts.repeatsPlan);
   console.info("[seeyable panel]", text);
   renderState();
 }
@@ -261,7 +264,13 @@ function renderTargets() {
     const isActive = element.id === activeTargetId;
     const label = isActive ? fullLabel(element, elements) : shortLabel(element, elements);
     const marks = targetMarks(element);
-    button.textContent = `${numberFromId(element.id)} · ${label}${marks.length ? ` ${marks.join(" ")}` : ""}`;
+    button.textContent = `${numberFromId(element.id)} · ${label}`;
+    for (const text of marks) {
+      const mark = document.createElement("span");
+      mark.className = "target-mark";
+      mark.textContent = text;
+      button.append(" ", mark);
+    }
     if (isActive) button.setAttribute("aria-current", "true");
     button.addEventListener("click", () => highlightElementId(element.id));
     list.append(button);
@@ -281,20 +290,23 @@ function selectedTargetId() {
  * to a chip that truthfully says the panel is ready for the next
  * command. There is no error pill. */
 function renderState() {
+  const view = currentView();
   const chip = $("stateChip");
   if (chip) {
     let cls = "";
     let label = "Ready";
     if (state.confirmation) { label = "\u25B2 Held \u2014 nothing sent"; cls = "is-held"; }
-    else if (state.pending || commandPending) { label = "\u25CF Acting"; cls = "is-acting"; }
-    else if (pendingPlan) { label = "Review \u2014 nothing changed"; cls = "is-review"; }
+    else if (state.pending || commandPending) { label = state.pending || planProgress ? "\u25CF Acting" : "\u25CF Working"; cls = "is-acting"; }
+    else if (pendingPlan) { label = "Review"; cls = "is-review"; }
+    else if (view === "edit") { label = "Editing"; cls = "is-review"; }
+    else if (view === "repair") { label = "Your choice"; cls = "is-review"; }
     else if (state.acquiring) { label = "\u25CF Working"; cls = "is-acting"; }
     else if (voicePhase === "listening") { label = "Listening"; cls = "is-listening"; }
     else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
     else if (voicePhase === "finishing") { label = "Finishing"; cls = "is-listening"; }
     else if (gateClosed) { label = "Stopped"; cls = "is-error"; }
     else if (pageUnavailable) { label = "Unavailable"; }
-    else if (lastExecVerified) { label = "\u25A0 Done"; cls = "is-success"; }
+    else if (view === "done" || lastExecVerified) { label = "\u25A0 Done"; cls = "is-success"; }
     chip.className = "chip" + (cls ? " " + cls : "");
     chip.textContent = label;
   }
@@ -303,8 +315,8 @@ function renderState() {
   document.body.dataset.voiceError = voiceErrorUnresolved ? "true" : "false";
   document.body.dataset.voiceMsg = voiceMessageQuiet ? "quiet" : "shown";
   document.body.dataset.transcript = transcriptEmpty ? "empty" : "shown";
-  const view = currentView();
   document.body.dataset.view = view;
+  document.body.dataset.statusQuiet = statusRepeatsPlan ? "true" : "false";
   document.body.dataset.gate = gateClosed ? "closed" : "open";
   const mode = $("modeLabel");
   if (mode) mode.textContent = VIEW_MODES[view] || "~ready";
@@ -326,6 +338,11 @@ function renderState() {
   $("btnReloadPage").hidden = !(view === "unavailable" && pageUnavailable.kind === "reload");
   $("btnUndo").textContent = undoLabel(view);
   renderExamples();
+  // The input hides while working; give it back to whoever was typing.
+  if (refocusInput && view !== "working" && view !== "acting" && voicePhase === "idle") {
+    refocusInput = false;
+    if (view === "ready" && (!document.activeElement || document.activeElement === document.body)) $("commandInput").focus();
+  }
   const gateTalk = $("gateTalk");
   if (gateTalk) gateTalk.hidden = !state.confirmation;
   renderListenHints();
@@ -353,7 +370,7 @@ const UNAVAILABLE_COPY = {
 };
 const VIEW_MODES = {
   ready: "~ready", listening: "~listening", plan: "~plan", edit: "~edit", repair: "~you",
-  gate: "~you", acting: "~you", working: "~you", done: "~done", stopped: "~stopped",
+  gate: "~you", acting: "~working", working: "~working", done: "~done", stopped: "~stopped",
   unavailable: "~n/a",
 };
 function currentView() {
@@ -530,6 +547,17 @@ function sendTagStates(next, target) {
     if (sent && typeof sent.catch === "function") sent.catch(() => {});
   } catch { /* the page may not have the content script; presentation only */ }
 }
+// The target stands out in a step's words. All of it is page or request data,
+// so it reaches the DOM as text only. In "Choose “x” in “Name”" the target is
+// the last quoted part, and a value may repeat the name.
+function fillStepText(tx, item) {
+  const quoted = item.target ? `\u201C${item.target}\u201D` : "";
+  const at = !quoted ? -1 : item.targetLast ? item.text.lastIndexOf(quoted) : item.text.indexOf(quoted);
+  if (at < 0) { tx.textContent = item.text; return; }
+  const strong = document.createElement("strong");
+  strong.textContent = quoted;
+  tx.append(item.text.slice(0, at), strong, item.text.slice(at + quoted.length));
+}
 function stepItem(item, status) {
   const li = document.createElement("li");
   const gl = document.createElement("span");
@@ -538,7 +566,13 @@ function stepItem(item, status) {
   gl.textContent = status === "done" ? "\u25A0" : status === "now" ? "\u25CF" : item.risky ? "\u25B2" : "\u25CB";
   const tx = document.createElement("span");
   tx.className = "tx";
-  tx.textContent = item.text;
+  fillStepText(tx, item);
+  if (item.note) {
+    const planNote = document.createElement("span");
+    planNote.className = "step-note";
+    planNote.textContent = item.note;
+    tx.append(planNote);
+  }
   if (status === "next") {
     const note = document.createElement("span");
     note.className = "step-note";
@@ -1968,7 +2002,10 @@ async function runPlanSteps(plan, opts) {
       const element = elements.find((e) => e && e.id === step.elementId)
         || opts.pruned.elements.find((e) => e.id === step.elementId);
       const described = describePlanStep(step, element, elements);
-      return { text: described.text, el: step.elementId, risky: Boolean(described.note), action: step.action, name: commandTargetName(element), changed: false };
+      return {
+        text: described.text, target: described.target, targetLast: described.targetLast, el: step.elementId, risky: Boolean(described.note),
+        action: step.action, name: commandTargetName(element).replace(/[\s*]+$/, ""), changed: false,
+      };
     }),
   };
   lastRun = null;
@@ -2254,6 +2291,7 @@ async function runPlannerCommand(rawText, source, gen, seq, opts = {}) {
   const n = plan.steps.length;
   return {
     ok: true, preview: true,
+    plainPlanReady: !opts.edited,
     message: `${opts.edited ? "Replacement plan" : "Plan"} ready for review: ${n} step${n === 1 ? "" : "s"}. Nothing has changed on the page yet — approve, edit, or cancel it.${opts.edited ? " The earlier plan was discarded and can no longer run." : ""}`,
     spoken: "Plan ready for review.",
     contextSummary: planSummaryOf(plan, pruned),
@@ -2337,6 +2375,13 @@ function quotedValue(value) {
 // reviewed snapshot. Page labels are untrusted data and are only ever
 // set through textContent.
 function describePlanStep(step, element, elements) {
+  return {
+    ...describePlanStepWords(step, element, elements),
+    target: element ? fullLabel(element, elements) : step.elementId,
+    targetLast: step.action === "select",
+  };
+}
+function describePlanStepWords(step, element, elements) {
   const name = element ? fullLabel(element, elements) : step.elementId;
   const isProtected = Boolean(element && element.state && element.state.redacted);
   if (step.action === "fill") {
@@ -2364,6 +2409,8 @@ function clearPlanPreview() {
   const focusWasInside = box.contains(document.activeElement);
   box.hidden = true;
   $("planSteps").replaceChildren();
+  $("planFrom").hidden = true;
+  $("planFromText").textContent = "";
   for (const id of ["btnApprovePlan", "btnEditPlan", "btnCancelPlan"]) $(id).onclick = null;
   if (focusWasInside && planFocusReturn && document.contains(planFocusReturn) && typeof planFocusReturn.focus === "function") {
     planFocusReturn.focus();
@@ -2415,22 +2462,21 @@ function presentPlanPreview(plan, binding) {
   const elements = state.snapshot && Array.isArray(state.snapshot.elements) ? state.snapshot.elements : preview.pruned.elements;
   const list = $("planSteps");
   list.replaceChildren();
+  let hasProtectedStep = false;
   for (const step of preview.plan.steps) {
     const element = elements.find((e) => e && e.id === step.elementId)
       || preview.pruned.elements.find((e) => e.id === step.elementId);
     const described = describePlanStep(step, element, elements);
-    const item = document.createElement("li");
-    item.textContent = described.text;
-    if (described.note) {
-      const note = document.createElement("span");
-      note.className = "step-note";
-      note.textContent = ` ${described.note}`;
-      item.append(note);
-    }
-    list.append(item);
+    if (element && element.state && element.state.redacted) hasProtectedStep = true;
+    list.append(stepItem({ ...described, el: step.elementId, risky: Boolean(described.note) }, ""));
   }
   const n = preview.plan.steps.length;
-  $("planIntro").textContent = `${n} step${n === 1 ? "" : "s"}, in order. Nothing has changed on the page yet.`;
+  $("planIntro").textContent = `${n} step${n === 1 ? "" : "s"}, in order`;
+  // "From" shows the person's own words back. A protected step hides its value
+  // in the list, so the words that may contain it are not shown either.
+  const showFrom = Boolean(preview.requestText) && !hasProtectedStep;
+  $("planFrom").hidden = !showFrom;
+  $("planFromText").textContent = showFrom ? `\u201C${preview.requestText}\u201D` : "";
   // Each control acts on THIS preview only; a later preview reassigns them.
   $("btnApprovePlan").onclick = () => { void approvePendingPlan(preview, "manual"); };
   $("btnEditPlan").onclick = () => openPlanEdit(preview);
@@ -2466,7 +2512,7 @@ function presentClarifiedPlan(choice, elementId, snapshot) {
       chosenId: elementId,
     },
   });
-  setStatus("Plan ready for review: 1 step. Nothing has changed on the page yet — approve, edit, or cancel it.");
+  setStatus("Plan ready for review: 1 step. Nothing has changed on the page yet — approve, edit, or cancel it.", false, { repeatsPlan: true });
 }
 
 function previewStillBound(preview) {
@@ -2759,7 +2805,7 @@ function finishCommandOutcome(outcome, { gen, seq, acting, fallbackSummary, fall
       outcome.contextOutcome || (outcome.clarify ? "clarification requested" : outcome.ok ? "completed" : "failed"));
   }
   if (outcome.recover) plannerRecovery = true;
-  setStatus(`${notePrefix || ""}${outcome.message}`, !outcome.ok);
+  setStatus(`${notePrefix || ""}${outcome.message}`, !outcome.ok, { repeatsPlan: Boolean(outcome.plainPlanReady) && !notePrefix });
   if (outcome.ok) {
     // A completed command is recovery from any prior recognition error.
     voiceErrorUnresolved = false;
@@ -2869,7 +2915,8 @@ async function dispatchCommand(rawText, source, meta = {}) {
   commandPending = true;
   updateExecuteEnabled(); // command dispatch holds the shared panel lock
   updateVoiceControls();
-  setVoiceState(isUndo ? "Voice: acting — undoing the last change…"
+  if (source !== "voice") setVoiceState(VOICE_IDLE);
+  else setVoiceState(isUndo ? "Voice: acting — undoing the last change…"
     : !isPageAction && !isPlanner && !isCorrection
       ? (resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…")
       : isPlanner ? (edited ? "Voice: acting — planning your edit…" : "Voice: acting — planning…")
@@ -3013,6 +3060,7 @@ $("btnCancelListen").addEventListener("click", () => {
 });
 
 $("btnSendCommand").addEventListener("click", async () => {
+  refocusInput = true;
   const text = $("commandInput").value;
   $("commandInput").value = "";
   await dispatchCommand(text, "typed");
@@ -3059,6 +3107,7 @@ $("btnNewRequest").addEventListener("click", () => {
 $("commandInput").addEventListener("keydown", async (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
+  refocusInput = true;
   const text = $("commandInput").value;
   $("commandInput").value = "";
   await dispatchCommand(text, "typed");
@@ -3793,8 +3842,12 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage
 }
 chrome.tabs.onActivated.addListener((info) => {
   refreshTabInfo();
-  if ((recognizer && recognizer.isActive()) || commandPending || (speechOutput && speechOutput.isSpeaking())) {
+  // Speech that is only playing discards nothing: it just stops. Anything
+  // else on the old tab is reported by the invalidation below.
+  if ((recognizer && recognizer.isActive()) || commandPending) {
     cancelVoiceInteraction("listening and pending command results were discarded because the active tab changed.");
+  } else if (speechOutput && speechOutput.isSpeaking()) {
+    speechOutput.stop();
   }
   // Invalidate even when nothing is bound yet: an in-flight initial
   // snapshot for another tab must never populate or authorize. The

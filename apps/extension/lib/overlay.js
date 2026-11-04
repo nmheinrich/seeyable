@@ -19,10 +19,11 @@ function numberFromId(id) {
 }
 
 // Display-only annotations: authoring notes that ship inside accessible
-// names (e.g. the demo fixture's "Nickname (placeholder only)") are
+// names (e.g. the demo fixture's "Nickname (placeholder only)", or the
+// asterisk many forms add to a required field's label) are
 // stripped from floating tags and panel labels. The snapshot keeps the
 // accessible name, its source, and the element identity untouched.
-const DISPLAY_ANNOTATIONS = [/\(placeholder only\)\s*$/i];
+const DISPLAY_ANNOTATIONS = [/\(placeholder only\)\s*$/i, /\s*\*+\s*$/];
 function displayName(desc) {
   let name = (desc && desc.name ? String(desc.name) : "").trim();
   for (const re of DISPLAY_ANNOTATIONS) name = name.replace(re, "").trim();

@@ -95,7 +95,11 @@
 
   <section id="planBox" class="clarify plan-review" aria-labelledby="planTitle" hidden>
     <h2 id="planTitle" class="section-label" tabindex="-1">Review plan · nothing changed yet</h2>
-    <p id="planIntro" class="plan-intro">Nothing has changed on the page yet.</p>
+    <p id="planIntro" class="plan-intro"></p>
+    <div id="planFrom" class="said" hidden>
+      <span class="section-label">From</span>
+      <p id="planFromText" class="said-text"></p>
+    </div>
     <ol id="planSteps" class="plan-steps steps"></ol>
     <p id="planNote" class="sub">Filled fields can be undone. Submit, Pay, Delete, and Send steps still stop for their own approval.</p>
     <div class="controls plan-controls" aria-label="Plan review controls">
@@ -106,8 +110,10 @@
     <div id="safetySlotPlan" class="safety-slot"></div>
     <div class="talk" role="group" aria-label="Answer by voice">
       <button id="btnTalkPlan" type="button" class="talk-btn" data-talk><span class="mic-icon small" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15a1 1 0 0 0-.98-.85c-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg></span><span class="talk-label">Answer by voice</span><kbd aria-label="shortcut Alt S">Alt+S</kbd></button>
-      <p class="section-label">Then say</p>
+      <details class="say-more">
+        <summary>What can I say?</summary>
       <ul class="say-list"><li class="main">“Approve plan”</li><li>“Cancel plan”</li><li>“Edit plan: …your new request”</li></ul><p class="sub">“Approved plan”, “Approve”, and “Go ahead” also approve. Other wording keeps the plan waiting. Plan approval never approves a Submit-type step.</p>
+      </details>
     </div>
   </section>
 
@@ -198,7 +204,6 @@
       <button id="btnStopSpeech" type="button">Stop speech</button>
       <p class="sub">Speech also stops by itself when you start talking, so Seeyable never hears its own voice.</p>
       <button id="btnMicSetup" type="button">Microphone setup</button>
-      <p id="voiceProviderNote" class="sub">Voice input uses Meta transcription when the planner proxy is paired and speech is configured; otherwise it uses browser recognition. Meta transcription is speech-to-text only — spoken feedback stays in the browser.</p>
       <p id="voiceNote" class="sub"></p>
     </div>
   </details>
@@ -206,7 +211,7 @@
     <h3 id="advancedHeading" class="section-label">Advanced</h3>
     <details id="developerView" class="sec developer">
   <summary>Developer view</summary>
-  <p class="sub">Snapshot tools, tag visibility, manual execution, and the detailed log. Confirmations, Stop/Pause, and the safety state above stay visible whether this is open or closed.</p>
+  <p class="sub">Snapshot tools, tag visibility, manual execution, and the detailed log.</p>
 
   <section class="controls" aria-label="Snapshot controls">
     <button id="btnDom" type="button">Snapshot via DOM/ARIA</button>
@@ -231,7 +236,7 @@
   </section>
 
   <section class="exec" aria-labelledby="bridgeHeading">
-    <h2 id="bridgeHeading">MCP bridge (local spike)</h2>
+    <h2 id="bridgeHeading">MCP bridge (local)</h2>
     <p class="sub">Pairs this browser with the loopback MCP bridge server on 127.0.0.1. Paste the runtime token the server printed; it is kept for this browser session only and never sent to webpages.</p>
     <label class="field">
       Pairing token

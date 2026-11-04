@@ -343,6 +343,9 @@ test("labels: display annotations stripped, short tags truncated at words, full 
   assert.equal(displayName({ name: "Nickname (placeholder only)" }), "Nickname");
   assert.equal(displayName({ name: "Nickname (PLACEHOLDER ONLY)" }), "Nickname");
   assert.equal(displayName({ name: "Work email" }), "Work email");
+  assert.equal(displayName({ name: "Full name *" }), "Full name");
+  assert.equal(displayName({ name: "Full name**" }), "Full name");
+  assert.equal(displayName({ name: "5 * 3 stars" }), "5 * 3 stars", "only a trailing marker is display noise");
   const long = { id: "el-5", role: "textbox", name: "A very long descriptive field name for notes", question: null, questionCertain: false };
   const short = buildTagLabel(long, [long], { short: true });
   assert.ok(short.text.length <= 32, `floating tag is short: ${short.text}`);

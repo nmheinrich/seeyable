@@ -55,7 +55,7 @@ Visual source of truth:
 | `confirmBox` (gate) + `btnApproveOnce`, `btnCancelChallenge`, `confirmStatus` | Main card as an `alertdialog`; title names the held action; voice approval prompt below it. |
 | `btnStopExec` + `btnPauseExec` | One `btnStopExec` (Stop ⇄ Resume) in the always-visible safety bar. |
 | (voice/typed "undo last change") | Also `btnUndo` in the safety bar. |
-| `gateStatus` | Safety bar; announced always, shown when stopped or on error. |
+| `gateStatus` | Safety bar; announced always, shown on error only (the Stopped card carries the message). |
 | `btnViewTargets`, `targetsHeading`, `targetList` | Ready view button opens the Targets screen. |
 | `voiceSettings` (`chkSpeak`, `btnStopSpeech`, `btnMicSetup`, `voiceNote`) | Settings screen (open by default). |
 | `developerView` and all its controls (snapshots, JSON tools, tags, MCP bridge, planner pairing, highlight, manual execution, action log) | Settings › Advanced, unchanged IDs and handlers. |

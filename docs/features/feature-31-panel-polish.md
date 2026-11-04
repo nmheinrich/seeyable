@@ -1,6 +1,6 @@
 # Plain Words panel polish (#31)
 
-Status: **Slices 0 to 3 implemented. Product Owner passed the headed checks of Slices 1 and 2; the headed check of Slice 3 (including an agent action while on Settings) is pending.** Slices 4 and 5 not started.
+Status: **Slices 0 to 4 implemented. Product Owner passed the headed checks of Slices 1, 2 and 3; the headed check of Slice 4 is pending.** Slice 5 not started.
 
 Goal: make the panel feel finished without changing what Seeyable can do or who can approve an action.
 
@@ -52,6 +52,21 @@ The Product Owner found Stop read as "done talking", and pressing it discarded t
 The Product Owner then asked for Undo to hide under the same rule, because pressing it mid-sentence discards the speech. Saying "undo that" still works, and if a command is running Undo shows disabled.
 
 Test changes: the "listening pins Stop" test now asserts the new rule, and three tests were added (mic winding down during a command, spoken undo while the button is hidden, agent while talking). Four assertions moved to the new label. Evidence: extension 407/407, end-to-end 76/76; the talking checks in Chrome set the state directly because headless has no microphone. Breaking either exception fails its test.
+
+## Slice 4: plan review, header, Stopped and smaller fixes
+Plan review: the page card collapses to its title row, "nothing changed" appears once (the same line still reaches screen readers), the request shows as "From", targets are bold, steps carry number dots, voice help folds under "What can I say?", and focus lands on the title, never on Approve. "From" stays hidden when a step targets a redacted field, because a spoken request may contain the value.
+
+Header: the chip follows the view: Review, Editing, Your choice, Done on the done view, Working while nothing is touching the page, Acting while steps run. Working and acting read `~working`.
+
+Stopped: the card alone carries the message; `#gateStatus` shows only on error and both status lines remain announced.
+
+Smaller fixes: no input in Working or Acting, and focus returns to the input after a typed command that ends on Ready. "Voice: acting" appears for spoken commands only. Target marks such as "(disabled)" sit in their own span. A trailing required-field asterisk is stripped from display text only; the snapshot, resolver and planner keep the real name. "Stop/Pause" and "local spike" are gone from the Developer view and its pills start at the left.
+
+Two changes beyond the list: the static voice note that repeated the other one was removed, and switching tabs while feedback is only being spoken now stops the speech with no red "discarded" line. A plan lost by the switch is still reported.
+
+Test changes: none altered or weakened. Added 12 panel tests and three overlay assertions, a `speech` harness option, and 11 end-to-end checks. The Plain Words doc's `gateStatus` row now says it shows on error only.
+
+Evidence (stub model, headless Chrome, 2026-11-04): extension 419/419, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 87/87. Off-limits diff empty. Eleven deliberate breaks in a scratch copy were each caught by the intended test, including the two tab-switch directions, the redacted-step request, step text rendered as HTML and an over-broad asterisk pattern. Screenshots of plan (360 and 320), done, stopped and Developer view reviewed. Not covered: real voice, a real model, and a headed Chrome.
 
 ## Evidence for Slices 0 and 1 (stub model, headless Chrome, 2026-11-04)
 - Extension 372/372, planner proxy 22/22, MCP 41/41, shared 11/11. Extension baseline before this work: 362.
