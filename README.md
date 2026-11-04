@@ -34,8 +34,7 @@ their own provider/account setup; Seeyable's MCP path needs no Meta key.
 - **Open-weight bonus:** not currently claimed; the implemented planner uses
   hosted Muse Spark, not a demonstrated open-weight model stage.
 - **Provenance:** the survey is a pre-existing test fixture and is excluded
-  from claims of hackathon-built product work. The owner confirmed that no
-  Seeyable product code existed before October 26, 2026; only the name and
+  from claims of hackathon-built product work. No Seeyable product code existed before October 26, 2026; only the name and
   repository had been prepared. Seeyable is a solo submission.
 - **Demo video:** [Seeyable — Operate the Web by Voice. Keep the Person in Control.](https://youtu.be/5b1S07UP6X4)
 - **License:** [MIT](LICENSE). Bundled fonts retain their included OFL notices.
