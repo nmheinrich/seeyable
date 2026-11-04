@@ -1050,11 +1050,15 @@ test("placement: while talking with nothing running, Stop is hidden and Done tal
   await tick();
   assert.equal(p.view(), "listening");
   assert.equal(p.$("btnStopExec").hidden, true);
+  assert.equal(p.$("btnUndo").hidden, true);
+  assert.equal(p.$("safetyControls").hidden, true, "nothing is left pinned");
   assert.equal(p.$("btnStopListen").disabled, false, "Done talking works");
   assert.equal(p.$("btnCancelListen").disabled, false, "Cancel works");
   p.$("btnCancelListen").click();
   await tick(); await tick();
   assert.equal(p.$("btnStopExec").hidden, false, "Stop returns when talking ends");
+  assert.equal(p.$("btnUndo").hidden, false, "and so does Undo");
+  assert.equal(p.$("safetyControls").hidden, false);
   p.dom.window.close();
 });
 
@@ -1073,6 +1077,9 @@ test("placement: a command running while the microphone winds down shows Stop at
   assert.equal(p.calls.execute, 1, "the command is running");
   assert.equal(p.view(), "listening", "the microphone has not closed yet");
   assert.equal(p.$("btnStopExec").hidden, false, "Stop is available during the action");
+  assert.equal(p.$("safetyControls").hidden, false);
+  assert.equal(p.$("btnUndo").hidden, false);
+  assert.equal(p.$("btnUndo").disabled, true, "Undo shows but waits while acting");
   assert.ok(onOtherScreens(p));
   p.$("btnStopExec").click();
   await tick();
@@ -1080,6 +1087,24 @@ test("placement: a command running while the microphone winds down shows Stop at
   release();
   rec.instances[0].fireEnd();
   await tick(); await tick(); await tick();
+  p.dom.window.close();
+});
+
+test("placement: with Undo hidden while talking, saying undo that still reaches undo", async () => {
+  const rec = makeRecognitionClass();
+  let undos = 0;
+  const p = makePanel({ plan: twoFill, recognition: rec, undo: () => { undos += 1; return { ok: false, error: { code: "NOTHING_TO_UNDO", message: "There is no change to undo." } }; } });
+  await tick(); await tick();
+  p.$("btnListen").click();
+  await tick();
+  rec.instances[0].fireStart();
+  await tick();
+  assert.equal(p.$("btnUndo").hidden, true);
+  rec.instances[0].fireFinal("undo that");
+  rec.instances[0].fireEnd();
+  await tick(); await tick(); await tick();
+  assert.equal(undos, 1);
+  assert.equal(p.calls.fetch, 0);
   p.dom.window.close();
 });
 

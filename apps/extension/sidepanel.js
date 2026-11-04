@@ -384,11 +384,14 @@ function safetyPlacement(view) {
     case "gate": return { slot: "Gate", undo: true };
     case "done": return { slot: "Result", undo: true, undoFirst: true };
     case "stopped": return { slot: "Hero", undo: false };
-    // While talking, "Done talking" and Cancel own the moment and Stop reads
-    // like a third way to finish. Hidden only if nothing is running: a command
-    // can already be in flight while the microphone winds down.
-    case "listening":
-      return { slot: "Pinned", undo: true, stop: state.pending || commandPending };
+    // While talking, "Done talking" and Cancel own the moment; Stop reads like
+    // a third way to finish and Undo would discard the speech. Hidden only if
+    // nothing is running: a command can already be in flight while the
+    // microphone winds down. Saying "undo that" still works.
+    case "listening": {
+      const running = state.pending || commandPending;
+      return { slot: "Pinned", undo: running, stop: running };
+    }
     default: return { slot: "Pinned", undo: true }; // listening, edit, repair, working, acting
   }
 }
@@ -402,6 +405,7 @@ function placeSafety(view) {
   document.body.dataset.safety = slot === "Pinned" ? "pinned" : "inline";
   undoBtn.hidden = !undo;
   stopBtn.hidden = !stop;
+  controls.hidden = !stop && !undo;
   if (controls.parentElement === target && controls.firstElementChild === first) return;
   // Moving an element drops its focus; keep keyboard users where they were.
   const focused = controls.contains(document.activeElement) ? document.activeElement : null;

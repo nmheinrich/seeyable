@@ -49,7 +49,9 @@ Evidence (stub model, headless Chrome, 2026-11-04): extension 404/404, planner p
 ### Slice 3 follow-up: Stop while talking
 The Product Owner found Stop read as "done talking", and pressing it discarded the speech and closed the gate. The button is now "Stop actions" everywhere, and it is hidden while talking unless something is running or an agent bridge is connected or wanted. A command can already be in flight while the microphone winds down, which still counts as the listening view, so Stop returns in that case.
 
-Test changes: the "listening pins Stop" test now asserts the new rule, and two tests were added (mic winding down during a command, agent while talking). Four assertions moved to the new label. Evidence: extension 406/406, end-to-end 76/76; the talking checks in Chrome set the state directly because headless has no microphone. Breaking either exception fails its test.
+The Product Owner then asked for Undo to hide under the same rule, because pressing it mid-sentence discards the speech. Saying "undo that" still works, and if a command is running Undo shows disabled.
+
+Test changes: the "listening pins Stop" test now asserts the new rule, and three tests were added (mic winding down during a command, spoken undo while the button is hidden, agent while talking). Four assertions moved to the new label. Evidence: extension 407/407, end-to-end 76/76; the talking checks in Chrome set the state directly because headless has no microphone. Breaking either exception fails its test.
 
 ## Evidence for Slices 0 and 1 (stub model, headless Chrome, 2026-11-04)
 - Extension 372/372, planner proxy 22/22, MCP 41/41, shared 11/11. Extension baseline before this work: 362.

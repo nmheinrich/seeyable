@@ -322,7 +322,7 @@ try {
   // Headless Chrome has no microphone: this sets the panel's talking state
   // directly, to check layout only. Voice behaviour is covered by the unit tests.
   await panel.ev(`(voicePhase = "listening", renderState(), 1)`);
-  check("talking: Stop is hidden", !(await visible("btnStopExec")));
+  check("talking: Stop and Undo are hidden", !(await visible("btnStopExec")) && !(await visible("btnUndo")));
   await panel.shot("talking");
   await panel.ev(`(voicePhase = "idle", renderState(), 1)`);
   for (const width of [320, 360, 560]) {

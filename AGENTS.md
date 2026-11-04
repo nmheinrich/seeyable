@@ -12,7 +12,7 @@ The side panel is a Plain Words surface — identity, status, the main card,
 and Stop/Resume + Undo placed by state over the screens (Assist / Targets /
 Activity / Settings): with the task on Assist while idle, pinned on every
 screen while anything is in progress or an agent bridge is connected or
-wanted, and Stop hidden while talking if neither applies (Product Owner
+wanted, and both hidden while talking if neither applies (Product Owner
 decision, 2026-11-04, #31; this supersedes the frozen
 mockup's always-visible bar); diagnostics in a
 collapsible Developer view under Settings › Advanced —

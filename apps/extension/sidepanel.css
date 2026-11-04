@@ -425,6 +425,7 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 /* --- Stop and Undo: pinned while something can run, otherwise with the task.
    The buttons move between slots (see placeSafety); the nav never moves. --- */
 .safety-slot:empty { display: none; }
+#safetyControls[hidden] { display: none; }
 body[data-safety="inline"] .safety { padding-top: 0; }
 body[data-safety="inline"] .safety-controls button { min-height: 44px; }
 body[data-safety="inline"] .stop { background: var(--surface); color: var(--text); border-color: var(--control-edge); }
