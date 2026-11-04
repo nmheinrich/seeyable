@@ -74,6 +74,9 @@ confirmed preview, voice edit, unsupported-approval retention, contextual
 approval, and undo on 2026-10-31. Speech recognition still repeatedly heard
 “Grasshopper” for “Grace Hopper”; exact-name transcription is not established.
 Supplementary headed safety probes remain separately listed in the feature doc.
+Issue #31 (Plain Words panel polish) is complete and accepted: the Product
+Owner passed its headed checks and final runs, including zoom, forced colors
+and keyboard-only, on 2026-11-04.
 See docs/status.md for verification evidence.
 Definition of done for any task: works on the demo survey, sample output or
 test evidence included, scope not expanded beyond the issue.

@@ -1,6 +1,6 @@
 # Plain Words panel polish (#31)
 
-Status: **Slices 0 to 4 implemented and Product Owner passed their headed checks (Slices 1 to 4). Slice 5 is implemented and passed its headed check. The automated final check is done; the headed final runs (Act 1, Act 2, zoom, forced colors, keyboard-only) are pending.**
+Status: **Complete and accepted. The Product Owner passed the headed checks of Slices 1 to 5 and the headed final runs (Act 1, Act 2, zoom, forced colors, keyboard-only) on 2026-11-04.**
 
 Goal: make the panel feel finished without changing what Seeyable can do or who can approve an action.
 
@@ -82,6 +82,8 @@ Test changes: none altered or weakened. Added 6 panel tests, an `activeTabs` har
 Evidence (stub model, headless Chrome, 2026-11-04): extension 425/425, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 92/92. Off-limits diff empty. A judging ZIP built in a scratch copy contains every manifest icon. Eleven deliberate breaks in a scratch copy: ten caught by the intended test, and the eleventh showed an error handler was dead code, so it was removed. Screenshot review caught a real layout bug (hidden image kept its box) that the first checks missed; a new end-to-end check now fails when that bug is put back. Not covered: real sites' icons in headed Chrome, which the headed check should try.
 
 ## Final check (automated part, stub model, headless Chrome, 2026-11-04)
+Headed final runs: Product Owner reported all passed on 2026-11-04. Forced colors there means the DevTools emulation offered on a Mac; a real Windows high-contrast theme remains untried.
+
 Extension 425/425, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 93/93. Off-limits diff empty.
 
 `SEEYABLE_E2E_SWEEP=1` with `SEEYABLE_E2E_SHOTS=<dir>` captures all 16 key states, including the long-URL page, in light, dark and emulated forced colors at 320, 360 and 560 px (144 screenshots), and audits each for sideways scroll, controls off the edge, overflowing button text, and text contrast below AA (contrast is not audited in forced colors). Result: 0 findings; the audit was first confirmed to report four problems planted on a test page. Contact sheets were reviewed by eye.
