@@ -12,8 +12,8 @@
   src: url("fonts/Jost-400.woff2") format("woff2");
   font-weight: 400; font-style: normal; font-display: swap;
 }
-/* No Jost 300 file is bundled yet; until one is added (OFL), the light
- * display weight uses the 400 file rather than a synthetic weight. */
+/* The Jost files are one variable font, so each face below renders its
+ * declared weight from the wght axis, including this light display weight. */
 @font-face {
   font-family: "Jost";
   src: url("fonts/Jost-400.woff2") format("woff2");
@@ -145,7 +145,16 @@ p { margin: 0; }
   display: flex; align-items: center; gap: 10px;
   background: var(--bg-panel); border-radius: 22px; padding: 12px 16px;
 }
-.page-dot { width: 22px; height: 22px; border-radius: 6px; background: var(--page-accent); flex: 0 0 22px; }
+.page-dot {
+  width: 22px; height: 22px; border-radius: 6px; background: var(--page-accent); flex: 0 0 22px;
+  display: grid; place-items: center; overflow: hidden;
+  color: #FFFFFF; font-size: 13px; font-weight: 600; line-height: 1;
+}
+/* White in both themes: most site icons are drawn for a light tab strip. */
+.page-dot.has-icon { background: #FFFFFF; }
+.page-dot.has-icon #pageInitial { display: none; }
+.page-dot img { width: 16px; height: 16px; }
+.page-dot img[hidden] { display: none; }
 .page-text { min-width: 0; }
 .page-title { font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .page-meta { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
@@ -384,7 +393,8 @@ button.wide, #btnApprovePlan { display: flex; justify-content: space-between; al
 body[data-view="gate"] .page-card { display: none; }
 /* Plan review: the page card shrinks to one line so the plan comes first. */
 body[data-view="plan"] .page-card { padding: 8px 14px; border-radius: 16px; }
-body[data-view="plan"] .page-dot { width: 14px; height: 14px; flex-basis: 14px; border-radius: 4px; }
+body[data-view="plan"] .page-dot { width: 14px; height: 14px; flex-basis: 14px; border-radius: 4px; font-size: 9px; }
+body[data-view="plan"] .page-dot img { width: 12px; height: 12px; }
 body[data-view="plan"] .page-meta { display: none; }
 body[data-view="plan"] .page-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Said once, in the card; screen readers still get the status. */

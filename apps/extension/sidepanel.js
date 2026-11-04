@@ -86,8 +86,44 @@ async function refreshTabInfo() {
     const label = tab && tab.title ? tab.title : tab ? "Current page" : "—";
     const bound = state.boundTabId !== null && tab && tab.id !== state.boundTabId ? " (execution bound to another tab)" : "";
     $("tabInfo").textContent = tab ? `${label}${bound}` : "—";
+    renderPageMark(tab);
   } catch { /* panel may open before tabs settle */ }
 }
+
+/* --- Page mark: the site's own icon, or its first letter ------------------
+ * Decoration only, from data the tabs permission already gives. The icon URL
+ * is page-controlled, so it only ever reaches an <img>: no scripts run, and
+ * other schemes (chrome:, file:, javascript:) fall back to the letter. */
+function pageInitial(title, url) {
+  const firstOf = (text) => {
+    const found = String(text || "").match(/[\p{L}\p{N}]/u);
+    return found ? found[0].toLocaleUpperCase() : "";
+  };
+  let host = "";
+  try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { /* no usable URL */ }
+  return firstOf(title) || firstOf(host);
+}
+function usableFavicon(url) {
+  return typeof url === "string" && /^(https?:|data:image\/)/i.test(url) ? url : "";
+}
+let wantedFavicon = "";
+function renderPageMark(tab) {
+  $("pageInitial").textContent = tab ? pageInitial(tab.title, tab.url) : "";
+  const url = usableFavicon(tab && tab.favIconUrl);
+  if (url === wantedFavicon) return; // already shown, loading, or known broken
+  wantedFavicon = url;
+  const img = $("pageFavicon");
+  img.hidden = true;
+  $("pageMark").classList.remove("has-icon");
+  if (url) img.src = url;
+  else img.removeAttribute("src");
+}
+$("pageFavicon").addEventListener("load", () => {
+  // A slower icon from the previous tab must not land on this one.
+  if (!wantedFavicon || $("pageFavicon").getAttribute("src") !== wantedFavicon) return;
+  $("pageFavicon").hidden = false;
+  $("pageMark").classList.add("has-icon");
+});
 
 /* --- Snapshot acquisition -------------------------------------------------
  * Primary path is the declared content script. The scripting fallback can
@@ -3872,7 +3908,7 @@ chrome.tabs.onActivated.addListener((info) => {
   requestAutoSnapshot(info.tabId);
 });
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.title || info.url) refreshTabInfo();
+  if (info.title || info.url || info.favIconUrl) refreshTabInfo();
   if ((info.status === "loading" || info.url) && voiceTabId !== null && tabId === voiceTabId) {
     cancelVoiceInteraction("listening was discarded because the tab navigated or reloaded.");
   }

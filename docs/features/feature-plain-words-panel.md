@@ -193,8 +193,7 @@ zoom, a screen reader, or the Product Owner's visual acceptance.
    held tag on Submit; nothing forced over page text.
 
 ## Limitations
-- Jost 300 is not bundled yet; the light display weight renders from the
-  400 file (as before). Adding the OFL 300 woff2 needs a download approval.
+- The bundled Jost files are one variable font, so the light display weight (300) renders for real; no separate file is needed.
 - The progress list and Completed list cover planned runs; local
   fast-path commands report through the status line only.
 - Speech recognition quality is unchanged.

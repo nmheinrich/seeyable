@@ -334,6 +334,15 @@ try {
   }
   await panel.send("Emulation.clearDeviceMetricsOverride");
   check("idle: the panel does not scroll sideways", await noSideScroll());
+  check("page mark: a page with no icon shows its first letter", await panel.ev(`(() => { const m = document.getElementById("pageMark"); return !m.classList.contains("has-icon") && document.getElementById("pageInitial").textContent === document.getElementById("tabInfo").textContent.trim()[0].toUpperCase() && document.getElementById("pageInitial").offsetWidth > 0; })()`));
+  check("page mark: the hidden icon takes no room in the tile", await panel.ev(`(() => { const r = document.getElementById("pageFavicon").getBoundingClientRect(); const m = document.getElementById("pageMark").getBoundingClientRect(); const l = document.getElementById("pageInitial").getBoundingClientRect(); return r.width === 0 && Math.abs((l.top + l.bottom) / 2 - (m.top + m.bottom) / 2) <= 2; })()`));
+  await demo.ev(`(() => { const l = document.createElement("link"); l.rel = "icon"; l.href = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg=="; document.head.append(l); return 1; })()`);
+  await waitFor(() => panel.ev(`!document.getElementById("pageFavicon").hidden`), "site icon shown", 8000).catch(() => {});
+  check("page mark: a site icon appears when the page sets one, with no reload", await panel.ev(`(() => { const i = document.getElementById("pageFavicon"); return document.getElementById("pageMark").classList.contains("has-icon") && i.naturalWidth > 0 && i.offsetWidth === 16; })()`));
+  await panel.shot("ready-with-site-icon");
+  await panel.ev(`document.fonts.ready`);
+  const jostWidth = (weight) => panel.ev(`(() => { const s = document.createElement("span"); s.style = "position:absolute;font:${weight} 40px Jost"; s.textContent = "Handgloves Stopped"; document.body.append(s); const w = s.getBoundingClientRect().width; s.remove(); return w; })()`);
+  check("Jost renders a real light weight from the bundled font", (await panel.ev(`document.fonts.load("300 40px Jost").then((f) => f.length > 0)`)) && (await jostWidth(300)) !== (await jostWidth(600)));
   await panel.ev(`document.getElementById("commandInput").focus()`);
   await command("click qqqqqq");
   check("typing again needs no extra click after a command", await panel.ev(`document.activeElement === document.getElementById("commandInput")`));

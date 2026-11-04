@@ -1,6 +1,6 @@
 # Plain Words panel polish (#31)
 
-Status: **Slices 0 to 4 implemented. Product Owner passed the headed checks of Slices 1, 2 and 3; the headed check of Slice 4 is pending.** Slice 5 not started.
+Status: **Slices 0 to 4 implemented and Product Owner passed their headed checks (Slices 1 to 4). Slice 5 is partly implemented: page mark and manifest description are in; extension icons await the Product Owner's pick; headed check pending.**
 
 Goal: make the panel feel finished without changing what Seeyable can do or who can approve an action.
 
@@ -67,6 +67,19 @@ Two changes beyond the list: the static voice note that repeated the other one w
 Test changes: none altered or weakened. Added 12 panel tests and three overlay assertions, a `speech` harness option, and 11 end-to-end checks. The Plain Words doc's `gateStatus` row now says it shows on error only.
 
 Evidence (stub model, headless Chrome, 2026-11-04): extension 419/419, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 87/87. Off-limits diff empty. Eleven deliberate breaks in a scratch copy were each caught by the intended test, including the two tab-switch directions, the redacted-step request, step text rendered as HTML and an over-broad asterisk pattern. Screenshots of plan (360 and 320), done, stopped and Developer view reviewed. Not covered: real voice, a real model, and a headed Chrome.
+
+## Slice 5: brand
+Page mark: the page card's tile shows the active tab's `favIconUrl` once it has loaded, on a white tile, otherwise the first letter or number of the title or host. Only `http`, `https` and `data:image/` URLs reach the image, with no referrer, and no new permission is used. The icon is display only.
+
+Manifest description now says what ships, in 123 characters. `CHROMEWEBSTORE.md` has the matching purpose and a line on the icon fetch.
+
+Jost 300: no download needed. The three bundled Jost files are the same variable font, so the light weight already renders; the end-to-end suite now measures this and the outdated comments are corrected.
+
+Extension icons are not wired yet. `scripts/package-judging.py` copies an explicit file list and Chrome refuses to load an extension whose manifest names a missing icon, so the manifest change and that list must land together once an icon is picked.
+
+Test changes: none altered or weakened. Added 5 panel tests, an `activeTabs` harness option and 4 end-to-end checks.
+
+Evidence (stub model, headless Chrome, 2026-11-04): extension 424/424, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 91/91. Off-limits diff empty. Eleven deliberate breaks in a scratch copy: ten caught by the intended test, and the eleventh showed an error handler was dead code, so it was removed. Screenshot review caught a real layout bug (hidden image kept its box) that the first checks missed; a new end-to-end check now fails when that bug is put back. Not covered: real sites' icons in headed Chrome, which the headed check should try.
 
 ## Evidence for Slices 0 and 1 (stub model, headless Chrome, 2026-11-04)
 - Extension 372/372, planner proxy 22/22, MCP 41/41, shared 11/11. Extension baseline before this work: 362.

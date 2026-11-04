@@ -36,7 +36,7 @@ function makeRecognitionClass() {
   return { FakeRecognition, instances };
 }
 
-function makePanel({ speech, onExecute, plan, executeGate, recognition, undo, elements = base, tabsGet, snapshotError, scriptedSnapshot, sessionExtra } = {}) {
+function makePanel({ activeTabs, speech, onExecute, plan, executeGate, recognition, undo, elements = base, tabsGet, snapshotError, scriptedSnapshot, sessionExtra } = {}) {
   const dom = new JSDOM(html, { url: "chrome-extension://test/sidepanel.html", runScripts: "dangerously", pretendToBeVisual: true });
   const win = dom.window;
   const calls = { send: [], execute: 0, fetch: 0 };
@@ -54,7 +54,7 @@ function makePanel({ speech, onExecute, plan, executeGate, recognition, undo, el
   listeners.storage = [];
   win.chrome = {
     tabs: {
-      query: async () => [{ id: 111, title: "Demo survey" }],
+      query: async () => (activeTabs ? activeTabs() : [{ id: 111, title: "Demo survey" }]),
       sendMessage: async (tabId, msg) => {
         calls.send.push(msg);
         if (msg.type === "SEEYABLE_SNAPSHOT_DOM") {
@@ -1558,4 +1558,95 @@ test("tab change while feedback is playing: speech stops, with no false alarm an
   assert.notEqual(q.view(), "plan", "the old tab's plan is gone");
   assert.match(q.$("status").textContent, /Active tab changed/, "and the loss is reported");
   q.dom.window.close();
+});
+
+/* --- Slice 5: page mark and manifest --- */
+const markOf = (p) => ({
+  letter: p.$("pageInitial").textContent,
+  shown: !p.$("pageFavicon").hidden && p.$("pageMark").classList.contains("has-icon"),
+  src: p.$("pageFavicon").getAttribute("src"),
+});
+const fire = (p, type) => p.$("pageFavicon").dispatchEvent(new p.win.Event(type));
+
+test("page mark: the letter comes from the title, then the host, and is never page markup", async () => {
+  for (const [tab, letter] of [
+    [{ id: 111, title: "demo survey" }, "D"],
+    [{ id: 111, title: "— Émile's page" }, "É"],
+    [{ id: 111, title: "" , url: "https://www.example.org/x" }, "E"],
+    [{ id: 111, title: "<b>x</b>" }, "B"],
+    [{ id: 111, title: "🙂" }, ""],
+  ]) {
+    const p = makePanel({ plan: twoFill, activeTabs: () => [tab] });
+    await tick(); await tick();
+    assert.equal(markOf(p).letter, letter, JSON.stringify(tab));
+    assert.equal(p.$("pageMark").querySelector("b"), null);
+    p.dom.window.close();
+  }
+});
+
+test("page mark: an icon shows only once it has loaded, and a broken one leaves the letter", async () => {
+  let icon = "https://site.example/a.png";
+  const p = makePanel({ plan: twoFill, activeTabs: () => [{ id: 111, title: "Site", favIconUrl: icon }] });
+  await tick(); await tick();
+  assert.equal(markOf(p).src, icon);
+  assert.equal(markOf(p).shown, false, "no broken image while loading");
+  fire(p, "load");
+  assert.equal(markOf(p).shown, true);
+  // A refresh with the same URL does not reset or flash it.
+  for (const fn of p.listeners.updated) fn(111, { title: "Site 2" });
+  await tick(); await tick();
+  assert.equal(markOf(p).shown, true);
+  // A new icon replaces it, and it can arrive after the page's first update.
+  icon = "https://site.example/b.png";
+  for (const fn of p.listeners.updated) fn(111, { favIconUrl: icon });
+  await tick(); await tick();
+  assert.equal(markOf(p).src, icon);
+  assert.equal(markOf(p).shown, false);
+  fire(p, "error");
+  assert.equal(markOf(p).shown, false);
+  assert.equal(markOf(p).letter, "S");
+  const settled = p.calls.send.length;
+  for (const fn of p.listeners.updated) fn(111, { title: "Site 3" });
+  await tick(); await tick();
+  assert.equal(markOf(p).src, icon, "a known broken icon is not retried on every refresh");
+  assert.equal(p.calls.send.length, settled, "the icon never touches page messaging");
+  p.dom.window.close();
+});
+
+test("page mark: a tab without an icon drops the last tab's icon, and a late load cannot bring it back", async () => {
+  let tab = { id: 111, title: "Site", favIconUrl: "https://site.example/a.png" };
+  const p = makePanel({ plan: twoFill, activeTabs: () => [tab] });
+  await tick(); await tick();
+  fire(p, "load");
+  tab = { id: 222, title: "Other" };
+  for (const fn of p.listeners.activated) fn({ tabId: 222 });
+  await tick(); await tick(); await tick();
+  assert.deepEqual(markOf(p), { letter: "O", shown: false, src: null });
+  fire(p, "load");
+  assert.equal(markOf(p).shown, false, "the old icon's late load is ignored");
+  p.dom.window.close();
+});
+
+test("page mark: only web and inline image icons load, without a referrer", async () => {
+  for (const [url, ok] of [
+    ["https://a.example/i.ico", true], ["http://127.0.0.1:1/i.png", true], ["data:image/png;base64,AA", true],
+    ["chrome://theme/icon", false], ["file:///etc/passwd", false], ["javascript:alert(1)", false],
+    ["data:text/html,<script>1</script>", false], [" ", false], [42, false],
+  ]) {
+    const p = makePanel({ plan: twoFill, activeTabs: () => [{ id: 111, title: "Site", favIconUrl: url }] });
+    await tick(); await tick();
+    assert.equal(markOf(p).src, ok ? url : null, String(url));
+    assert.equal(p.$("pageFavicon").getAttribute("referrerpolicy"), "no-referrer");
+    assert.equal(p.$("pageFavicon").getAttribute("alt"), "");
+    p.dom.window.close();
+  }
+});
+
+test("manifest: the description fits Chrome's limit, says what ships, and adds no permissions", () => {
+  const manifest = JSON.parse(read("../manifest.json"));
+  assert.ok(manifest.description.length <= 132, String(manifest.description.length));
+  assert.match(manifest.description, /voice/);
+  assert.match(manifest.description, /approval/);
+  assert.deepEqual(manifest.permissions, ["activeTab", "scripting", "sidePanel", "storage", "tabs"]);
+  assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1:6123/*", "http://127.0.0.1:6124/*"]);
 });
