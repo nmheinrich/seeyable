@@ -16,6 +16,8 @@ services:
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
+    # Required only while the launcher drops from root to the node user.
+    cap_add: [SETUID, SETGID]
 volumes:
   bridge-state:
 secrets:

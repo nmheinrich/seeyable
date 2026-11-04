@@ -58,7 +58,7 @@ Keep the Compose service running. Find Docker's executable with `command -v dock
       "command": "/absolute/path/to/docker",
       "args": [
         "compose", "--project-directory", "/absolute/path/to/seeyable",
-        "exec", "-T", "seeyable", "node", "apps/mcp-server/server.mjs"
+        "exec", "-T", "--user", "node", "seeyable", "node", "apps/mcp-server/server.mjs"
       ]
     }
   }
@@ -67,7 +67,8 @@ Keep the Compose service running. Find Docker's executable with `command -v dock
 
 Use the folder containing `compose.yaml` as the project directory. Preserve
 existing client servers. `-T` avoids terminal formatting on the MCP protocol;
-stdin remains connected. Do not use `docker compose run`: every client must
+stdin remains connected. `--user node` makes clients share the same home
+directory and private token volume. Do not use `docker compose run`: every client must
 join the same running service to share its bridge. The MCP client launches
 its stdio process, which starts the shared bridge automatically inside that
 container. No MCP protocol endpoint is published over HTTP.
@@ -75,7 +76,7 @@ container. No MCP protocol endpoint is published over HTTP.
 The first client generates a bridge token. Read it locally if needed:
 
 ```sh
-docker compose exec -T seeyable cat /home/node/.seeyable/bridge-6123.token
+docker compose exec -T --user node seeyable cat /home/node/.seeyable/bridge-6123.token
 ```
 
 If the file is missing, connect the MCP client first and inspect its server
