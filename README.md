@@ -9,6 +9,20 @@ requests into reviewable plans. Both paths use the same executor: snapshot-bound
 target validation, live-state checks, and a human confirmation gate for
 consequential actions. This grounds model-generated plans in actual page controls.
 
+## Try Seeyable
+
+- [Watch the demo](https://youtu.be/5b1S07UP6X4) — English captions available.
+- [Download the judging package](https://github.com/nmheinrich/seeyable/releases/tag/v0.1.0-judging-r3)
+  — extension, Docker services, MCP helper and setup guides.
+- [Docker setup](docs/docker-quickstart.md) — run the local services without
+  installing host Node/Python; Chrome and Docker Desktop are required.
+- [Connect an AI agent](docs/local-mcp-setup.md) — local MCP configuration
+  and pairing for supported desktop/CLI clients.
+
+Simple typed commands work without a model key. Panel Meta planning and
+transcription use your own Meta API key in the local proxy. MCP agents use
+their own provider/account setup; Seeyable's MCP path needs no Meta key.
+
 ## Hackathon submission overview
 
 - **Track / theme:** Indie Developer / Push the Frontier.
@@ -20,15 +34,21 @@ consequential actions. This grounds model-generated plans in actual page control
 - **Open-weight bonus:** not currently claimed; the implemented planner uses
   hosted Muse Spark, not a demonstrated open-weight model stage.
 - **Provenance:** the survey is a pre-existing test fixture and is excluded
-  from claims of hackathon-built product work. A complete build-window
-  statement still needs reconciliation before the final video/submission.
-- **Demo video:** pending.
+  from claims of hackathon-built product work. The owner confirmed that no
+  Seeyable product code existed before October 26, 2026; only the name and
+  repository had been prepared. Seeyable is a solo submission.
+- **Demo video:** [Seeyable — Operate the Web by Voice. Keep the Person in Control.](https://youtu.be/5b1S07UP6X4)
 - **License:** [MIT](LICENSE). Bundled fonts retain their included OFL notices.
 
 This is a developer setup: load the extension unpacked and run the local
 services you need. An [optional Docker setup](docs/docker-quickstart.md) runs
 the planner and sample page together and supports local MCP clients without
-host Node/Python installs. Docker build/browser acceptance is pending.
+host Node/Python installs. Docker build/start, a live Meta two-field planner
+request and owner-reported Chrome execution passed. The owner also passed
+a Muse Code MCP connection/snapshot/fill verification; see the
+[judging evidence](docs/evidence/judge-first-run/README.md),
+[Docker checks](docs/evidence/judge-first-run/docker-check.md), and
+[Muse result](docs/evidence/judge-first-run/muse-code-acceptance.md).
 There is no desktop installer or Meta sign-in flow in the extension yet.
 
 For a smaller judging download, run `python3 scripts/package-judging.py`.
@@ -164,11 +184,23 @@ configuration and error codes: [planner proxy guide](apps/planner-proxy/README.m
 
 ## 5. Optional: connect an external agent through MCP
 
+For Docker token generation, pairing, and client-specific examples, use the
+[local MCP setup guide](docs/local-mcp-setup.md). It is included as
+**MCP-SETUP.md** in the judging ZIP and covers ChatGPT desktop/Codex,
+Claude Desktop/Code, and Muse Code, distinguishing documented configuration
+from end-to-end verification.
+For the recommended macOS/Linux setup, start Docker and run
+`sh scripts/setup-mcp.sh` in this repository, or `sh setup-mcp.sh` in the
+judging download. It generates client configuration with your actual paths
+and copies the existing MCP pairing token when clipboard access is available.
+
 The external agent supplies the intelligence. Seeyable's MCP path does not
 call the planner proxy or need `MODEL_API_KEY`. The agent must support a
 **local stdio MCP server**; configure its own model/provider separately.
-Muse-backed agent integration is a separate workflow to verify, not assumed
-by these generic connection instructions.
+The owner passed a guided Muse Code local connection and sample fill using
+a per-session configuration override. Persistent Muse settings installation,
+every action type, and Claude browser acceptance are not established by that
+check. Client configuration support is distinct from verified page behavior.
 
 Find the absolute executable and repository paths:
 

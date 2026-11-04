@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Create a source-only judging download using an explicit runtime allowlist."""
+import fnmatch
 import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +40,12 @@ payload = {f"extension/{name}": (EXT / name).read_bytes() for name in files}
 payload.update({
     "START-HERE.md": (ROOT / "docs/judge-quickstart.md").read_bytes(),
     "LICENSE": (ROOT / "LICENSE").read_bytes(),
+    "setup-mcp.sh": (ROOT / "scripts/setup-mcp.sh").read_bytes(),
+    "docker/setup-mcp.mjs": (ROOT / "docker/setup-mcp.mjs").read_bytes(),
     "demo-survey/index.html": (ROOT / "apps/demo-survey/index.html").read_bytes(),
+    # Preserve the repository path consumed by docker/Dockerfile as well as
+    # the shorter path used by the key-free Python quickstart.
+    "apps/demo-survey/index.html": (ROOT / "apps/demo-survey/index.html").read_bytes(),
 })
 for name in ["compose.yaml", ".dockerignore", "docker/Dockerfile", "docker/start.mjs",
              "docker/.env.example", "apps/mcp-server/package.json",
@@ -50,16 +57,28 @@ for directory in ["apps/mcp-server/lib", "apps/planner-proxy/lib"]:
     for source in sorted((ROOT / directory).glob("*.mjs")):
         payload[source.relative_to(ROOT).as_posix()] = source.read_bytes()
 payload["DOCKER-SETUP.md"] = (ROOT / "docs/docker-quickstart.md").read_bytes()
+payload["MCP-SETUP.md"] = (ROOT / "docs/local-mcp-setup.md").read_bytes()
+# Catch release layouts that work for Chrome but cannot be Docker build contexts.
+for line in payload["docker/Dockerfile"].decode().splitlines():
+    if line.startswith("COPY "):
+        for source in shlex.split(line)[1:-1]:
+            assert any(fnmatch.fnmatch(name, source) or name.startswith(source.rstrip("/") + "/")
+                       for name in payload), f"Docker COPY source missing from archive: {source}"
 out = ROOT / "dist" / f"{prefix}.zip"
 out.parent.mkdir(exist_ok=True)
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
     for name, data in sorted(payload.items()):
-        archive.writestr(f"{prefix}/{name}", data)
+        info = zipfile.ZipInfo(f"{prefix}/{name}")
+        info.create_system = 3
+        info.external_attr = 0o100644 << 16
+        info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(info, data)
 with zipfile.ZipFile(out) as archive:
     assert archive.testzip() is None
     assert len(archive.namelist()) == len(payload)
     for name, data in payload.items():
         assert archive.read(f"{prefix}/{name}") == data
+        assert (archive.getinfo(f"{prefix}/{name}").external_attr >> 16) & 0o777 == 0o644
 digest = hashlib.sha256(out.read_bytes()).hexdigest()
 out.with_suffix(".zip.sha256").write_text(f"{digest}  {out.name}\n")
 print(f"Created {out} ({out.stat().st_size:,} bytes; {len(payload)} files)")

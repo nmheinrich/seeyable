@@ -47,6 +47,16 @@ Live speech/model access is not established just by starting the container.
 
 ## Optional: connect an MCP client
 
+On macOS/Linux, run `sh setup-mcp.sh` from the judging folder (or
+`sh scripts/setup-mcp.sh` in the repository). Choose your agent, add the
+generated configuration, then paste the copied token into Seeyable.
+No environment-variable entry is needed for the recommended setup.
+
+For manual token generation, pairing, and configurations for ChatGPT desktop/Codex,
+Claude Desktop/Code, and Muse Code, see **MCP-SETUP.md** in the judging ZIP
+(repository: `docs/local-mcp-setup.md`). No Meta key is needed in Seeyable
+for MCP-only use; the external agent has its own account/model setup.
+
 Keep the Compose service running. Find Docker's executable with `command -v docker`
 (on Windows use the executable path for your installation). For a client using
 `mcpServers` JSON, adapt this configuration:
@@ -99,6 +109,10 @@ Follow the README's MCP workflow for tab selection, pairing, and human confirmat
   MCP clients/bridge using it first. Do not run both setups on the same ports.
 - Logs: `docker compose logs seeyable`. Planner startup logs contain a pairing
   token; redact it before sharing.
+- `EACCES` for an `/app/...` file after startup: older downloads could preserve
+  root-only source permissions from ZIP extraction. Current images normalize
+  public application files during build; private runtime configuration is
+  separate. Use the corrected download and rebuild with `docker compose up --build`.
 
 ## Implementation and verification limits
 
@@ -115,10 +129,14 @@ This is a local file mount, not an encrypted credential vault.
 The launcher reads that private file before dropping root privileges to the
 image's `node` user; the planner, adapters, and MCP processes run as that user.
 
-Docker is not installed in the authoring environment. Native adapter and
-existing server tests can be run here, but image building, Docker port mapping,
-and headed Chrome/MCP acceptance require a machine with Docker. Do not treat
-this option as Docker-verified until those checks pass.
+Docker backend verification passed on 2026-11-04 after correcting the judging
+ZIP's missing Docker fixture path: build/start from a fresh extraction,
+loopback port mapping, authentication, missing-key refusal, a live Meta
+two-field plan, and two stdio MCP clients. The owner also confirmed Chrome
+planner pairing and execution of the reviewed two-field fill plan. The
+corrected judging package includes the required Docker fixture path.
+Verification details are recorded in the repository under
+`docs/evidence/judge-first-run/docker-check.md`.
 
 Validation on 2026-11-04 (Node 24.20.0, without Docker):
 
@@ -130,8 +148,8 @@ Validation on 2026-11-04 (Node 24.20.0, without Docker):
 - Judging archive: integrity, byte-for-byte contents, and extension asset
   references verified by `python3 scripts/package-judging.py`.
 
-Docker acceptance still needed: build/start from the extracted ZIP, load its
-extension, verify the sample field change, pair the planner and run a live
-two-field plan, then connect an MCP client and verify pairing and a guarded
-page action. Stop/restart and re-pair afterward. These checks are not claimed
-by the native tests above.
+Docker-specific browser checks still outstanding: Submit hold/Cancel,
+additional MCP-controlled page actions, voice/transcription, and re-pairing after restart.
+The owner subsequently passed a guided Muse Code MCP snapshot/fill/verification
+check; see `docs/evidence/judge-first-run/muse-code-acceptance.md`.
+These are separate from the accepted Chrome planner pairing/two-field plan.
