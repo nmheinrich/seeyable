@@ -25,10 +25,22 @@ const state = {
   confirmation: null,   // held confirmation challenge (Feature #11), if any
 };
 
+/* Panel logic reads these flags, never display text, so wording can change
+ * without changing behaviour. */
+const VOICE_IDLE = "Voice: idle.";
+const TRANSCRIPT_EMPTY = "Transcript: \u2014";
+let statusWrites = 0;          // bumped by every setStatus
+let statusIsError = false;
+let voiceMessageQuiet = true;  // the voice line says nothing beyond idle
+let transcriptEmpty = true;
+let lastExecVerified = false;  // the latest execution result was verified
+
 function setStatus(text, isError) {
   const el = $("status");
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
+  statusWrites += 1;
+  statusIsError = Boolean(isError);
   console.info("[seeyable panel]", text);
   renderState();
 }
@@ -257,7 +269,6 @@ function selectedTargetId() {
 function renderState() {
   const chip = $("stateChip");
   if (chip) {
-    const execText = $("execResult") ? $("execResult").textContent : "";
     let cls = "";
     let label = "Ready";
     if (state.confirmation) { label = "\u25B2 Held \u2014 nothing sent"; cls = "is-held"; }
@@ -268,17 +279,15 @@ function renderState() {
     else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
     else if (voicePhase === "finishing") { label = "Finishing"; cls = "is-listening"; }
     else if (gateClosed) { label = "Stopped"; cls = "is-error"; }
-    else if (/^Completed and verified/.test(execText)) { label = "\u25A0 Done"; cls = "is-success"; }
+    else if (lastExecVerified) { label = "\u25A0 Done"; cls = "is-success"; }
     chip.className = "chip" + (cls ? " " + cls : "");
     chip.textContent = label;
   }
   document.body.dataset.voice = voicePhase === "listening" ? "listening"
     : voicePhase === "starting" || voicePhase === "finishing" ? "finishing" : "idle";
   document.body.dataset.voiceError = voiceErrorUnresolved ? "true" : "false";
-  const voiceEl = $("voiceState");
-  document.body.dataset.voiceMsg = voiceEl && voiceEl.textContent === "Voice: idle." ? "quiet" : "shown";
-  const transcriptEl = $("voiceTranscript");
-  document.body.dataset.transcript = !transcriptEl || /^Transcript:/.test(transcriptEl.textContent) ? "empty" : "shown";
+  document.body.dataset.voiceMsg = voiceMessageQuiet ? "quiet" : "shown";
+  document.body.dataset.transcript = transcriptEmpty ? "empty" : "shown";
   const view = currentView();
   document.body.dataset.view = view;
   document.body.dataset.gate = gateClosed ? "closed" : "open";
@@ -566,6 +575,7 @@ async function takeSnapshot(originLabel, opts = {}) {
   // and ownership is retained until the whole acquisition settles.
   const gen = state.generation;
   const myOp = ++state.opSeq;
+  let progressWrite = -1; // the status write holding this acquisition's progress text
   state.acquiring = true;
   if (Number.isInteger(opts.tabId)) state.opTabId = opts.tabId;
   updateExecuteEnabled();
@@ -580,9 +590,9 @@ async function takeSnapshot(originLabel, opts = {}) {
     // visible in the targets, chips, and page line); otherwise it
     // writes its progress text and reports only if nothing else has
     // written since. Manual acquisition always reports.
-    const quietAuto = Boolean(opts.auto) && $("status").classList.contains("error");
-    if (!quietAuto) setStatus(`${originLabel}…`);
-    const statusUntouched = () => !opts.auto || (!quietAuto && $("status").textContent === `${originLabel}…`);
+    const quietAuto = Boolean(opts.auto) && statusIsError;
+    if (!quietAuto) { setStatus(`${originLabel}…`); progressWrite = statusWrites; }
+    const statusUntouched = () => !opts.auto || statusWrites === progressWrite;
     const { snapshot, viaContentScript } = await fetchSnapshot(tab.id);
     if (gen !== state.generation || myOp !== state.opSeq) return; // invalidated or superseded
     try {
@@ -607,7 +617,7 @@ async function takeSnapshot(originLabel, opts = {}) {
     // A failed refresh must not leave the previous snapshot execution-ready.
     if (state.snapshot) state.executorReady = false;
     console.error(err);
-    if (!opts.auto || $("status").textContent === `${originLabel}…`) {
+    if (!opts.auto || statusWrites === progressWrite) {
       try { setStatus(`DOM snapshot failed: ${err.message || err}`, true); } catch { if (!opts.auto) throw err; }
     }
   } finally {
@@ -1014,7 +1024,13 @@ function setVoiceState(text, isError) {
   if (!el) return;
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
+  voiceMessageQuiet = text === VOICE_IDLE;
   renderState();
+}
+function setTranscript(text) {
+  const el = $("voiceTranscript");
+  if (el) el.textContent = text === null ? TRANSCRIPT_EMPTY : text;
+  transcriptEmpty = text === null;
 }
 
 function updateVoiceControls() {
@@ -1097,18 +1113,18 @@ const recognitionHandlers = {
           } else if (!commandPending) {
             voiceTabId = null;
             voicePhase = "idle";
-            setVoiceState("Voice: idle.");
+            setVoiceState(VOICE_IDLE);
           }
           updateVoiceControls();
           flushPendingSpoken(); // session ended: microphone is closed
         },
-        onInterim: ({ text }) => { $("voiceTranscript").textContent = `Heard so far: ${text}`; },
+        onInterim: ({ text }) => { setTranscript(`Heard so far: ${text}`); },
         onFinal: ({ text, sessionId }) => {
           if (voiceStopMarkMs !== null) {
             lastFinalTiming = { ms: performance.now() - voiceStopMarkMs };
             voiceStopMarkMs = null;
           }
-          $("voiceTranscript").textContent = text ? `Heard: ${text}` : "Heard: (no speech)";
+          setTranscript(text ? `Heard: ${text}` : "Heard: (no speech)");
           voicePhase = "finishing";
           // The one accepted utterance ends the session's purpose:
           // wind recognition down now; feedback waits for its end.
@@ -1142,8 +1158,7 @@ function cancelVoiceInteraction(reason) {
   voiceTabId = null;
   listenContext = null;
   pendingCorrection = null; // cached alternatives die with the interaction
-  const transcript = $("voiceTranscript");
-  if (transcript) transcript.textContent = "Transcript: —";
+  setTranscript(null);
   // A plan waiting for review is a pending command: it dies here too.
   if (discardPlanReview() && !commandPending && reason) {
     setStatus(`Plan discarded — ${reason} Nothing was executed.`, true);
@@ -1171,7 +1186,7 @@ function settleVoiceAfterCommand() {
     setVoiceState("Voice: finishing — waiting for the microphone to close…");
   } else {
     voicePhase = "idle";
-    setVoiceState("Voice: idle.");
+    setVoiceState(VOICE_IDLE);
   }
 }
 
@@ -1262,7 +1277,7 @@ function presentPipelineOutcome(action, name, result) {
       return { ok: false, message: `Could not ${action} ${name}: ${response.error.code} — ${response.error.message}`, contextOutcome: `failed: ${response.error.code}` };
     }
     const detail = describeOutcome(response);
-    if (detail.startsWith("Completed and verified") || detail.startsWith("Already in the desired state")) {
+    if (isConfirmedOutcome(response)) {
       return { ok: true, message: `${past} ${name}. ${detail} ${executionDiffLine(response)}`, spoken: `${past} ${name}.`, contextOutcome: "completed" };
     }
     return { ok: true, message: `${past} ${name}, but ${detail} ${executionDiffLine(response)}`, spoken: "That may not have finished. Check the page.", contextOutcome: "completed unverified" };
@@ -1820,7 +1835,7 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
       };
     }
     const detail = describeOutcome(response);
-    if (detail.startsWith("Completed and verified") || detail.startsWith("Already in the desired state")) {
+    if (isConfirmedOutcome(response)) {
       done.push(commandTargetName(target));
       continue;
     }
@@ -2670,7 +2685,7 @@ async function startListening() {
   try { tab = await activeTab(); } catch { /* start is refused below if ownership changed */ }
   if (gen !== state.generation || seq !== interactionSeq) return;
   voiceTabId = tab && tab.id !== undefined ? tab.id : null;
-  $("voiceTranscript").textContent = "Transcript: —";
+  setTranscript(null);
   voicePhase = "starting";
   voiceErrorUnresolved = false; // a new attempt supersedes the prior error presentation
   setVoiceState("Voice: starting the microphone…");
@@ -2699,7 +2714,7 @@ async function startListening() {
     // starting/finishing text behind. A recognition error keeps its own
     // message (voiceErrorUnresolved) and is not overwritten here.
     voicePhase = "idle";
-    setVoiceState("Voice: idle.");
+    setVoiceState(VOICE_IDLE);
   }
   updateVoiceControls();
 }
@@ -2809,7 +2824,8 @@ updateVoiceControls();
  * captured tab; the execution result is preserved independently. Nothing
  * is retried automatically, and entered values are never persisted or
  * logged. */
-function renderExecution(lines, response) {
+function renderExecution(lines, response, verified = false) {
+  lastExecVerified = verified;
   const parts = [...lines];
   if (response) parts.push("", JSON.stringify(response, null, 2));
   $("execResult").textContent = parts.join("\n");
@@ -2817,6 +2833,14 @@ function renderExecution(lines, response) {
   if (latest) latest.textContent = lines.length ? `Latest result: ${lines[0]}` : "";
 }
 
+function isVerifiedResult(response) {
+  const r = (response && response.ok && response.result) || {};
+  return r.verified === true && !r.alreadyInDesiredState;
+}
+function isConfirmedOutcome(response) {
+  const r = (response && response.ok && response.result) || {};
+  return Boolean(r.alreadyInDesiredState) || r.verified === true;
+}
 function describeOutcome(response) {
   if (!response.ok) return `Failed: ${response.error.code} — ${response.error.message}`;
   const r = response.result || {};
@@ -2977,7 +3001,7 @@ $("btnExecute").addEventListener("click", async () => {
       ], result.response);
       setExecStatus("Confirmation required. Nothing was executed.", false);
     } else {
-      renderExecution([describeOutcome(result.response), executionDiffLine(result.response)], result.response);
+      renderExecution([describeOutcome(result.response), executionDiffLine(result.response)], result.response, isVerifiedResult(result.response));
       setExecStatus(describeOutcome(result.response), !result.response.ok);
     }
   } finally {
@@ -3212,7 +3236,7 @@ async function approveHeldChallenge(expectedChallengeId) {
   const diffLine = response.newSnapshotDiff
     ? `Diff: +${response.newSnapshotDiff.added.length} added, -${response.newSnapshotDiff.removed.length} removed, ${response.newSnapshotDiff.updated.length} updated.`
     : `Diff unavailable: ${response.diffUnavailableReason || "not provided"}.`;
-  renderExecution([describeOutcome(response), diffLine], response);
+  renderExecution([describeOutcome(response), diffLine], response, isVerifiedResult(response));
   setExecStatus(describeOutcome(response), !response.ok);
   if (!response.ok && response.error && APPROVAL_STAGE_CODES.has(response.error.code)) {
     // The approval itself failed; nothing was dispatched.

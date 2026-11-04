@@ -496,3 +496,17 @@ test("#16 preview: hints follow the executor rule — committing selection label
     }
   }
 });
+
+test("panel logic reads state flags, never display text", () => {
+  const source = readFileSync(new URL("../sidepanel.js", import.meta.url), "utf8");
+  for (const pattern of [
+    /\$\("status"\)\.textContent\s*[=!]==/,
+    /\$\("status"\)\.classList\.contains/,
+    /\.textContent\s*===\s*"Voice:/,
+    /\^Transcript:/,
+    /\^Completed and verified/,
+    /detail\.startsWith\(/,
+  ]) {
+    assert.ok(!pattern.test(source), `display text used as logic: ${pattern}`);
+  }
+});
