@@ -24,7 +24,7 @@
 const PLAN_VERSION = "seeyable-plan-1";
 const PLAN_ACTIONS = ["click", "fill", "select", "check", "uncheck"];
 const VALUE_ACTIONS = ["fill", "select"];
-const MAX_STEPS = 8;
+const MAX_STEPS = 20;
 const MAX_CHOICES = 12;
 const MAX_VALUE_LENGTH = 2000;
 const MAX_SAY_LENGTH = 280;

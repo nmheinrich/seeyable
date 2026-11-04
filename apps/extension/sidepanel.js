@@ -734,6 +734,7 @@ $("btnPlannerPair").addEventListener("click", async () => {
   try {
     await chrome.storage.session.set({ plannerToken: token, plannerPort: port });
     $("plannerToken").value = "";
+    if (recognizer && typeof recognizer.resetMetaUnavailable === "function") recognizer.resetMetaUnavailable();
     setPlannerStatus(`Planner: paired on 127.0.0.1:${port}. Ask for status to confirm the model and key.`);
   } catch (err) {
     setPlannerStatus(`Planner: pairing failed: ${err.message || err}`, true);
@@ -743,6 +744,7 @@ $("btnPlannerForget").addEventListener("click", async () => {
   try {
     await chrome.storage.session.remove(["plannerToken", "plannerPort"]);
     $("plannerToken").value = "";
+    if (recognizer && typeof recognizer.resetMetaUnavailable === "function") recognizer.resetMetaUnavailable();
     setPlannerStatus("Planner: pairing discarded.");
   } catch (err) {
     setPlannerStatus(`Planner: forget failed: ${err.message || err}`, true);
@@ -754,7 +756,10 @@ $("btnPlannerStatus").addEventListener("click", async () => {
     if (!plannerApi) throw new Error("Planner support is unavailable in this panel. Reload the extension.");
     const creds = await plannerCredentials();
     const res = await plannerApi.fetchProxyStatus({ baseUrl: creds.baseUrl, token: creds.token });
-    setPlannerStatus(`Planner: model ${res.model}; API key ${res.keyConfigured ? "configured" : "MISSING — set MODEL_API_KEY for the proxy"}.`, !res.keyConfigured);
+    const speech = res.speech
+      ? ` Speech: ${res.speech.configured ? `configured (${res.speech.state})` : "not configured"}; browser recognition remains the fallback.`
+      : " Speech: status unavailable; browser recognition remains the fallback.";
+    setPlannerStatus(`Planner: model ${res.model}; API key ${res.keyConfigured ? "configured" : "MISSING — set MODEL_API_KEY for the proxy"}.${speech}`, !res.keyConfigured);
   } catch (err) {
     setPlannerStatus(`Planner: status failed: ${err.message || err}`, true);
   }
@@ -1051,10 +1056,37 @@ function flushPendingSpoken() {
   if (held.seq === interactionSeq && speechOutput) speechOutput.say(held.text);
 }
 
-const recognizer = voiceApi
-  ? voiceApi.createRecognitionController({
-      window,
-      handlers: {
+const metaVoiceApi = globalThis.SeeyableMetaVoice || null;
+
+// Provider preflight happens before any microphone audio exists. A
+// missing pair, missing speech configuration, or known rejected/failed
+// upstream state makes this attempt use browser recognition. A status
+// transport failure is also pre-capture, so the composite may fall back
+// in the same intentional attempt. Once Meta capture begins, failures
+// are not replayed into the browser provider.
+async function speechProxyConfig() {
+  try {
+    const plannerApi = globalThis.SeeyablePlanner;
+    if (!plannerApi || typeof plannerApi.fetchProxyStatus !== "function") return null;
+    const creds = await plannerCredentials();
+    if (!creds.token || !creds.baseUrl) return null;
+    const status = await plannerApi.fetchProxyStatus({ baseUrl: creds.baseUrl, token: creds.token, timeoutMs: 2500 });
+    const speech = status && status.speech;
+    if (!speech || !speech.configured || speech.state === "unconfigured" || speech.state === "rejected" || speech.state === "failed") {
+      return { eligible: false };
+    }
+    return {
+      eligible: true,
+      baseUrl: creds.baseUrl,
+      token: creds.token,
+      language: (navigator.language || "en-US").split(/[-_]/)[0],
+    };
+  } catch {
+    return null;
+  }
+}
+
+const recognitionHandlers = {
         onState: ({ state: recState }) => {
           // Any authoritative session transition supersedes a prior
           // recognition-error presentation.
@@ -1072,6 +1104,10 @@ const recognizer = voiceApi
         },
         onInterim: ({ text }) => { $("voiceTranscript").textContent = `Heard so far: ${text}`; },
         onFinal: ({ text, sessionId }) => {
+          if (voiceStopMarkMs !== null) {
+            lastFinalTiming = { ms: performance.now() - voiceStopMarkMs };
+            voiceStopMarkMs = null;
+          }
           $("voiceTranscript").textContent = text ? `Heard: ${text}` : "Heard: (no speech)";
           voicePhase = "finishing";
           // The one accepted utterance ends the session's purpose:
@@ -1086,9 +1122,13 @@ const recognizer = voiceApi
           updateVoiceControls();
           flushPendingSpoken(); // error also terminates the microphone
         },
-      },
-    })
-  : null;
+};
+
+const recognizer = metaVoiceApi && typeof metaVoiceApi.createProviderRecognitionController === "function"
+  ? metaVoiceApi.createProviderRecognitionController({ window, handlers: recognitionHandlers, getSpeechConfig: speechProxyConfig })
+  : voiceApi
+    ? voiceApi.createRecognitionController({ window, handlers: recognitionHandlers })
+    : null;
 
 function cancelVoiceInteraction(reason) {
   interactionSeq += 1;
@@ -1800,6 +1840,27 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
   };
 }
 
+/* Content-free timing diagnostics for the planning path. Every line is
+ * `[seeyable-timing] id=… source=… stage=… ms=…` plus only counts and
+ * error codes — never transcripts, values, snapshot content, keys, or
+ * tokens. The id travels to the proxy as X-Seeyable-Timing-Id so panel
+ * and proxy lines correlate. Timings are also recorded on failures. */
+let timingSeqNo = 0;
+let voiceStopMarkMs = null;
+let lastFinalTiming = null;
+
+function startTiming(source) {
+  const id = `cmd-${++timingSeqNo}`;
+  const started = performance.now();
+  return {
+    id,
+    log(stage, ms, extra = "") {
+      try { console.info(`[seeyable-timing] id=${id} source=${source} stage=${stage} ms=${Math.round(ms)}${extra}`); } catch { /* diagnostics are best-effort */ }
+    },
+    since() { return performance.now() - started; },
+  };
+}
+
 async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = {}) {
   const plannerApi = globalThis.SeeyablePlanner;
   const planApi = globalThis.SeeyablePlan;
@@ -1816,10 +1877,13 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
   if (!creds.token) return plannerFailureMessage({ code: "NO_TOKEN" }, localReason);
   voiceTabId = tab.id;
   setStatus("Planning…");
+  const timing = opts.timing || null;
   // Plans are made — and reviewed — against the LIVE page, never a cached
   // copy: a person may have typed since the last snapshot, and a preview
   // bound to a stale revision could only ever be refused at approval.
+  const snapshotStarted = performance.now();
   const ensured = await ensureCommandSnapshot(tab.id, gen, seq, { fresh: true });
+  if (timing) timing.log("snapshot", performance.now() - snapshotStarted, ensured.error ? " outcome=error" : ensured.discarded ? " outcome=discarded" : "");
   if (ensured.discarded || gen !== state.generation || seq !== interactionSeq) {
     return { ok: false, discarded: true, message: "" };
   }
@@ -1834,6 +1898,11 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
   const context = plannerContextFor(tab.id, snapshot.documentSessionId).slice();
   plannerAbortController = new AbortController();
   let payload;
+  const requestStarted = performance.now();
+  if (timing) {
+    const approxBytes = JSON.stringify({ transcript: rawText, snapshot: pruned, context }).length;
+    timing.log("request-sent", 0, ` elements=${pruned.elements.length} approxBytes=${approxBytes}`);
+  }
   try {
     payload = await plannerApi.requestPlan({
       baseUrl: creds.baseUrl,
@@ -1842,8 +1911,11 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
       snapshot: pruned,
       context,
       signal: plannerAbortController.signal,
+      timingId: timing ? timing.id : undefined,
     });
+    if (timing) timing.log("proxy-response", performance.now() - requestStarted);
   } catch (err) {
+    if (timing) timing.log("proxy-error", performance.now() - requestStarted, ` code=${err && err.code ? err.code : "ERROR"}`);
     plannerAbortController = null;
     if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
     return plannerFailureMessage(err, localReason);
@@ -1864,7 +1936,9 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
       contextOutcome: "plan binding mismatch",
     };
   }
+  const validationStarted = performance.now();
   const validation = planApi.validatePlan(payload.plan, live.elements);
+  if (timing) timing.log("panel-validation", performance.now() - validationStarted, ` ok=${validation.ok}`);
   if (!validation.ok) {
     return {
       ok: false,
@@ -1902,10 +1976,12 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
   // Issue #15: a validated step plan never runs directly. It becomes the
   // one pending preview, bound to this request, tab, document, revision,
   // and interaction; only an explicit approval runs it.
+  const previewStarted = performance.now();
   presentPlanPreview(plan, {
     tabId: tab.id, session: live.documentSessionId, revision: live.revision,
     semanticHash: live.semanticHash || null, gen, seq, pruned, source, requestText: rawText,
   });
+  if (timing) timing.log("preview-rendered", performance.now() - previewStarted, ` totalMs=${Math.round(timing.since())}`);
   const n = plan.steps.length;
   return {
     ok: true, preview: true,
@@ -2438,6 +2514,11 @@ async function dispatchCommand(rawText, source, meta = {}) {
     setVoiceState("Voice: error — another panel operation is in progress. Wait for it to finish, then send the command again.", true);
     return;
   }
+  const timing = startTiming(source);
+  if (source === "voice" && lastFinalTiming) {
+    timing.log("stop-to-final", lastFinalTiming.ms);
+    lastFinalTiming = null;
+  }
   // Review and undo phrases resolve locally before anything else, against
   // what is on screen now; approval and cancellation run no model call.
   const review = !meta.forcePlanner && voiceApi.resolveReviewCommand ? voiceApi.resolveReviewCommand(rawText) : null;
@@ -2542,7 +2623,7 @@ async function dispatchCommand(rawText, source, meta = {}) {
     } else if (isCorrection) {
       outcome = await runCorrectionCommand(correction, source, gen, seq);
     } else if (isPlanner) {
-      outcome = await runPlannerCommand(text, source, gen, seq, local && local.reason, { edited });
+      outcome = await runPlannerCommand(text, source, gen, seq, local && local.reason, { edited, timing });
     } else {
       outcome = await runPageActionCommand(local, source, gen, seq);
     }
@@ -2578,6 +2659,13 @@ async function startListening() {
   if (speechOutput) speechOutput.stop(); // never transcribe our own feedback
   const gen = state.generation;
   const seq = interactionSeq;
+  // Review authority is bound to what the user was looking at when they
+  // intentionally pressed Start. Provider selection and microphone
+  // permission may resolve later; a plan or held challenge that appears
+  // during that delay must not retroactively become approvable by this
+  // session, so both identities are captured here, before any await.
+  const planIdAtStart = pendingPlan ? pendingPlan.id : null;
+  const challengeIdAtStart = state.confirmation ? state.confirmation.challengeId : null;
   let tab = null;
   try { tab = await activeTab(); } catch { /* start is refused below if ownership changed */ }
   if (gen !== state.generation || seq !== interactionSeq) return;
@@ -2586,15 +2674,33 @@ async function startListening() {
   voicePhase = "starting";
   voiceErrorUnresolved = false; // a new attempt supersedes the prior error presentation
   setVoiceState("Voice: starting the microphone…");
-  const started = recognizer.start();
+  // Provider selection may be asynchronous (proxy status before any
+  // capture). If ownership moved while it resolved, cancel whatever was
+  // started and let no late session become review authority.
+  const started = await recognizer.start();
+  if (gen !== state.generation || seq !== interactionSeq) {
+    if (started && recognizer.isActive()) recognizer.cancel();
+    updateVoiceControls();
+    return;
+  }
   // Voice review authority is bound to this user-started session and to
-  // what is on screen right now (Issue #15).
+  // the plan/challenge captured at Start above — never to one that
+  // appeared while provider selection or permission was in flight.
   listenContext = started ? {
     sessionId: recognizer.sessionId,
-    planId: pendingPlan ? pendingPlan.id : null,
-    challengeId: state.confirmation ? state.confirmation.challengeId : null,
+    planId: planIdAtStart,
+    challengeId: challengeIdAtStart,
     used: false,
   } : null;
+  if (!started && !recognizer.isActive() && !voiceErrorUnresolved) {
+    // A Start that never began (including Stop pressed during provider
+    // selection, whose idle event may already have settled the phase)
+    // settles back to truthful idle rather than leaving stale
+    // starting/finishing text behind. A recognition error keeps its own
+    // message (voiceErrorUnresolved) and is not overwritten here.
+    voicePhase = "idle";
+    setVoiceState("Voice: idle.");
+  }
   updateVoiceControls();
 }
 $("btnListen").addEventListener("click", () => { void startListening(); });
@@ -2618,6 +2724,7 @@ document.addEventListener("keydown", (event) => {
 
 $("btnStopListen").addEventListener("click", () => {
   voicePhase = "finishing";
+  voiceStopMarkMs = performance.now(); // Stop → final-transcript timing origin
   // Stop finishes the current utterance: a final result may still
   // arrive once and dispatch; the session then returns to idle.
   if (recognizer) recognizer.stop();
@@ -2687,7 +2794,9 @@ if (!recognizer || !recognizer.supported()) {
   $("btnListen").disabled = true;
   $("voiceNote").textContent = "Speech recognition is not available in this browser, so voice input is disabled; typed commands remain fully available. Browser speech recognition may process audio outside this device — Seeyable stores no audio or transcripts.";
 } else {
-  $("voiceNote").textContent = "Recognition uses the browser Web Speech service, which may process audio outside this device. Seeyable stores no audio or transcripts and never adds them to snapshot output.";
+  $("voiceNote").textContent = metaVoiceApi
+    ? "Voice input prefers Meta transcription when the planner proxy is paired and speech is configured; otherwise it uses browser recognition. The selected provider may process audio outside this device. Seeyable stores no audio or transcripts and never adds them to snapshot output."
+    : "Recognition uses the browser Web Speech service, which may process audio outside this device. Seeyable stores no audio or transcripts and never adds them to snapshot output.";
 }
 if (speechOutput && !speechOutput.supported()) {
   $("voiceNote").textContent += " Spoken feedback is unavailable in this browser; visible feedback still works.";

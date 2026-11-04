@@ -178,6 +178,7 @@
       <button id="btnStopSpeech" type="button">Stop speech</button>
       <p class="sub">Speech also stops by itself when you start talking, so Seeyable never hears its own voice.</p>
       <button id="btnMicSetup" type="button">Microphone setup</button>
+      <p id="voiceProviderNote" class="sub">Voice input uses Meta transcription when the planner proxy is paired and speech is configured; otherwise it uses browser recognition. Meta transcription is speech-to-text only — spoken feedback stays in the browser.</p>
       <p id="voiceNote" class="sub"></p>
     </div>
   </details>
@@ -331,6 +332,7 @@
 <script src="lib/command-resolver.js"></script>
 <script src="lib/plan-schema.js"></script>
 <script src="lib/planner.js"></script>
+<script src="lib/meta-voice.js"></script>
 <script src="lib/overlay.js"></script>
 <script src="sidepanel.js"></script>
 </body>

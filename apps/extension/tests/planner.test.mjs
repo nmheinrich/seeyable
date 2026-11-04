@@ -158,6 +158,20 @@ test("requestPlan posts auth + payload and surfaces coded errors", async () => {
   assert.equal(seen[0].url, "http://127.0.0.1:6124/v1/plan");
   assert.equal(seen[0].opts.headers.Authorization, "Bearer tok");
   assert.equal(seen[0].body.transcript, "hi");
+  assert.equal(seen[0].opts.headers["X-Seeyable-Timing-Id"], undefined, "no timing header without a timing id");
+
+  await Planner.requestPlan({
+    baseUrl: "http://127.0.0.1:6124", token: "tok", transcript: "hi",
+    snapshot: { documentSessionId: "d", revision: 1, elements: [] }, context: [], fetchImpl: fakeFetch,
+    timingId: "cmd-7",
+  });
+  assert.equal(seen[1].opts.headers["X-Seeyable-Timing-Id"], "cmd-7", "a valid timing id correlates panel and proxy logs");
+  await Planner.requestPlan({
+    baseUrl: "http://127.0.0.1:6124", token: "tok", transcript: "hi",
+    snapshot: { documentSessionId: "d", revision: 1, elements: [] }, context: [], fetchImpl: fakeFetch,
+    timingId: "bad id with spaces",
+  });
+  assert.equal(seen[2].opts.headers["X-Seeyable-Timing-Id"], undefined, "a malformed timing id is never sent");
 
   const errFetch = async () => ({ json: async () => ({ ok: false, error: { code: "PLAN_INVALID", message: "bad" } }) });
   await assert.rejects(
@@ -260,6 +274,7 @@ const voiceJs = readFileSync(join(here, "../lib/voice-commands.js"), "utf8");
 const commandsJs = readFileSync(join(here, "../lib/command-resolver.js"), "utf8");
 const planSchemaJs = readFileSync(join(here, "../lib/plan-schema.js"), "utf8");
 const plannerJs = readFileSync(join(here, "../lib/planner.js"), "utf8");
+const metaVoiceJs = readFileSync(join(here, "../lib/meta-voice.js"), "utf8");
 const overlayJs = readFileSync(join(here, "../lib/overlay.js"), "utf8");
 
 function snap(elements, revision = 1, session = "doc-A", url = "https://example.test/form") {
@@ -297,6 +312,8 @@ function makePanel(sendImpl, opts = {}) {
     win.speechSynthesis = opts.speech.synth;
     win.SpeechSynthesisUtterance = opts.speech.Utterance;
   }
+  if (opts.audioContext) win.AudioContext = opts.audioContext;
+  if (opts.mediaDevices) Object.defineProperty(win.navigator, "mediaDevices", { value: opts.mediaDevices, configurable: true });
   win.fetch = opts.fetch || (async () => { throw new Error("no proxy in this test"); });
   const wrappedFetch = win.fetch;
   win.fetch = async (...args) => { calls.fetch.push(args[0]); return wrappedFetch(...args); };
@@ -327,6 +344,7 @@ function makePanel(sendImpl, opts = {}) {
   win.eval(commandsJs);
   win.eval(planSchemaJs);
   win.eval(plannerJs);
+  win.eval(metaVoiceJs); // production provider composite, in sidepanel.html order
   win.eval(overlayJs);
   win.eval(panelJs);
   return { dom, win, doc: win.document, calls, listeners, $: (id) => win.document.getElementById(id) };
@@ -385,6 +403,58 @@ async function approvePlan(panel) {
   assert.equal(panel.calls.execute, 0, "nothing runs before approval");
   panel.$("btnApprovePlan").click();
   await tick(); await tick(); await tick(); await tick(); await tick();
+}
+
+/* Issue #30 integrated Meta finals in the planner panel. The fetch stub
+ * routes status/transcription separately from planner calls; planner
+ * bodies still go to the supplied proxy stub. */
+function makePlannerMetaAudio() {
+  const state = { calls: 0, processors: [] };
+  class MockAudioContext {
+    constructor() { this.sampleRate = 16000; this.state = "running"; this.destination = {}; }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createScriptProcessor() {
+      const processor = { onaudioprocess: null, connect() {}, disconnect() {} };
+      state.processors.push(processor);
+      return processor;
+    }
+    createGain() { return { gain: { value: 0 }, connect() {}, disconnect() {} }; }
+    async close() {}
+  }
+  const mediaDevices = {
+    getUserMedia: async () => {
+      state.calls += 1;
+      return { getTracks: () => [{ stop() {} }] };
+    },
+  };
+  state.feed = () => {
+    const processor = state.processors[state.processors.length - 1];
+    processor.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.1) } });
+  };
+  return { state, mediaDevices, AudioContext: MockAudioContext };
+}
+
+function routeMetaFetch(panel, plannerFetch, transcriptRef) {
+  panel.win.fetch = async (url, opts = {}) => {
+    const text = String(url);
+    panel.calls.fetch.push(text);
+    if (text.endsWith("/v1/status")) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, model: "muse-spark-1.3", keyConfigured: true, speech: { configured: true, state: "unknown", upstreamVerified: false } }) };
+    }
+    if (text.endsWith("/v1/transcribe")) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, transcript: transcriptRef.text, provider: "meta", model: "muse-voice-transcribe-1.0" }) };
+    }
+    return plannerFetch(url, opts);
+  };
+}
+
+async function speakMeta(panel, audio) {
+  panel.$("btnListen").click();
+  await sleep(10);
+  assert.equal(audio.state.calls >= 1, true, "Meta capture started");
+  audio.state.feed();
+  panel.$("btnStopListen").click();
+  await sleep(30);
 }
 
 test("planner: fast-path commands make zero proxy calls", async () => {
@@ -545,6 +615,101 @@ test("planner: consequential step holds; later steps dropped; approval runs once
   panel.dom.window.close();
 });
 
+test("planner Meta: a Meta final can approve the shown plan once, but never a consequential challenge", async () => {
+  const rev1 = snap([el("el-1", "Full name"), el("el-7", "Short bio")], 1);
+  const audio = makePlannerMetaAudio();
+  const panel2 = makePanel(tabStub({ snapshots: [rev1, rev1, rev1] }), {
+    session: PAIRED, mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+  });
+  const transcript = { text: "Approve plan" };
+  const stub = proxyStub({
+    version: "seeyable-plan-1", outcome: "steps",
+    steps: [
+      { action: "fill", elementId: "el-1", value: "Grace Hopper" },
+      { action: "fill", elementId: "el-7", value: "Scientist" },
+    ],
+  });
+  routeMetaFetch(panel2, stub.fetch, transcript);
+  sendTyped(panel2, "put Grace Hopper in Full name and Scientist in Short bio");
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(panel2.$("planBox").hidden, false);
+  assert.equal(panel2.calls.execute, 0);
+  await speakMeta(panel2, audio);
+  await tick(); await tick(); await tick();
+  assert.equal(panel2.calls.execute, 2, "the bound Meta session approved the shown plan exactly once");
+  assert.equal(panel2.calls.send.filter((c) => c.msg.type === "SEEYABLE_APPROVE_CHALLENGE").length, 0,
+    "plan approval never mints consequential approval");
+  panel2.dom.window.close();
+});
+
+test("planner Meta: plan wording cannot approve a held action; the exact challenge phrase can, once", async () => {
+  const rev1 = snap([el("el-20", "Submit survey", { role: "button" })], 1);
+  const audio = makePlannerMetaAudio();
+  const inner = tabStub({
+    snapshots: [rev1, rev1],
+    onExecute: () => ({
+      ok: false, error: { code: "CONFIRMATION_REQUIRED", message: "Approval required." },
+      confirmation: { challengeId: "ch-meta", elementId: "el-20", action: "click", targetName: "Submit survey", consequence: "Submits.", expiresAt: "2099-01-01T00:00:00.000Z" },
+      documentSessionId: "doc-A", revision: 1,
+    }),
+  });
+  const panel = makePanel(async (t, msg) => {
+    if (msg.type === "SEEYABLE_APPROVE_CHALLENGE") {
+      return { ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: 1 };
+    }
+    return inner(t, msg);
+  }, { session: PAIRED, mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext });
+  const transcript = { text: "Approve plan" };
+  const stub = proxyStub({
+    version: "seeyable-plan-1", outcome: "steps",
+    steps: [{ action: "click", elementId: "el-20" }],
+  });
+  routeMetaFetch(panel, stub.fetch, transcript);
+  sendTyped(panel, "submit the survey");
+  await tick(); await tick(); await tick(); await tick();
+  await approvePlan(panel); // approves the plan only; the Submit step is held
+  assert.equal(panel.$("confirmBox").hidden, false);
+  assert.equal(panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_APPROVE_CHALLENGE").length, 0);
+
+  await speakMeta(panel, audio); // transcript is still "Approve plan"
+  await tick(); await tick();
+  assert.equal(panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_APPROVE_CHALLENGE").length, 0,
+    "plan approval wording cannot approve the held consequential action");
+  assert.equal(panel.$("confirmBox").hidden, false);
+
+  transcript.text = "Approve this action";
+  await speakMeta(panel, audio);
+  await tick(); await tick(); await tick();
+  assert.equal(panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_APPROVE_CHALLENGE").length, 1,
+    "a fresh Meta session bound to the shown challenge approves it exactly once");
+  panel.dom.window.close();
+});
+
+test("planner timing: a typed two-field request logs every stage, content-free, with one upstream call", async () => {
+  const rev1 = snap([el("el-1", "Full name"), el("el-7", "Short bio")], 1);
+  const panel = makePanel(tabStub({ snapshots: [rev1, rev1] }), { session: PAIRED });
+  const infos = [];
+  panel.win.console.info = (...args) => infos.push(args.join(" "));
+  const stub = proxyStub({
+    version: "seeyable-plan-1", outcome: "steps",
+    steps: [
+      { action: "fill", elementId: "el-1", value: "Grace Hopper" },
+      { action: "fill", elementId: "el-7", value: "Scientist" },
+    ],
+  });
+  panel.win.fetch = stub.fetch;
+  sendTyped(panel, "put Grace Hopper in Full name and Scientist in Short bio");
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(panel.$("planBox").hidden, false, "preview rendered");
+  const lines = infos.filter((l) => l.includes("[seeyable-timing]"));
+  const stages = lines.map((l) => (/stage=(\S+)/.exec(l) || [])[1]);
+  assert.deepEqual(stages, ["snapshot", "request-sent", "proxy-response", "panel-validation", "preview-rendered"]);
+  assert.match(lines[1], /elements=2 approxBytes=\d+/);
+  assert.ok(lines.every((l) => !l.includes("Grace Hopper") && !l.includes("Scientist")), "timing lines contain no transcript or values");
+  assert.equal(stub.bodies.length, 1, "a valid first plan needs no repair call");
+  panel.dom.window.close();
+});
+
 test("planner: invented ids from the proxy are rejected with zero dispatches", async () => {
   const snapshot = snap([el("el-1", "Full name")]);
   const panel = makePanel(tabStub({ snapshots: [snapshot] }), { session: PAIRED });
@@ -695,6 +860,54 @@ test("planner: select dispatches the exact option value for the requested label"
   assert.equal(panel.calls.execute, 1);
   assert.equal(seen[0].value, "pm", "the exact option value dispatches — never the label, never lowercased");
   assert.match(panel.$("status").textContent, /Completed 1 step, all verified/);
+  panel.dom.window.close();
+});
+
+test("planner: >8-step plan previews every step and runs each distinct target once, in order", async () => {
+  const fields = Array.from({ length: 12 }, (_v, i) => el(`el-${i + 1}`, `Field ${i + 1}`));
+  const rev1 = snap(fields, 1);
+  const seen = [];
+  const panel = planPanel([rev1], {
+    version: "seeyable-plan-1", outcome: "steps",
+    steps: fields.map((f, i) => ({ action: "fill", elementId: f.id, value: `value ${i + 1}` })),
+  }, seen);
+  sendTyped(panel, "please handle all twelve fields somehow");
+  await tick(); await tick(); await tick(); await tick();
+  const items = [...panel.$("planSteps").children];
+  assert.equal(items.length, 12, "all 12 steps appear in the preview — none hidden or truncated");
+  fields.forEach((f, i) => assert.match(items[i].textContent, new RegExp(`Field ${i + 1}`)));
+  assert.equal(panel.calls.execute, 0, "nothing runs before approval");
+  await approvePlan(panel);
+  assert.equal(panel.calls.execute, 12, "one approval runs each ordinary step exactly once");
+  assert.deepEqual(seen.map((r) => r.elementId), fields.map((f) => f.id), "steps run in reviewed order");
+  assert.match(panel.$("status").textContent, /Completed 12 steps, all verified/);
+  panel.dom.window.close();
+});
+
+test("planner: >8-step plan stops at the first failure; later targets never run", async () => {
+  const fields = Array.from({ length: 12 }, (_v, i) => el(`el-${i + 1}`, `Field ${i + 1}`));
+  const rev1 = snap(fields, 1);
+  const seen = [];
+  const onExecute = (req) => {
+    seen.push(req);
+    if (seen.length === 3) {
+      return { ok: false, error: { code: "STALE_SNAPSHOT", message: "The page changed." }, newSnapshotDiff: null, documentSessionId: "doc-A", revision: req.revision };
+    }
+    return { ok: true, result: { verified: true }, newSnapshotDiff: { added: [], removed: [], updated: [] }, documentSessionId: "doc-A", revision: req.revision };
+  };
+  const panel = makePanel(tabStub({ snapshots: [rev1], onExecute }), { session: PAIRED });
+  const stub = proxyStub({
+    version: "seeyable-plan-1", outcome: "steps",
+    steps: fields.map((f, i) => ({ action: "fill", elementId: f.id, value: `value ${i + 1}` })),
+  });
+  panel.win.fetch = async (...args) => { panel.calls.fetch.push(args[0]); return stub.fetch(...args); };
+  sendTyped(panel, "please handle all twelve fields somehow");
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(panel.$("planSteps").children.length, 12);
+  await approvePlan(panel);
+  assert.equal(seen.length, 3, "execution stops at the failed step");
+  assert.deepEqual(seen.map((r) => r.elementId), ["el-1", "el-2", "el-3"], "no later target was reached");
+  assert.match(panel.$("status").textContent, /Stopped: step 3 failed/);
   panel.dom.window.close();
 });
 

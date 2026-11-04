@@ -42,6 +42,21 @@ commit real values. If `MODEL_API_KEY` is unset, the proxy still runs but
   `{ ok: false, error: { code, message } }`.
 - `GET /v1/status` — `{ ok: true, model, keyConfigured, version }`.
   `keyConfigured` is a boolean; the key itself never leaves the process.
+  Status also carries `speech: { model, configured, state,
+  upstreamVerified, maxDurationSeconds, maxAudioBytes }`. `configured`
+  only means a key is present locally; upstream access is `verified`
+  only after a real transcription succeeds, and a key/endpoint refusal
+  is remembered as `rejected`.
+- `POST /v1/transcribe` — multipart form with `request: { language }`
+  (`en`/`es`) and `audio` (mono 16-bit PCM WAV, 16/24 kHz, at most 30 s
+  and 1,000,000 bytes; one transcription at a time). The proxy supplies
+  the fixed Meta model `muse-voice-transcribe-1.0`, `WAV`,
+  `PUSH_TO_TALK`, the matching language name, and fixed nonsensitive
+  product keywords; callers cannot choose a model, mode, URL, or
+  vocabulary. Returns `{ ok: true, transcript, provider: "meta", model,
+  processingMs }`. Speech failures use `SPEECH_*`/`AUDIO_*` codes and
+  never echo upstream bodies, transcripts, audio, or keys. Meta Voice
+  Transcribe is speech-to-text only; this proxy adds no TTS endpoint.
 
 Error codes: `UNAUTHORIZED`, `FORBIDDEN`, `BAD_REQUEST`,
 `BODY_TOO_LARGE` (256 KiB), `NO_API_KEY`, `MODEL_TIMEOUT` (20 s per
@@ -72,5 +87,5 @@ never echoed. No retries on auth or HTTP rejection.
 ## Tests
 
 ```sh
-npm --prefix apps/planner-proxy test   # 10 tests; stub upstream, no credentials
+npm --prefix apps/planner-proxy test   # stub upstreams, no credentials
 ```

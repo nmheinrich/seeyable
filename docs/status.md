@@ -1,6 +1,6 @@
 # Project Status and Pending Verification
 
-Last updated: 2026-11-03. This file records what is built, what has
+Last updated: 2026-11-04. This file records what is built, what has
 actually been verified, and what still needs a human with a headed
 browser. It is a status note, not a roadmap; scope decisions live in
 the feature documents.
@@ -21,11 +21,13 @@ the feature documents.
 | Plain Words panel (supersedes #29) | Implemented 2026-11-01 from the approved mockup (frozen at `DESIGN/plain-words-panel-mockup-2026-11-01.html`); headed visual and voice acceptance PENDING. Extension 299/299; headless-Chrome stub-model typed runs 127/127 (states × 320/400/480 px × light/dark, forced colors, page tag states) and #15 regression 32/32 — `docs/features/feature-plain-words-panel.md` |
 | Planner, proxy | Complete and accepted — Product Owner confirmed full canonical Act 1 typed then spoken on the corrected implementation, 2026-10-31; recognition remains imperfect — `docs/features/feature-14-muse-spark-planner.md`; loopback proxy, shared plan schema, guarded sequential execution, cached corrections; stub-model plumbing verified |
 | Voice transcription spike (#12) | Timeboxed spike complete: INCONCLUSIVE / KEEP Web Speech — `docs/decision-voice-transcription.md`; zero provider takes; file-client mechanics verified offline (3/3); live comparison harness incomplete |
+| Meta voice transcription (#30) | Checkpoint-ready for demo use, owner accepted 2026-11-04: live Meta speech verified, simple spoken fill passed, human Cancel left the field unchanged, fresh browser fallback passed without replay. Browser TTS retained; recognition still imperfect. Formal provider comparison and supplementary Spanish/approval corpus remain unmeasured. See `docs/features/feature-30-meta-voice-transcription.md`. |
 | MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
 | Full local MCP server (#19) | Complete and accepted, 2026-11-02: Product Owner Inspector GUI snapshot/highlight/read/fill/click/select and held Submit/cancel checks passed; final automatic binding/tab-following/confirmation discovery passed without a tag toggle. Initial direct chat MCP calls verified. Cross-chat startup conflict fixed in code via one shared authenticated bridge (automated + real headless evidence; ChatGPT desktop headed check pending); full external-agent workflow remains #20 — `docs/features/feature-19-mcp-server.md` |
 | External-client test — Act 2 (#20) | Complete and accepted using Codex Work chat, per owner-authorized substitution for Claude Desktop. Direct MCP workflow verified; Submit held once and human Cancel confirmed. English/Spanish voice checks owner-reported; numeric rating writes unsupported. Work-chat reconnection succeeded (17 tabs, 20-control snapshot); app quit itself not independently observed. Owner requested checkpoint. Evidence: `docs/evidence/act-2/headed-codex-acceptance.md`; headless supporting harness independently rerun 39/39. Claude compatibility not claimed. |
 | Plan preview, confirmation, undo (#15) | Complete and accepted for the core mouse-free workflow — Product Owner confirmed genuine-microphone/model preview, voice edit, unsupported-approval retention, approval and last-change undo on 2026-10-31. Repeated Grace Hopper → Grasshopper recognition remains a limitation; supplementary headed safety probes are not claimed — `docs/features/feature-15-plan-review-undo.md` |
 | Planner fast path (#13) | Checkpoint ready: headed typed exact/fuzzy fill, held Submit/cancel, compound rejection, clarification/expiry, five-choice access, single-error display, and live-mic click (one counter increment) passed. Voice fill remains limited by fill/feel/Phil recognition; full voice acceptance is not claimed — `docs/features/feature-13-local-command-fast-path.md` |
+| Planner capacity experiment | Capacity raised to 20; owner reported the larger request worked after extension reload and requested checkpoint on 2026-11-04. Exact live action count/coverage not supplied; do not claim a 20-step live pass. Automated 20/21 boundary and 12-distinct-target runner checks pass. Timeouts unchanged; variable upstream planning latency remains a limitation. |
 
 Issue #29 is superseded by the Plain Words panel issue (2026-11-01), which
 implements the approved mockup; its notes below are historical. At #29's
@@ -44,6 +46,50 @@ requires no `debugger` permission; CDP remains debug-only via
 `apps/extension/manifest.debug.json`.
 
 ## Verification evidence
+
+- Demo checkpoint, 2026-11-04: owner accepted the current build after the
+  larger request succeeded following extension reload. Live Meta
+  transcription, cancellation, and fresh browser fallback were previously
+  confirmed by the owner. Exact larger-plan action count was not reported.
+  Speech processing logs: 3,943/1,583 ms; plan logs: 5,122/7,243 ms without
+  repair, plus a separate 20,005 ms model timeout before headers. No latency
+  fix, perfect recognition, formal comparison, or full 20-action live run
+  is claimed. This supersedes pending-live wording in the historical notes
+  below; supplementary probes remain separately bounded in the feature doc.
+
+- Planning-latency diagnostics (follow-up): content-free correlated
+  timing lines now cover Stop→final, fresh snapshot, panel→proxy
+  receipt, each upstream call (headers vs full body), validation/repair,
+  and response→preview, on failures as well as successes
+  (`[seeyable-timing]` in the panel console, `timing=cmd-N` in proxy
+  logs). Stub reproduction confirms upstream calls dominate and one
+  repair adds another upstream call. Subsequent live timings are recorded
+  above; no timeout/model/freshness behavior was changed. Live
+  typed+spoken rerun steps are in
+  `docs/features/feature-14-muse-spark-planner.md`.
+
+- Issue #30 Meta transcription, 2026-11-03: production integration uses
+  bounded mono WAV recording/upload through the existing planner proxy;
+  provider is selected before capture and browser recognition remains
+  the fallback. Mocked extension/provider tests cover fallback,
+  after-capture no-replay, cancellation at selection/capture/upload/
+  body phases, duplicate-final once, silence/oversize, cleanup, and
+  stalled-body deadlines. Proxy tests cover pairing/origin, fixed
+  upstream contract, WAV bounds, one-at-a-time transcription,
+  readiness states, safe upstream errors, and disconnect abort. A
+  headless Chrome transcript-only proof (fake microphone device, real
+  extension scripts, real local proxy, stub Meta upstream) returned one
+  final in 36 ms from Stop to stub final and logged no transcript; it
+  was not connected to the command dispatcher. Review corrections then
+  made recognition ownership attempt-bound (cancel during permission/
+  selection, stale cleanup/final isolation), reserved proxy
+  transcription admission before upload with a bounded upload deadline,
+  loaded `meta-voice.js` in the panel/planner/plain-words/plan-review
+  harnesses, and bound voice review authority to the plan/challenge
+  shown at the intentional Start press. No live Meta request, natural
+  microphone take, accuracy claim, or latency comparison was made.
+  Product Owner headed English/Spanish, fallback, and Google Forms
+  checks remain pending.
 
 - Issue #20 accepted using Codex Work chat after explicit owner substitution
   for Claude Desktop. Direct MCP fills/select/clicks and snapshot verification

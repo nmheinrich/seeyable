@@ -29,7 +29,7 @@ in this build, and voice/typed commands never execute page actions.
 | `storage` | permissions | Reserved for local extension state. No user page data is persisted by the spike. |
 | `tabs` | permissions | **(Issue #28 spike)** Lets the loopback MCP bridge list open tabs with titles/URLs so a caller picks an explicit tab. Tab IDs, titles, and URLs are returned only to the local bridge client over the paired socket, never to webpages. |
 | `http://127.0.0.1:6123/*` | host_permissions | **(Issue #28 spike)** Lets the service worker open the outbound pairing WebSocket to the local bridge server. Loopback only; no remote hosts. |
-| `http://127.0.0.1:6124/*` | host_permissions | **(Issue #14)** Lets the side panel POST planning requests to the local planner proxy (transcript plus pruned snapshot, pairing-token authorized). Loopback only; the Meta API key lives in the proxy process, never in the extension. |
+| `http://127.0.0.1:6124/*` | host_permissions | **(Issues #14/#30)** Lets the side panel POST planning requests and bounded push-to-talk WAV transcription requests to the local planner proxy (pairing-token authorized). Loopback only; the Meta API key lives in the proxy process, never in the extension. |
 | `minimum_chrome_version: 116` | manifest | **(Issue #28 spike)** WebSocket in service workers requires Chrome 116+; the bridge heartbeat follows Chrome's documented keepalive pattern. |
 | content-script matches `<all_urls>` | content_scripts | The declared snapshot/highlight scripts must be able to run on the page being examined; this is the spike's subject matter. Scoping is revisited before any non-spike release. |
 | `debugger` | **not declared** | Deliberately absent in every form. Chrome forbids `debugger` in `optional_permissions` (load error), and the product path must not require it. Present **only** in `manifest.debug.json`, a clearly-marked local debug variant that must never ship. |
@@ -71,11 +71,13 @@ and an approved flag — never values, transcripts, or challenge IDs.
   downloaded only at the user's request.
 - **Sensitive values:** password and payment-like field values are
   replaced with `"[REDACTED]"` in DOM snapshots before display.
-- **Transmission:** the extension itself makes no network requests
-  and has no analytics. One exception is browser-provided: Web Speech
-  recognition in Chrome may send audio to a remote recognition
-  service, so voice input is not guaranteed offline. Seeyable stores
-  no audio, persists no transcripts, and logs no raw utterances;
+- **Transmission:** the extension has no analytics. Voice input may
+  send audio outside the device: Meta transcription (when the local
+  planner proxy is paired and speech is configured) uploads one bounded
+  WAV clip to the proxy, which forwards it to Meta; otherwise Web
+  Speech recognition in Chrome may send audio to a remote recognition
+  service. Voice input is not guaranteed offline. Seeyable stores no
+  audio, persists no transcripts, and logs no raw utterances;
   transcripts appear only in the panel's visible transcript line and
   never in snapshot copy/download output. A user-initiated microphone
   setup page (`mic-setup.html`) requests mic permission for the

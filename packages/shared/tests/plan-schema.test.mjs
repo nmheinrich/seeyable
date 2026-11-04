@@ -106,9 +106,16 @@ test("value rules match the executor contract", () => {
 test("oversized plans rejected; error details never echo values", () => {
   const many = {
     version: "seeyable-plan-1", outcome: "steps",
-    steps: Array.from({ length: 9 }, () => ({ action: "click", elementId: "el-1" })),
+    steps: Array.from({ length: 21 }, () => ({ action: "click", elementId: "el-1" })),
   };
-  assert.equal(P.validatePlan(many, ELEMENTS).ok, false);
+  const oversized = P.validatePlan(many, ELEMENTS);
+  assert.equal(oversized.ok, false);
+  assert.match(oversized.errors[0].detail, /1 to 20 steps/);
+  const atCapacity = {
+    version: "seeyable-plan-1", outcome: "steps",
+    steps: Array.from({ length: 20 }, (_v, i) => ({ action: "click", elementId: `el-${(i % 2) + 1}` })),
+  };
+  assert.equal(P.validatePlan(atCapacity, ELEMENTS).ok, true);
   const secret = `sekret-${"z".repeat(2100)}`;
   const plan = {
     version: "seeyable-plan-1", outcome: "steps",

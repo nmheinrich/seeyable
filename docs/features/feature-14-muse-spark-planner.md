@@ -69,7 +69,7 @@ Single source of truth; the extension loads a byte-identical mirror at
 with a sync test failing loudly on drift.
 
 - `version: "seeyable-plan-1"`, `outcome: steps | clarify | unsupported`.
-- `steps[1..8]`: `{ action: click|fill|select|check|uncheck,
+- `steps[1..20]`: `{ action: click|fill|select|check|uncheck,
   elementId: el-N, value?, note? }`. Values required for fill/select
   (non-empty for select), forbidden otherwise, capped at 2000 chars.
   `scroll_to`/`read` are excluded: the executor scrolls targets itself,
@@ -285,6 +285,87 @@ recognition remains imperfect; clear pronunciation is needed for the demo.
   passed, as confirmed by the Product Owner. See the acceptance-script
   section for the earlier dropdown failure and correction.
 
+## Planning latency diagnostics (Issue #30 follow-up)
+
+The Product Owner reported roughly a minute between finishing speech
+and a plan preview, with “Planning…” visible. Content-free timing
+diagnostics now separate the stages; they log only durations, counts,
+and error codes — never transcripts, values, snapshot content, keys, or
+tokens.
+
+Panel (side-panel DevTools console), one id per command:
+
+```text
+[seeyable-timing] id=cmd-N source=voice stage=stop-to-final ms=…
+[seeyable-timing] id=cmd-N source=… stage=snapshot ms=…
+[seeyable-timing] id=cmd-N source=… stage=request-sent ms=0 elements=… approxBytes=…
+[seeyable-timing] id=cmd-N source=… stage=proxy-response ms=…
+[seeyable-timing] id=cmd-N source=… stage=panel-validation ms=… ok=true
+[seeyable-timing] id=cmd-N source=… stage=preview-rendered ms=… totalMs=…
+```
+
+Proxy (its stderr/terminal), correlated by the same id (sent as the
+`X-Seeyable-Timing-Id` header; the proxy's own `#N` is also present):
+
+```text
+[planner-proxy] #N timing=cmd-N plan receipt ms=… bodyBytes=… elements=…
+[planner-proxy] #N timing=cmd-N upstream call=1 headersMs=… bodyMs=… totalMs=… ok=true
+[planner-proxy] #N timing=cmd-N validate call=1 ms=… ok=true codes=-
+[planner-proxy] #N timing=cmd-N repair call=2 reason=…        (only if call 1 was invalid)
+[planner-proxy] #N timing=cmd-N upstream call=2 …              (the repair call)
+[planner-proxy] #N timing=cmd-N upstream failure code=… status=… ms=…  (failures)
+```
+
+What the stages isolate:
+
+- `stop-to-final`: Stop listening → final transcript (Meta
+  transcription upload + upstream, or browser recognition). Typed
+  commands have no such line.
+- `snapshot`: the mandatory fresh snapshot. `plan receipt`: panel →
+  proxy delivery and body read. `upstream call=k`: one model call,
+  split into time-to-headers and full-body consumption. `validate`:
+  schema/semantic validation. A `repair call=2` line means the first
+  plan was invalid and a second model call was made. `proxy-response`:
+  panel send → full response consumed. `preview-rendered`: response →
+  preview on screen.
+
+Known structural facts (measured with stubs, not live): request and
+validation overhead are sub-millisecond-to-milliseconds at demo scale;
+each upstream call dominates in the stub experiment. A repair adds a
+second model call; its duration need not equal the first. Two calls near
+the 20 s limit total roughly 40 s, below the panel's 55 s request budget.
+Transcription precedes that panel request and does not consume its timeout.
+Do not attribute a minute-long wait or a panel timeout to repair without
+the correlated live timings.
+
+Product Owner-supplied live logs subsequently showed successful two-step
+plans at 5,122 ms and 7,243 ms without repair, and a separate initial
+model call timing out at 20,005 ms before response headers. Speech calls
+were separately reported at 3,943 ms and 1,583 ms. These observations
+establish variable upstream latency, not a proven root cause or a latency
+guarantee; none showed a repair call.
+
+No bottleneck was changed on stub evidence alone: timeouts were not
+raised, fresh snapshots and validation/preview were not weakened, and
+the model was not changed. If live lines show frequent repairs, the
+follow-up decision (repair policy, prompt/schema tightening, or model
+timeout budget) belongs to the Product Owner with those numbers.
+
+### Headed rerun (Product Owner)
+
+Use the demo survey, same small two-field request typed and spoken:
+“Put Grace Hopper in Full name and Scientist in Short bio.”
+
+1. Start the proxy in a terminal so its stderr stays visible. Reload
+   the extension. Open the side panel's DevTools console.
+2. Typed: send the request. Copy the `[seeyable-timing]` panel lines
+   and the proxy lines with the same `timing=cmd-N`.
+3. Spoken: Start listening, say the same sentence, Stop. Copy the same
+   lines (they include `stop-to-final`).
+4. Note whether a `repair call=2` line appears, each
+   `upstream call totalMs`, and the `stop-to-final ms`. Share only
+   those lines — they contain no request content by construction.
+
 ## Limitations and disagreements
 
 - Genuine-model smoke checks passed as reported above, but broader plan
@@ -310,3 +391,14 @@ recognition remains imperfect; clear pronunciation is needed for the demo.
   choices enter review. Step execution after approval is this pipeline,
   unchanged.
   No #29 styling work was done.
+
+## Capacity experiment checkpoint — 2026-11-04
+
+The owner confirmed the larger request worked after reloading the
+extension, resolving the reported panel SCHEMA rejection in that rerun,
+and approved the current build for demo use. Exact generated action count,
+request coverage, and per-step outcomes were not provided. This is an
+owner-reported larger-request pass, not evidence of a complete 20-step
+live run or guaranteed omission-free planning. The 20-step contract and
+12-distinct-target runner are separately covered by automated tests.
+Latency remains variable; no timeout increase or performance fix is claimed.

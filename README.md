@@ -45,9 +45,12 @@ is your Meta API key. Never paste a Meta API key into the extension.
 
 Use desktop Google Chrome, Node.js with npm, and Python 3 (for the local test
 page server). Node `24.20.0` is the environment used to check this guide;
-the extension manifest requires Chrome 116 or newer. Voice uses Chrome's
-Web Speech recognition, which may require network access and microphone
-permission. Typed requests remain available.
+the extension manifest requires Chrome 116 or newer. Voice prefers Meta
+transcription through the paired local planner proxy when speech is
+configured, and otherwise uses Chrome's Web Speech recognition. Either
+provider may require network access and microphone permission. Typed
+requests remain available. Meta transcription is speech-to-text only;
+spoken feedback still uses the browser.
 
 ```sh
 git clone https://github.com/nmheinrich/seeyable.git
@@ -104,14 +107,17 @@ For voice, open **Settings → Voice and microphone → Microphone setup**, choo
 use the speak button in Assist. `Alt+S` works while the panel has focus.
 Try `show tags` first. Recognition is imperfect; check the displayed transcript,
 particularly for names and dictated values. The microphone setup page stops
-its permission-test stream immediately; browser speech recognition may process
-audio outside the device.
+its permission-test stream immediately; the selected speech provider may
+process audio outside the device. Seeyable stores no recordings.
 
 ## 4. Optional: connect the Muse Spark planner
 
 This enables compound requests in the panel. Skip it for MCP-only use.
-The proxy sends the request and a pruned, redacted page snapshot to Meta.
-Keep `MODEL_API_KEY` exclusively in the proxy environment.
+The proxy sends planning requests with a pruned, redacted page snapshot
+to Meta and, when paired and configured, bounded voice clips for Meta
+transcription. Keep `MODEL_API_KEY` exclusively in the proxy
+environment. Planner status distinguishes speech configuration from
+verified upstream speech access.
 
 In terminal B, create a local configuration file **once**:
 

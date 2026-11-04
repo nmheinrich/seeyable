@@ -149,6 +149,11 @@ const RECOGNITION_ERRORS = {
   "aborted": null, // intentional cancel/end: not an error
 };
 
+function isRecognitionSupported(win) {
+  const w = win || (typeof globalThis !== "undefined" ? globalThis : {});
+  return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition);
+}
+
 function createRecognitionController(env = {}) {
   const win = env.window || globalThis;
   const handlers = env.handlers || {};
@@ -279,6 +284,7 @@ const SeeyableVoice = {
   supportedPhrases,
   createSpeechOutput,
   createRecognitionController,
+  isRecognitionSupported,
 };
 
 if (typeof globalThis !== "undefined") globalThis.SeeyableVoice = SeeyableVoice;

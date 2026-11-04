@@ -123,6 +123,42 @@ test("auth: wrong/missing token rejected; non-extension origin refused", async (
   }
 });
 
+test("timing: stage logs correlate by timing id, time every upstream call and validation, and stay content-free", async () => {
+  const logs = [];
+  const stub = await startStub([
+    { content: JSON.stringify(INVENTED_PLAN) },
+    { content: JSON.stringify(GOOD_PLAN) },
+  ]);
+  const { proxy, port } = await startProxy({ stubPort: stub.port, logs });
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/plan`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + "pairing-token-for-tests",
+        Origin: ORIGIN,
+        "X-Seeyable-Timing-Id": "cmd-42",
+      },
+      body: JSON.stringify({ transcript: "fill Full name with Grace Hopper", snapshot: SNAPSHOT, context: [] }),
+    });
+    const out = await res.json();
+    assert.equal(out.ok, true);
+    assert.equal(out.repaired, true, "the scripted first plan is invalid so the repair call is exercised");
+    const text = logs.join("\n");
+    assert.match(text, /timing=cmd-42 plan receipt ms=\d+ bodyBytes=\d+ elements=2/);
+    assert.match(text, /timing=cmd-42 upstream call=1 headersMs=\d+ bodyMs=\d+ totalMs=\d+ ok=true/);
+    assert.match(text, /timing=cmd-42 validate call=1 ms=\d+ ok=false/);
+    assert.match(text, /timing=cmd-42 repair call=2/);
+    assert.match(text, /timing=cmd-42 upstream call=2 headersMs=\d+ bodyMs=\d+ totalMs=\d+ ok=true/);
+    assert.match(text, /timing=cmd-42 validate call=2 ms=\d+ ok=true/);
+    assert.ok(!text.includes("Grace Hopper"), "timing logs never contain transcript content");
+    assert.ok(!text.includes("pairing-token-for-tests"), "timing logs never contain the pairing token");
+  } finally {
+    await proxy.close();
+    await stub.close();
+  }
+});
+
 test("auth: absent Origin proceeds to the mandatory token check", async () => {
   const stub = await startStub([{ content: JSON.stringify(GOOD_PLAN) }]);
   const { proxy, port } = await startProxy({ stubPort: stub.port });
@@ -278,7 +314,7 @@ test("upstream HTTP statuses map to safe categories with numeric diagnostics", a
     for (const [httpStatus, code] of cases) {
       assert.match(logText, new RegExp(`upstream failure code=${code} status=${httpStatus}`));
     }
-    assert.match(logText, /#\d+ upstream failure/, "status logged with the request id");
+    assert.match(logText, /#\d+ (timing=\S+ )?upstream failure/, "status logged with the request id");
     assert.ok(!logText.includes("test-key-not-real"), "key never logged");
     assert.ok(!logText.includes("account-ish"), "upstream bodies never logged");
   } finally {

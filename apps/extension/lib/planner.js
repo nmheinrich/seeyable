@@ -154,7 +154,7 @@ function combineSignals(signals) {
 // POST a planning request. Resolves to the proxy's parsed payload on
 // transport success (callers still validate the plan); rejects with a
 // coded, content-free error on transport/timeout/shape failures.
-async function requestPlan({ baseUrl, token, transcript, snapshot, context, signal, fetchImpl, timeoutMs }) {
+async function requestPlan({ baseUrl, token, transcript, snapshot, context, signal, fetchImpl, timeoutMs, timingId }) {
   const fetchFn = fetchImpl || (typeof fetch === "function" ? fetch : null);
   if (typeof fetchFn !== "function") throw plannerError("NO_FETCH", "No fetch implementation is available.");
   if (!token) throw plannerError("NO_TOKEN", "Pair the planner proxy first: paste its token into the Developer view.");
@@ -198,9 +198,15 @@ async function requestPlan({ baseUrl, token, transcript, snapshot, context, sign
   try {
     let res;
     try {
+      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+      // Content-free correlation for timing logs only; the proxy
+      // validates its shape and never logs any request content.
+      if (typeof timingId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(timingId)) {
+        headers["X-Seeyable-Timing-Id"] = timingId;
+      }
       res = await fetchFn(`${String(baseUrl).replace(/\/+$/, "")}/v1/plan`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers,
         body: JSON.stringify({ transcript, snapshot, context: context || [] }),
         signal: combined.signal,
       });

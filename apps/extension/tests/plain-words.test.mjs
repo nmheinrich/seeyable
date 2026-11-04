@@ -16,7 +16,7 @@ const read = (rel) => readFileSync(join(here, rel), "utf8");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tick = async () => { await sleep(0); await sleep(0); await sleep(0); };
 const html = read("../sidepanel.html");
-const scripts = ["../lib/voice-commands.js", "../lib/command-resolver.js", "../lib/plan-schema.js", "../lib/planner.js", "../lib/overlay.js", "../sidepanel.js"].map(read);
+const scripts = ["../lib/voice-commands.js", "../lib/command-resolver.js", "../lib/plan-schema.js", "../lib/planner.js", "../lib/meta-voice.js", "../lib/overlay.js", "../sidepanel.js"].map(read);
 
 const el = (id, name, extra = {}) => ({ id, role: "textbox", name, nameSource: "label", question: null, questionCertain: false, state: {}, actionable: true, tag: "input", cssPath: "input", ...extra });
 const snap = (elements, revision = 1) => ({ schemaVersion: 2, kind: "dom-aria", documentSessionId: "doc-A", revision, semanticHash: `h${revision}`, fresh: true, url: "http://localhost:8080/", elementCount: elements.length, elements });

@@ -25,6 +25,10 @@ import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { DEVELOPER_PROMPT, buildUserContent, buildRepairContent } from "./prompt.mjs";
 import { createUpstreamClient, UpstreamError } from "./upstream.mjs";
+import {
+  createTranscriptionClient, SpeechError, TRANSCRIBE_MODEL,
+  MAX_AUDIO_BYTES, MAX_TRANSCRIBE_BODY_BYTES, MAX_SPEECH_DURATION_SECONDS,
+} from "./transcription.mjs";
 
 const require = createRequire(import.meta.url);
 const SharedPlan = require("../../../packages/shared/plan-schema.js");
@@ -125,14 +129,23 @@ export function createProxy({
   model = DEFAULT_MODEL,
   baseUrl,
   upstreamTimeoutMs = UPSTREAM_TIMEOUT_MS,
+  speechUploadTimeoutMs = 10000,
   log = () => {},
   fetchImpl,
 } = {}) {
   const pairingToken = token || generatePairingToken();
   const upstream = createUpstreamClient({ apiKey, baseUrl, model, timeoutMs: upstreamTimeoutMs, fetchImpl });
+  const transcription = createTranscriptionClient({ apiKey, baseUrl, timeoutMs: upstreamTimeoutMs, fetchImpl });
   let server = null;
   let requestSeq = 0;
   let shuttingDown = false;
+  // Speech readiness is deliberately three-valued in status output:
+  // configuration is known locally, but upstream access is only
+  // "verified" after a real transcription succeeds and only becomes
+  // "rejected" after Meta refuses this key/model/endpoint. A reachable
+  // proxy or a present key is never reported as verified access.
+  let speechState = apiKey ? "unknown" : "unconfigured";
+  let speechInFlight = 0;
 
   const responseFormat = {
     type: "json_schema",
@@ -179,15 +192,195 @@ export function createProxy({
     });
   }
 
+  function readBinaryBody(req, maxBytes, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let size = 0;
+      let tooLarge = false;
+      let ended = false;
+      let settled = false;
+      const settle = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        settle(reject, Object.assign(new Error("upload timed out"), { code: "BODY_TIMEOUT" }));
+      }, timeoutMs);
+      req.on("data", (chunk) => {
+        if (tooLarge || settled) return;
+        size += chunk.length;
+        if (size > maxBytes) {
+          tooLarge = true;
+          chunks.length = 0;
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on("end", () => {
+        ended = true;
+        if (tooLarge) settle(reject, Object.assign(new Error("body too large"), { code: "BODY_TOO_LARGE" }));
+        else settle(resolve, Buffer.concat(chunks));
+      });
+      req.on("close", () => {
+        if (!ended) settle(reject, Object.assign(new Error("client disconnected during upload"), { code: "CANCELLED" }));
+      });
+      req.on("error", (err) => settle(reject, err));
+    });
+  }
+
+  // Minimal multipart parser for the one browser-produced shape this
+  // endpoint accepts. It preserves binary audio, rejects duplicate or
+  // unknown parts, and never treats caller text as an upstream URL,
+  // model, mode, or keyword source.
+  function parseTranscriptionMultipart(body, contentType) {
+    const match = /multipart\/form-data\s*;\s*boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(contentType || ""));
+    const boundary = match && (match[1] || match[2]);
+    if (!boundary) return { ok: false, code: "AUDIO_INVALID", message: "Transcription requires multipart form data." };
+    const delimiter = Buffer.from(`--${boundary}`);
+    const fields = new Map();
+    let cursor = body.indexOf(delimiter);
+    if (cursor === -1) return { ok: false, code: "AUDIO_INVALID", message: "Malformed multipart body." };
+    cursor += delimiter.length;
+    while (cursor < body.length) {
+      if (body[cursor] === 45 && body[cursor + 1] === 45) break; // closing --
+      if (body[cursor] === 13 && body[cursor + 1] === 10) cursor += 2;
+      const headerEnd = body.indexOf("\r\n\r\n", cursor);
+      if (headerEnd === -1) return { ok: false, code: "AUDIO_INVALID", message: "Malformed multipart part." };
+      const headers = body.toString("utf8", cursor, headerEnd);
+      const disposition = /content-disposition:\s*form-data;\s*name="([^"]+)"(?:;\s*filename="[^"]*")?/i.exec(headers);
+      if (!disposition) return { ok: false, code: "AUDIO_INVALID", message: "Malformed multipart field." };
+      const name = disposition[1];
+      const contentStart = headerEnd + 4;
+      const next = body.indexOf(delimiter, contentStart);
+      if (next === -1 || next < contentStart + 2) return { ok: false, code: "AUDIO_INVALID", message: "Malformed multipart body." };
+      const content = body.subarray(contentStart, next - 2); // strip CRLF before boundary
+      if (fields.has(name)) return { ok: false, code: "AUDIO_INVALID", message: "Duplicate multipart field." };
+      fields.set(name, Buffer.from(content));
+      cursor = next + delimiter.length;
+    }
+    for (const name of fields.keys()) {
+      if (name !== "request" && name !== "audio") {
+        return { ok: false, code: "BAD_REQUEST", message: `Unknown transcription field: ${name}.` };
+      }
+    }
+    if (!fields.has("request") || !fields.has("audio")) {
+      return { ok: false, code: "AUDIO_INVALID", message: "Transcription requires request and audio parts." };
+    }
+    let request = null;
+    try { request = JSON.parse(fields.get("request").toString("utf8")); } catch { request = null; }
+    if (!isPlainObject(request)) return { ok: false, code: "BAD_REQUEST", message: "Transcription request must be a JSON object." };
+    for (const key of Object.keys(request)) {
+      if (key !== "language") return { ok: false, code: "BAD_REQUEST", message: `Unknown transcription request field: ${key}.` };
+    }
+    if (request.language !== undefined && typeof request.language !== "string") {
+      return { ok: false, code: "BAD_REQUEST", message: "Transcription language must be a string." };
+    }
+    return { ok: true, language: request.language || "en", audio: fields.get("audio") };
+  }
+
+  async function handleTranscribe(req, res, reqId) {
+    if (!apiKey) {
+      speechState = "unconfigured";
+      sendJson(res, 503, { ok: false, error: { code: "SPEECH_NOT_CONFIGURED", message: "The proxy has no MODEL_API_KEY for transcription. Browser recognition remains available." } });
+      return;
+    }
+    // Admission is reserved atomically here, before any asynchronous
+    // body read. (Node runs this synchronous check-and-set without
+    // interleaving.) Two partial uploads therefore cannot both pass;
+    // the finally below releases the reservation on success, invalid
+    // or oversized bodies, timeout, abort/disconnect, and every error.
+    // There is no queue and no retry.
+    if (speechInFlight >= 1) {
+      sendJson(res, 409, { ok: false, error: { code: "SPEECH_BUSY", message: "Another transcription is already in progress. Start a fresh attempt after it settles." } });
+      return;
+    }
+    speechInFlight = 1;
+    const abort = new AbortController();
+    let completed = false;
+    const onResClose = () => { if (!completed) abort.abort(); };
+    res.on("close", onResClose);
+    const started = Date.now();
+    try {
+      let body;
+      try {
+        body = await readBinaryBody(req, MAX_TRANSCRIBE_BODY_BYTES, speechUploadTimeoutMs);
+      } catch (err) {
+        if (err && err.code === "CANCELLED") return; // browser left during upload; nobody to answer
+        if (err && err.code === "BODY_TIMEOUT") {
+          sendJson(res, 408, { ok: false, error: { code: "UPLOAD_TIMEOUT", message: "The transcription upload did not finish in time. No command was sent; start a fresh attempt." } });
+          try { req.destroy(); } catch { /* already gone */ }
+          return;
+        }
+        if (err && err.code === "BODY_TOO_LARGE") {
+          sendJson(res, 413, { ok: false, error: { code: "AUDIO_TOO_LARGE", message: `Transcription body exceeds the ${MAX_TRANSCRIBE_BODY_BYTES}-byte limit.` } });
+          return;
+        }
+        throw err;
+      }
+      const parsed = parseTranscriptionMultipart(body, req.headers["content-type"]);
+      if (!parsed.ok) {
+        sendJson(res, parsed.code === "BAD_REQUEST" ? 400 : 422, { ok: false, error: { code: parsed.code, message: parsed.message } });
+        return;
+      }
+      if (parsed.audio.length > MAX_AUDIO_BYTES) {
+        sendJson(res, 413, { ok: false, error: { code: "AUDIO_TOO_LARGE", message: `Audio exceeds the ${MAX_AUDIO_BYTES}-byte limit.` } });
+        return;
+      }
+
+      try {
+        const result = await transcription.transcribe({ audio: parsed.audio, language: parsed.language, signal: abort.signal });
+        speechState = "verified";
+        log(`[planner-proxy] #${reqId} speech ok audioBytes=${parsed.audio.length} ms=${Date.now() - started}`);
+        sendJson(res, 200, {
+          ok: true,
+          transcript: result.transcript,
+          provider: "meta",
+          model: result.model,
+          processingMs: Date.now() - started,
+        });
+      } catch (err) {
+        if (err && err.code === "CANCELLED") return;
+        if (err instanceof SpeechError) {
+          if ([401, 403, 404].includes(err.status)) speechState = "rejected";
+          else if (speechState !== "verified") speechState = "failed";
+          const status = err.code === "SPEECH_NOT_CONFIGURED" ? 503
+            : err.code === "SPEECH_TIMEOUT" ? 504
+            : err.code === "AUDIO_TOO_LARGE" ? 413
+            : err.code.startsWith("AUDIO_") || err.code === "SPEECH_NO_SPEECH" || err.code === "SPEECH_LANGUAGE_UNSUPPORTED" ? 422
+            : 502;
+          log(`[planner-proxy] #${reqId} speech failure code=${err.code} status=${Number.isInteger(err.status) ? err.status : "-"}`);
+          const error = { code: err.code, message: err.message };
+          if (Number.isInteger(err.status)) error.status = err.status;
+          sendJson(res, status, { ok: false, error });
+          return;
+        }
+        throw err;
+      }
+    } finally {
+      speechInFlight = 0;
+      completed = true;
+      res.removeListener("close", onResClose);
+    }
+  }
+
   // One repair attempt, bounded: same snapshot, error codes/locations only.
   // Returns { plan, repaired } or throws a coded error for the caller.
-  async function planWithRepair({ transcript, snapshot, context, elements, signal, reqId }) {
+  async function planWithRepair({ transcript, snapshot, context, elements, signal, reqId, timingId }) {
+    const timingTag = `timing=${timingId || "-"}`;
+    let upstreamCall = 0;
+    const onTiming = (t) => {
+      upstreamCall += 1;
+      log(`[planner-proxy] #${reqId} ${timingTag} upstream call=${upstreamCall} headersMs=${t.headersMs === null ? "-" : t.headersMs} bodyMs=${t.bodyMs === null ? "-" : t.bodyMs} totalMs=${t.totalMs} ok=${t.ok}`);
+    };
     const messages = [
       { role: "developer", content: DEVELOPER_PROMPT },
       { role: "user", content: buildUserContent({ transcript, snapshot, context }) },
     ];
-    const raw = await upstream.complete({ messages, responseFormat, signal });
+    const raw = await upstream.complete({ messages, responseFormat, signal, onTiming });
     let plan = null;
+    const validateStarted = Date.now();
     try {
       plan = JSON.parse(raw);
     } catch {
@@ -196,6 +389,7 @@ export function createProxy({
     let validation = plan === null
       ? { ok: false, errors: [{ code: "SCHEMA", detail: "model output was not valid JSON" }] }
       : SharedPlan.validatePlan(plan, elements);
+    log(`[planner-proxy] #${reqId} ${timingTag} validate call=1 ms=${Date.now() - validateStarted} ok=${validation.ok} codes=${validation.ok ? "-" : validation.errors.map((e) => e.code).join(",")}`);
     if (validation.ok) {
       log(`[planner-proxy] #${reqId} plan ok without repair`);
       return { plan, repaired: false };
@@ -207,8 +401,10 @@ export function createProxy({
       { role: "assistant", content: "[withheld invalid plan]" },
       { role: "user", content: buildRepairContent({ transcript, snapshot, errors: validation.errors.slice(0, 8) }) },
     ];
-    const retryRaw = await upstream.complete({ messages: repairMessages, responseFormat, signal });
+    log(`[planner-proxy] #${reqId} ${timingTag} repair call=2 reason=${validation.errors.map((e) => e.code).join(",")}`);
+    const retryRaw = await upstream.complete({ messages: repairMessages, responseFormat, signal, onTiming });
     let retryPlan = null;
+    const repairValidateStarted = Date.now();
     try {
       retryPlan = JSON.parse(retryRaw);
     } catch {
@@ -217,6 +413,7 @@ export function createProxy({
     validation = retryPlan === null
       ? { ok: false, errors: [{ code: "SCHEMA", detail: "model output was not valid JSON" }] }
       : SharedPlan.validatePlan(retryPlan, elements);
+    log(`[planner-proxy] #${reqId} ${timingTag} validate call=2 ms=${Date.now() - repairValidateStarted} ok=${validation.ok} codes=${validation.ok ? "-" : validation.errors.map((e) => e.code).join(",")}`);
     if (validation.ok) {
       log(`[planner-proxy] #${reqId} plan ok after repair`);
       return { plan: retryPlan, repaired: true };
@@ -225,7 +422,8 @@ export function createProxy({
     throw new UpstreamError("PLAN_INVALID", "The planner could not produce a safe plan. Please rephrase or pick a target manually.");
   }
 
-  async function handlePlan(req, res, reqId) {
+  async function handlePlan(req, res, reqId, timing = {}) {
+    const timingTag = `timing=${timing.id || "-"}`;
     let text;
     try {
       text = await readBody(req);
@@ -243,6 +441,7 @@ export function createProxy({
       sendJson(res, 400, { ok: false, error: { code: "BAD_REQUEST", message: "Request must be valid JSON." } });
       return;
     }
+    log(`[planner-proxy] #${reqId} ${timingTag} plan receipt ms=${Date.now() - (timing.entryAt || Date.now())} bodyBytes=${Buffer.byteLength(text)} elements=${body && body.snapshot && Array.isArray(body.snapshot.elements) ? body.snapshot.elements.length : "-"}`);
     const checked = validatePlanRequest(body);
     if (!checked.ok) {
       sendJson(res, 400, { ok: false, error: { code: checked.code, message: checked.message } });
@@ -276,6 +475,7 @@ export function createProxy({
         elements: body.snapshot.elements,
         signal: abort.signal,
         reqId,
+        timingId: timing.id,
       });
       const steps = plan.outcome === "steps" ? plan.steps.length : 0;
       log(`[planner-proxy] #${reqId} ${plan.outcome} steps=${steps} repaired=${repaired} elements=${body.snapshot.elements.length} ms=${Date.now() - started}`);
@@ -296,7 +496,7 @@ export function createProxy({
         // The numeric upstream status is the safe diagnostic: logged with
         // the request id, returned to the panel for display. Bodies, keys,
         // and headers are never logged or returned.
-        log(`[planner-proxy] #${reqId} upstream failure code=${err.code} status=${Number.isInteger(err.status) ? err.status : "-"}`);
+        log(`[planner-proxy] #${reqId} ${timingTag} upstream failure code=${err.code} status=${Number.isInteger(err.status) ? err.status : "-"} ms=${Date.now() - started}`);
         const error = { code: err.code, message: err.message };
         if (Number.isInteger(err.status)) error.status = err.status;
         sendJson(res, status, { ok: false, error });
@@ -321,7 +521,20 @@ export function createProxy({
             sendJson(res, auth.status, { ok: false, error: { code: auth.code, message: auth.message } });
             return;
           }
-          sendJson(res, 200, { ok: true, model, keyConfigured: Boolean(apiKey), version: "0.1.0" });
+          sendJson(res, 200, {
+            ok: true,
+            model,
+            keyConfigured: Boolean(apiKey),
+            version: "0.1.0",
+            speech: {
+              model: TRANSCRIBE_MODEL,
+              configured: Boolean(apiKey),
+              state: speechState,
+              upstreamVerified: speechState === "verified",
+              maxDurationSeconds: MAX_SPEECH_DURATION_SECONDS,
+              maxAudioBytes: MAX_AUDIO_BYTES,
+            },
+          });
           return;
         }
         if (req.method === "POST" && url.pathname === "/v1/plan") {
@@ -331,7 +544,22 @@ export function createProxy({
             sendJson(res, auth.status, { ok: false, error: { code: auth.code, message: auth.message } });
             return;
           }
-          await handlePlan(req, res, reqId);
+          const timingHeader = req.headers["x-seeyable-timing-id"];
+          const timing = {
+            id: typeof timingHeader === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(timingHeader) ? timingHeader : null,
+            entryAt: Date.now(),
+          };
+          await handlePlan(req, res, reqId, timing);
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/v1/transcribe") {
+          const auth = checkAuth(req);
+          if (!auth.ok) {
+            log(`[planner-proxy] #${reqId} speech denied (${auth.code})`);
+            sendJson(res, auth.status, { ok: false, error: { code: auth.code, message: auth.message } });
+            return;
+          }
+          await handleTranscribe(req, res, reqId);
           return;
         }
         sendJson(res, 404, { ok: false, error: { code: "NOT_FOUND", message: "Unknown planner-proxy endpoint." } });

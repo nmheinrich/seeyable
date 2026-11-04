@@ -13,6 +13,7 @@ const voiceJs = readFileSync(join(here, "../lib/voice-commands.js"), "utf8");
 const commandsJs = readFileSync(join(here, "../lib/command-resolver.js"), "utf8");
 const planSchemaJs = readFileSync(join(here, "../lib/plan-schema.js"), "utf8");
 const plannerJs = readFileSync(join(here, "../lib/planner.js"), "utf8");
+const metaVoiceJs = readFileSync(join(here, "../lib/meta-voice.js"), "utf8");
 const overlayJs = readFileSync(join(here, "../lib/overlay.js"), "utf8");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tick = async () => { await sleep(0); await sleep(0); await sleep(0); };
@@ -51,6 +52,9 @@ function makePanel(sendImpl, opts = {}) {
   const logs = [];
   win.console = { info: (...a) => logs.push(a.join(" ")), warn: () => {}, error: () => {} };
   if (opts.speechRecognition) win.SpeechRecognition = opts.speechRecognition;
+  if (opts.audioContext) win.AudioContext = opts.audioContext;
+  if (opts.mediaDevices) Object.defineProperty(win.navigator, "mediaDevices", { value: opts.mediaDevices, configurable: true });
+  if (opts.fetch) win.fetch = opts.fetch;
   if (opts.speech) {
     win.speechSynthesis = opts.speech.synth;
     win.SpeechSynthesisUtterance = opts.speech.Utterance;
@@ -86,6 +90,7 @@ function makePanel(sendImpl, opts = {}) {
   win.eval(commandsJs); // local click/fill resolver (Issue #13)
   win.eval(planSchemaJs); // shared plan contract mirror (Issue #14)
   win.eval(plannerJs); // prune + proxy client + correction phrases (Issue #14)
+  win.eval(metaVoiceJs); // production Meta/browser provider composite (Issue #30), in sidepanel.html order
   win.eval(overlayJs); // shared word-first label builder used by the panel
   win.eval(panelJs);
   const doc = win.document;
@@ -589,6 +594,74 @@ const tagImpl = async (_t, msg) => {
 };
 const tagCalls = (panel, type) => panel.calls.send.filter((c) => c.msg.type === type).length;
 
+/* Issue #30 integrated Meta provider: real composite + Meta controller in
+ * the panel, with controllable microphone/AudioContext/proxy fetch. */
+function makeMetaAudio({ holdGrant = false } = {}) {
+  const state = { calls: 0, grants: [], tracks: [], contexts: [], processors: [] };
+  class MockAudioContext {
+    constructor() {
+      this.sampleRate = 16000;
+      this.state = "running";
+      this.destination = {};
+      this.closed = false;
+      state.contexts.push(this);
+    }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createScriptProcessor() {
+      const processor = { onaudioprocess: null, disconnected: false, connect() {}, disconnect() { this.disconnected = true; } };
+      state.processors.push(processor);
+      return processor;
+    }
+    createGain() { return { gain: { value: 0 }, connect() {}, disconnect() {} }; }
+    async close() { this.closed = true; }
+  }
+  const mediaDevices = {
+    getUserMedia: () => {
+      state.calls += 1;
+      const track = { stopped: false, stop() { this.stopped = true; } };
+      state.tracks.push(track);
+      const stream = { getTracks: () => [track] };
+      if (holdGrant) return new Promise((resolve) => state.grants.push(() => resolve(stream)));
+      return Promise.resolve(stream);
+    },
+  };
+  state.feed = (amplitude = 0.1) => {
+    const processor = state.processors[state.processors.length - 1];
+    processor.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(amplitude) } });
+  };
+  return { state, mediaDevices, AudioContext: MockAudioContext };
+}
+
+function makeMetaFetch({ transcript = "show tags", holdStatus = false, holdTranscribe = false, failTranscribe = false } = {}) {
+  const calls = [];
+  const control = { calls, releaseStatus: null, releaseTranscribe: null, transcribeSignal: null };
+  control.fetch = async (url, opts = {}) => {
+    calls.push(String(url));
+    if (String(url).endsWith("/v1/status")) {
+      if (holdStatus) await new Promise((resolve) => { control.releaseStatus = resolve; });
+      return { ok: true, status: 200, json: async () => ({ ok: true, model: "muse-spark-1.3", keyConfigured: true, speech: { configured: true, state: "unknown", upstreamVerified: false } }) };
+    }
+    if (String(url).endsWith("/v1/transcribe")) {
+      control.transcribeSignal = opts.signal || null;
+      if (holdTranscribe) await new Promise((resolve) => { control.releaseTranscribe = resolve; });
+      if (failTranscribe) {
+        return { ok: false, status: 502, json: async () => ({ ok: false, error: { code: "SPEECH_UNREACHABLE", message: "Meta transcription could not be reached. No command was sent." } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, transcript, provider: "meta", model: "muse-voice-transcribe-1.0" }) };
+    }
+    throw new Error("unexpected fetch " + url);
+  };
+  return control;
+}
+
+const META_SESSION = { plannerToken: "pairing-token", plannerPort: 6124 };
+async function startMetaPanel(panel, audio) {
+  panel.$("btnListen").click();
+  await sleep(10);
+  assert.equal(audio.state.calls, 1, "Meta capture started");
+  assert.match(panel.$("voiceState").textContent, /listening/);
+}
+
 test("voice/typed parity: typed show/hide use the shared flows and speak only after ack", async () => {
   const speech = makeSpeechMock();
   const panel = makePanel(tagImpl, { speech });
@@ -627,6 +700,217 @@ test("voice: interim never dispatches; final dispatches once despite duplicate c
   assert.deepEqual(speech.spoken, [], "no spoken feedback while recognition is still active");
   instances[0].fireEnd();
   assert.deepEqual(speech.spoken, ["Tags hidden"], "feedback is released once the microphone terminates");
+  panel.dom.window.close();
+});
+
+test("voice Meta: a Meta final dispatches exactly once and feedback follows microphone closure", async () => {
+  const speech = makeSpeechMock();
+  const audio = makeMetaAudio();
+  const proxy = makeMetaFetch({ transcript: "show tags" });
+  const panel = makePanel(tagImpl, {
+    speech, mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+    fetch: proxy.fetch, session: META_SESSION,
+  });
+  await startMetaPanel(panel, audio);
+  audio.state.feed();
+  panel.$("btnStopListen").click();
+  await sleep(30);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 1, "one Meta final, one dispatch");
+  assert.match(panel.$("voiceTranscript").textContent, /Heard: show tags/);
+  assert.equal(proxy.calls.filter((u) => u.endsWith("/v1/transcribe")).length, 1);
+  assert.deepEqual(speech.spoken, ["Tags shown"], "browser feedback is spoken only after Meta capture has closed");
+  panel.$("btnStopListen").click();
+  await sleep(10);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 1, "repeated Stop cannot redispatch");
+  assert.equal(audio.state.tracks[0].stopped, true);
+  assert.equal(audio.state.contexts[0].closed, true);
+  panel.dom.window.close();
+});
+
+test("voice Meta: cancel during provider selection starts neither provider", async () => {
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const audio = makeMetaAudio();
+  const proxy = makeMetaFetch({ holdStatus: true });
+  const panel = makePanel(tagImpl, {
+    speechRecognition: FakeRecognition, mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+    fetch: proxy.fetch, session: META_SESSION,
+  });
+  panel.$("btnListen").click();
+  await sleep(5);
+  panel.$("btnCancelListen").click();
+  proxy.releaseStatus();
+  await sleep(20);
+  assert.equal(audio.state.calls, 0, "Meta microphone was never acquired");
+  assert.equal(instances.length, 0, "browser recognition was not started as a fallback");
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0);
+  assert.match(panel.$("voiceState").textContent, /cancelled/);
+  panel.dom.window.close();
+});
+
+test("voice Meta: Stop during held proxy preflight releases the panel; a fresh attempt works", async () => {
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const audio = makeMetaAudio();
+  const proxy = makeMetaFetch({ holdStatus: true, transcript: "show tags" });
+  const panel = makePanel(tagImpl, {
+    speechRecognition: FakeRecognition, mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+    fetch: proxy.fetch, session: META_SESSION,
+  });
+  panel.$("btnListen").click();
+  await sleep(5); // proxy status preflight is held; no provider has started
+  panel.$("btnStopListen").click();
+  assert.equal(panel.$("btnListen").disabled, false, "Start is restored as soon as Stop terminates the selecting attempt");
+  proxy.releaseStatus(); // late preflight response for the stopped attempt
+  await sleep(20);
+  assert.equal(panel.$("btnListen").disabled, false, "Start remains enabled after the late response settles");
+  assert.match(panel.$("voiceState").textContent, /idle/);
+  assert.equal(audio.state.calls, 0, "the stopped attempt never captures");
+  assert.equal(instances.length, 0, "the stopped attempt never starts browser fallback");
+  assert.equal(proxy.calls.filter((u) => u.endsWith("/v1/transcribe")).length, 0, "the stopped attempt never uploads");
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0, "the stopped attempt dispatches nothing");
+
+  // A fresh intentional attempt works end to end through Meta.
+  panel.$("btnListen").click();
+  await sleep(5);
+  proxy.releaseStatus();
+  await sleep(15);
+  assert.equal(audio.state.calls, 1, "the fresh attempt reaches Meta capture");
+  audio.state.feed();
+  panel.$("btnStopListen").click();
+  await sleep(30);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 1, "the fresh attempt dispatches exactly once");
+  panel.dom.window.close();
+});
+
+test("voice Meta: cancel during microphone permission stops the late grant's own tracks", async () => {
+  const audio = makeMetaAudio({ holdGrant: true });
+  const proxy = makeMetaFetch();
+  const panel = makePanel(tagImpl, {
+    mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+    fetch: proxy.fetch, session: META_SESSION,
+  });
+  panel.$("btnListen").click();
+  await sleep(10);
+  assert.equal(audio.state.calls, 1);
+  panel.$("btnCancelListen").click();
+  audio.state.grants[0]();
+  await sleep(20);
+  assert.equal(audio.state.tracks[0].stopped, true, "the late grant is stopped, never captured");
+  assert.equal(proxy.calls.filter((u) => u.endsWith("/v1/transcribe")).length, 0);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0);
+  panel.dom.window.close();
+});
+
+test("voice Meta: cancel and tab change during transcription make the late final inert", async () => {
+  for (const mode of ["cancel", "tab"]) {
+    const audio = makeMetaAudio();
+    const proxy = makeMetaFetch({ holdTranscribe: true });
+    const panel = makePanel(tagImpl, {
+      mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+      fetch: proxy.fetch, session: META_SESSION,
+    });
+    await startMetaPanel(panel, audio);
+    audio.state.feed();
+    panel.$("btnStopListen").click();
+    await sleep(10);
+    assert.ok(proxy.releaseTranscribe, `${mode}: transcription is in flight`);
+    if (mode === "cancel") panel.$("btnCancelListen").click();
+    else for (const fn of panel.listeners.activated) fn({ tabId: 222 });
+    proxy.releaseTranscribe();
+    await sleep(25);
+    assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0, `${mode}: late Meta final cannot dispatch`);
+    panel.dom.window.close();
+  }
+});
+
+test("voice Meta: Pause during transcription invalidates the held final", async () => {
+  const audio = makeMetaAudio();
+  const proxy = makeMetaFetch({ holdTranscribe: true });
+  const impl = async (t, msg) => {
+    if (msg.type === "SEEYABLE_GATE_CONTROL") return { ok: true, gate: { stopped: false, paused: msg.command === "pause" } };
+    return tagImpl(t, msg);
+  };
+  const panel = makePanel(impl, {
+    mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+    fetch: proxy.fetch, session: META_SESSION,
+  });
+  await takeSnapshot(panel);
+  await startMetaPanel(panel, audio);
+  audio.state.feed();
+  panel.$("btnStopListen").click();
+  await sleep(10);
+  panel.$("btnStopExec").click(); // Stop/Pause control: cancels voice, then gates the bound tab
+  await sleep(10);
+  proxy.releaseTranscribe();
+  await sleep(25);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0, "the paused session's final cannot dispatch");
+  panel.dom.window.close();
+});
+
+test("voice Meta: after-capture failure leaves the next fresh Start to browser recognition", async () => {
+  const { FakeRecognition, instances } = makeRecognitionClass();
+  const speech = makeSpeechMock();
+  const audio = makeMetaAudio();
+  const proxy = makeMetaFetch({ failTranscribe: true });
+  const panel = makePanel(tagImpl, {
+    speech, speechRecognition: FakeRecognition,
+    mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+    fetch: proxy.fetch, session: META_SESSION,
+  });
+  await startMetaPanel(panel, audio);
+  audio.state.feed();
+  panel.$("btnStopListen").click();
+  await sleep(30);
+  assert.match(panel.$("voiceState").textContent, /error/);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 0, "the failed Meta utterance is not replayed");
+  panel.$("btnListen").click();
+  await sleep(10);
+  assert.equal(instances.length, 1, "the fresh attempt uses browser recognition");
+  assert.equal(proxy.calls.filter((u) => u.endsWith("/v1/transcribe")).length, 1, "Meta is not retried for the fresh attempt");
+  instances[0].fireStart();
+  instances[0].fireResult("show tags", true);
+  instances[0].fireEnd();
+  await sleep(10);
+  assert.equal(tagCalls(panel, "SEEYABLE_SHOW_TAGS"), 1);
+  panel.dom.window.close();
+});
+
+test("voice Meta: a challenge appearing during delayed selection cannot be approved by that session", async () => {
+  const audio = makeMetaAudio();
+  const proxy = makeMetaFetch({ holdStatus: true, transcript: "Approve this action" });
+  const confirmation = {
+    challengeId: "ch-deferred", action: "click", elementId: "el-1", targetName: "Submit survey",
+    consequence: "Submits the form.", expiresAt: Date.now() + 60000,
+    documentSessionId: "doc-A", revision: 1,
+  };
+  let pendingLookups = 0;
+  const impl = async (t, msg) => {
+    if (msg.type === "SEEYABLE_GET_PENDING_CONFIRMATION") {
+      pendingLookups += 1;
+      return { ok: true, confirmation: pendingLookups === 1 ? null : confirmation };
+    }
+    if (msg.type === "SEEYABLE_APPROVE_CHALLENGE") return { ok: true, result: { verified: true }, documentSessionId: "doc-A", revision: 2 };
+    return tagImpl(t, msg);
+  };
+  const panel = makePanel(impl, {
+    mediaDevices: audio.mediaDevices, audioContext: audio.AudioContext,
+    fetch: proxy.fetch, session: META_SESSION,
+  });
+  await takeSnapshot(panel); // bound before Start; no challenge exists yet
+  assert.equal(panel.$("confirmBox").hidden, true);
+  panel.$("btnListen").click();
+  await sleep(5); // provider selection is held at the proxy status check
+  for (const fn of panel.listeners.runtime) fn({ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId: 111 }, {}, () => {});
+  await sleep(10);
+  assert.equal(panel.$("confirmBox").hidden, false, "the challenge appears during selection");
+  proxy.releaseStatus();
+  await sleep(15);
+  assert.equal(audio.state.calls, 1, "the delayed session now reaches Meta capture");
+  audio.state.feed();
+  panel.$("btnStopListen").click();
+  await sleep(30);
+  assert.equal(tagCalls(panel, "SEEYABLE_APPROVE_CHALLENGE"), 0, "a session started before the challenge cannot approve it");
+  assert.match(panel.$("status").textContent, /start listening while this action is shown/);
+  assert.equal(panel.$("confirmBox").hidden, false, "the unapproved challenge remains for a fresh bound session");
   panel.dom.window.close();
 });
 

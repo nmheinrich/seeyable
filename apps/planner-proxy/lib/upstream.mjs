@@ -75,7 +75,12 @@ export function createUpstreamClient({ apiKey, baseUrl, model, timeoutMs = 20000
   const fetchFn = fetchImpl || globalThis.fetch;
   if (typeof fetchFn !== "function") throw new Error("upstream client requires a fetch implementation");
 
-  async function complete({ messages, responseFormat, signal }) {
+  async function complete({ messages, responseFormat, signal, onTiming }) {
+    // Content-free timing: stage durations only (headers, full-body
+    // consumption, total). No messages, content, or headers are reported.
+    const timingStarted = Date.now();
+    let timingHeadersMs = null;
+    let timingOk = false;
     const controller = new AbortController();
     // One deadline governs headers AND body: it stays armed until the full
     // response is consumed, and the timer plus every listener is released
@@ -130,6 +135,7 @@ export function createUpstreamClient({ apiKey, baseUrl, model, timeoutMs = 20000
         }
         throw new UpstreamError("MODEL_ERROR", "The model request failed before completing.");
       }
+      timingHeadersMs = Date.now() - timingStarted;
       if (!res.ok) {
         // The numeric status is preserved as the safe diagnostic; bodies
         // may carry quota or account details the browser must never see.
@@ -157,9 +163,21 @@ export function createUpstreamClient({ apiKey, baseUrl, model, timeoutMs = 20000
       if (content === null) {
         throw new UpstreamError("MODEL_ERROR", "The model service returned no usable content.");
       }
+      timingOk = true;
       return content;
     } finally {
       cleanup();
+      if (typeof onTiming === "function") {
+        const totalMs = Date.now() - timingStarted;
+        try {
+          onTiming({
+            headersMs: timingHeadersMs,
+            bodyMs: timingHeadersMs === null ? null : totalMs - timingHeadersMs,
+            totalMs,
+            ok: timingOk,
+          });
+        } catch { /* diagnostics never affect the request */ }
+      }
     }
   }
 

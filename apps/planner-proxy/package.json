@@ -6,6 +6,6 @@
   "description": "Issue #14: loopback-only planner proxy. The only component holding MODEL_API_KEY; turns transcripts plus pruned snapshots into validated Seeyable plans.",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tests/proxy.test.mjs"
+    "test": "node --test tests/proxy.test.mjs tests/transcription.test.mjs"
   }
 }

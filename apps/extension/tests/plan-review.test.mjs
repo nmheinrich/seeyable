@@ -31,7 +31,7 @@ async function waitFor(cond, what, ms = 3000) {
 }
 
 const html = read("../sidepanel.html");
-const panelScripts = ["../lib/voice-commands.js", "../lib/command-resolver.js", "../lib/plan-schema.js", "../lib/planner.js", "../lib/overlay.js", "../sidepanel.js"].map(read);
+const panelScripts = ["../lib/voice-commands.js", "../lib/command-resolver.js", "../lib/plan-schema.js", "../lib/planner.js", "../lib/meta-voice.js", "../lib/overlay.js", "../sidepanel.js"].map(read);
 const PAIRED = { plannerToken: "test-token", plannerPort: 6124 };
 const PANEL_SENDER = { id: "test", url: "chrome-extension://test/sidepanel.html" };
 
