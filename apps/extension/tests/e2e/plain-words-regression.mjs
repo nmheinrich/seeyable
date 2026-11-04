@@ -24,6 +24,57 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "../../../..");
 const CHROME = process.env.CHROME_BIN || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const SHOTS = process.env.SEEYABLE_E2E_SHOTS || "";
+// With SHOTS, SEEYABLE_E2E_SWEEP=1 also captures each state in light, dark and
+// forced colors at 320/360/560px and records layout and contrast findings in
+// sweep-issues.json. It reports; it does not fail the run.
+const SWEEP = Boolean(process.env.SEEYABLE_E2E_SWEEP);
+const sweepIssues = [];
+const AUDIT = `(() => {
+  const issues = [];
+  const shown = (el) => el.offsetParent !== null && getComputedStyle(el).clipPath === "none" && getComputedStyle(el).visibility !== "hidden";
+  const who = (el) => el.id || el.className || el.tagName;
+  const root = document.documentElement;
+  if (root.scrollWidth > root.clientWidth) issues.push("page scrolls sideways");
+  const screens = document.getElementById("screens");
+  if (screens && screens.scrollWidth > screens.clientWidth) issues.push("screens scroll sideways");
+  const rgb = (c) => { const m = c.match(/[\\d.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1 }; };
+  const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const backdrop = (el) => { for (let n = el; n; n = n.parentElement) { const c = rgb(getComputedStyle(n).backgroundColor); if (c.a === 1) return c; } return { r: 255, g: 255, b: 255 }; };
+  for (const el of document.querySelectorAll("body *")) {
+    if (!shown(el) || ["SCRIPT", "STYLE"].includes(el.tagName)) continue;
+    const r = el.getBoundingClientRect();
+    if (el.matches("button, input, .chip") && r.right > innerWidth + 1) issues.push("off the right edge: " + who(el));
+    if (el.matches("button, .chip, summary") && el.scrollWidth > el.clientWidth + 1) issues.push("text overflows: " + who(el));
+    const text = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+    if (!text || el.closest("[disabled]")) continue;
+    const st = getComputedStyle(el);
+    const fg = lum(rgb(st.color)), bg = lum(backdrop(el));
+    const ratio = (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+    const large = parseFloat(st.fontSize) >= 24 || (parseFloat(st.fontSize) >= 18.66 && Number(st.fontWeight) >= 700);
+    if (ratio < (large ? 3 : 4.5)) issues.push("contrast " + ratio.toFixed(2) + ": " + who(el));
+  }
+  return [...new Set(issues)];
+})()`;
+async function sweep(name, send, ev) {
+  for (const theme of ["light", "dark", "forced"]) {
+    const features = [{ name: "prefers-reduced-motion", value: "reduce" }, { name: "prefers-color-scheme", value: theme === "dark" ? "dark" : "light" }, { name: "forced-colors", value: theme === "forced" ? "active" : "none" }];
+    await send("Emulation.setEmulatedMedia", { features });
+    for (const width of [320, 360, 560]) {
+      await send("Emulation.setDeviceMetricsOverride", { width, height: 765, deviceScaleFactor: 1, mobile: false });
+      await sleep(60);
+      const r = await send("Page.captureScreenshot", { format: "png" });
+      writeFileSync(join(SHOTS, `sweep-${name}-${theme}-${width}.png`), Buffer.from(r.data, "base64"));
+      const found = await ev(AUDIT);
+      for (const issue of found) {
+        if (theme === "forced" && issue.startsWith("contrast")) continue;
+        sweepIssues.push({ state: name, theme, width, issue });
+      }
+    }
+  }
+  await send("Emulation.clearDeviceMetricsOverride");
+  await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  await sleep(60);
+}
 const TMP = mkdtempSync(join(tmpdir(), "seeyable-e2e-"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -184,6 +235,7 @@ function connect(url) {
     mkdirSync(SHOTS, { recursive: true });
     const r = await send("Page.captureScreenshot", { format: "png" });
     writeFileSync(join(SHOTS, extname(name) ? name : `${name}.png`), Buffer.from(r.data, "base64"));
+    if (SWEEP && !/-\d+$/.test(name)) await sweep(name, send, ev);
   };
   return { ws, ready, send, ev, shot };
 }
@@ -341,6 +393,9 @@ try {
   await waitFor(() => panel.ev(`!document.getElementById("pageFavicon").hidden`), "site icon shown", 8000).catch(() => {});
   check("page mark: a site icon appears when the page sets one, with no reload", await panel.ev(`(() => { const i = document.getElementById("pageFavicon"); return document.getElementById("pageMark").classList.contains("has-icon") && i.naturalWidth > 0 && i.offsetWidth === 16; })()`));
   await panel.shot("ready-with-site-icon");
+  await panel.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }, { name: "forced-colors", value: "active" }] });
+  check("forced colors: the request field keeps a visible edge", await panel.ev(`(() => { const st = getComputedStyle(document.querySelector(".request-row")); return parseFloat(st.borderTopWidth) >= 1 && st.borderTopStyle === "solid"; })()`));
+  await panel.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
   await panel.ev(`document.fonts.ready`);
   const jostWidth = (weight) => panel.ev(`(() => { const s = document.createElement("span"); s.style = "position:absolute;font:${weight} 40px Jost"; s.textContent = "Handgloves Stopped"; document.body.append(s); const w = s.getBoundingClientRect().width; s.remove(); return w; })()`);
   check("Jost renders a real light weight from the bundled font", (await panel.ev(`document.fonts.load("300 40px Jost").then((f) => f.length > 0)`)) && (await jostWidth(300)) !== (await jostWidth(600)));
@@ -607,6 +662,10 @@ try {
   await panel.ev(`showScreen("Assist")`);
   check("after Disconnect, Stop and Undo are back below the listen button", (await above("btnListen", "btnStopExec")) && (await visible("btnUndo")));
 
+  if (SWEEP) {
+    writeFileSync(join(SHOTS, "sweep-issues.json"), JSON.stringify(sweepIssues, null, 1));
+    console.log(`\nsweep: ${sweepIssues.length} findings in ${SHOTS}/sweep-issues.json`);
+  }
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
   exitCode = failed.length ? 1 : 0;

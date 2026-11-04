@@ -580,6 +580,10 @@ details.developer section.controls, details.developer section.toolbar { flex-dir
   .chip.is-held, .chip.is-error { background: Canvas; color: CanvasText; border: 2px solid CanvasText; }
   button { border-color: ButtonText; }
   .btn-mic, .talk-btn, .stop, .request-row button { border: 2px solid ButtonText; }
+  /* The field's edge is a shadow in the normal themes, which forced colors drop. */
+  .request-row { border: 1px solid CanvasText; }
+  .request-row input { color: CanvasText; }
+  .request-row input::placeholder { color: GrayText; opacity: 1; }
   .screen-nav button[aria-current="page"] { outline: 2px solid Highlight; }
   .meter span { background: Highlight; }
   :focus-visible { outline-color: Highlight; box-shadow: none; }

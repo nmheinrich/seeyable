@@ -1,6 +1,6 @@
 # Plain Words panel polish (#31)
 
-Status: **Slices 0 to 4 implemented and Product Owner passed their headed checks (Slices 1 to 4). Slice 5 is implemented; its headed check is pending.** The final check of the plan remains.
+Status: **Slices 0 to 4 implemented and Product Owner passed their headed checks (Slices 1 to 4). Slice 5 is implemented and passed its headed check. The automated final check is done; the headed final runs (Act 1, Act 2, zoom, forced colors, keyboard-only) are pending.**
 
 Goal: make the panel feel finished without changing what Seeyable can do or who can approve an action.
 
@@ -80,6 +80,15 @@ Extension icons: the Product Owner picked the ink tile (a cream word-and-dot pil
 Test changes: none altered or weakened. Added 6 panel tests, an `activeTabs` harness option and 5 end-to-end checks.
 
 Evidence (stub model, headless Chrome, 2026-11-04): extension 425/425, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 92/92. Off-limits diff empty. A judging ZIP built in a scratch copy contains every manifest icon. Eleven deliberate breaks in a scratch copy: ten caught by the intended test, and the eleventh showed an error handler was dead code, so it was removed. Screenshot review caught a real layout bug (hidden image kept its box) that the first checks missed; a new end-to-end check now fails when that bug is put back. Not covered: real sites' icons in headed Chrome, which the headed check should try.
+
+## Final check (automated part, stub model, headless Chrome, 2026-11-04)
+Extension 425/425, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 93/93. Off-limits diff empty.
+
+`SEEYABLE_E2E_SWEEP=1` with `SEEYABLE_E2E_SHOTS=<dir>` captures all 16 key states, including the long-URL page, in light, dark and emulated forced colors at 320, 360 and 560 px (144 screenshots), and audits each for sideways scroll, controls off the edge, overflowing button text, and text contrast below AA (contrast is not audited in forced colors). Result: 0 findings; the audit was first confirmed to report four problems planted on a test page. Contact sheets were reviewed by eye.
+
+Fixed from that review: the request field had no visible edge in forced colors, because its edge is a shadow. Forced colors were only emulated: a real Windows high-contrast theme was not tried, and the emulated placeholder renders dark red though the rule sets `GrayText`. The talking state's voice line and dimmed buttons come from the suite faking the microphone, so they prove layout only.
+
+Not changed, for the Product Owner to weigh: the status line repeats the card on the done and "I can't plan that yet" screens.
 
 ## Evidence for Slices 0 and 1 (stub model, headless Chrome, 2026-11-04)
 - Extension 372/372, planner proxy 22/22, MCP 41/41, shared 11/11. Extension baseline before this work: 362.
