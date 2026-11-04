@@ -19,10 +19,11 @@ function numberFromId(id) {
 }
 
 // Display-only annotations: authoring notes that ship inside accessible
-// names (e.g. the demo fixture's "Nickname (placeholder only)") are
+// names (e.g. the demo fixture's "Nickname (placeholder only)", or the
+// asterisk many forms add to a required field's label) are
 // stripped from floating tags and panel labels. The snapshot keeps the
 // accessible name, its source, and the element identity untouched.
-const DISPLAY_ANNOTATIONS = [/\(placeholder only\)\s*$/i];
+const DISPLAY_ANNOTATIONS = [/\(placeholder only\)\s*$/i, /\s*\*+\s*$/];
 function displayName(desc) {
   let name = (desc && desc.name ? String(desc.name) : "").trim();
   for (const re of DISPLAY_ANNOTATIONS) name = name.replace(re, "").trim();
@@ -491,6 +492,20 @@ function createOverlayController(options) {
     stateRing.style.height = `${Math.round(r.height + 12)}px`;
   }
 
+  // A person should see what they are asked to approve. Scrolls only when
+  // the target is not fully in view, so a visible page is left undisturbed.
+  function bringHeldTargetIntoView(id) {
+    const resolved = resolveNode(id);
+    const node = resolved && resolved.status === "ok" ? resolved.node : null;
+    if (!node || !node.getBoundingClientRect || !node.scrollIntoView) return;
+    const r = node.getBoundingClientRect();
+    const height = (win && win.innerHeight) || 0;
+    const width = (win && win.innerWidth) || 0;
+    if (r.top >= 0 && r.left >= 0 && r.bottom <= height && r.right <= width) return;
+    node.scrollIntoView({ block: "center", inline: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+    if (win && win.setTimeout) win.setTimeout(() => refresh(), 400);
+  }
+
   // Replaces all step states at once (the panel sends the whole picture
   // for its current step). Unknown ids or states are dropped; "done"
   // states clear themselves after DONE_FADE_MS. Placement is unchanged:
@@ -500,7 +515,9 @@ function createOverlayController(options) {
     for (const [id, st] of Object.entries(states || {})) {
       if (/^el-\d+$/.test(id) && TAG_STATES[st]) next.set(id, st);
     }
+    const newlyHeld = [...next].find(([id, st]) => st === "held" && targetStates.get(id) !== "held");
     targetStates = next;
+    if (newlyHeld) bringHeldTargetIntoView(newlyHeld[0]);
     if (doneTimer !== null && win && win.clearTimeout) win.clearTimeout(doneTimer);
     doneTimer = null;
     if ([...next.values()].some((st) => st === "done") && win && win.setTimeout) {

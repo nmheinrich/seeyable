@@ -25,10 +25,34 @@ const state = {
   confirmation: null,   // held confirmation challenge (Feature #11), if any
 };
 
-function setStatus(text, isError) {
+/* Panel logic reads these flags, never display text, so wording can change
+ * without changing behaviour. */
+const VOICE_IDLE = "Voice: idle.";
+const TRANSCRIPT_EMPTY = "Transcript: \u2014";
+let statusWrites = 0;          // bumped by every setStatus
+let statusIsError = false;
+let voiceMessageQuiet = true;  // the voice line says nothing beyond idle
+let transcriptEmpty = true;
+let lastExecVerified = false;  // the latest execution result was verified
+let statusAboutHold = false;   // the status line was written while an action was held
+let statusFromOtherTab = false; // an error written before the active tab changed
+let statusRepeatsPlan = false; // the status only repeats what the plan card says
+let refocusInput = false;      // a request was sent from the input, which hides while working
+let plannerRecovery = false;   // the last request needs the planner proxy: show the recovery card
+let pageUnavailable = null;    // { kind: "restricted" | "reload", tabId } when this page cannot be operated
+// Unknown counts as wanted: an agent may act on the page, so the panel must
+// not name a target for Undo until it knows no bridge is in use.
+let agentBridgeWanted = true;
+
+function setStatus(text, isError, opts = {}) {
   const el = $("status");
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
+  statusWrites += 1;
+  statusIsError = Boolean(isError);
+  statusAboutHold = Boolean(state.confirmation);
+  statusFromOtherTab = false;
+  statusRepeatsPlan = Boolean(opts.repeatsPlan);
   console.info("[seeyable panel]", text);
   renderState();
 }
@@ -37,6 +61,11 @@ function setExecStatus(text, isError) {
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
   renderState();
+}
+// Host and path only: full URLs can be long and can carry sensitive query
+// values. The complete URL stays in the snapshot JSON.
+function pageLocation(url) {
+  try { const u = new URL(url); return `${u.host}${u.pathname}`; } catch { return url || ""; }
 }
 function showJson(obj, metaText) {
   lastJson = JSON.stringify(obj, null, 2);
@@ -57,8 +86,44 @@ async function refreshTabInfo() {
     const label = tab && tab.title ? tab.title : tab ? "Current page" : "—";
     const bound = state.boundTabId !== null && tab && tab.id !== state.boundTabId ? " (execution bound to another tab)" : "";
     $("tabInfo").textContent = tab ? `${label}${bound}` : "—";
+    renderPageMark(tab);
   } catch { /* panel may open before tabs settle */ }
 }
+
+/* --- Page mark: the site's own icon, or its first letter ------------------
+ * Decoration only, from data the tabs permission already gives. The icon URL
+ * is page-controlled, so it only ever reaches an <img>: no scripts run, and
+ * other schemes (chrome:, file:, javascript:) fall back to the letter. */
+function pageInitial(title, url) {
+  const firstOf = (text) => {
+    const found = String(text || "").match(/[\p{L}\p{N}]/u);
+    return found ? found[0].toLocaleUpperCase() : "";
+  };
+  let host = "";
+  try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { /* no usable URL */ }
+  return firstOf(title) || firstOf(host);
+}
+function usableFavicon(url) {
+  return typeof url === "string" && /^(https?:|data:image\/)/i.test(url) ? url : "";
+}
+let wantedFavicon = "";
+function renderPageMark(tab) {
+  $("pageInitial").textContent = tab ? pageInitial(tab.title, tab.url) : "";
+  const url = usableFavicon(tab && tab.favIconUrl);
+  if (url === wantedFavicon) return; // already shown, loading, or known broken
+  wantedFavicon = url;
+  const img = $("pageFavicon");
+  img.hidden = true;
+  $("pageMark").classList.remove("has-icon");
+  if (url) img.src = url;
+  else img.removeAttribute("src");
+}
+$("pageFavicon").addEventListener("load", () => {
+  // A slower icon from the previous tab must not land on this one.
+  if (!wantedFavicon || $("pageFavicon").getAttribute("src") !== wantedFavicon) return;
+  $("pageFavicon").hidden = false;
+  $("pageMark").classList.add("has-icon");
+});
 
 /* --- Snapshot acquisition -------------------------------------------------
  * Primary path is the declared content script. The scripting fallback can
@@ -235,7 +300,13 @@ function renderTargets() {
     const isActive = element.id === activeTargetId;
     const label = isActive ? fullLabel(element, elements) : shortLabel(element, elements);
     const marks = targetMarks(element);
-    button.textContent = `${numberFromId(element.id)} · ${label}${marks.length ? ` ${marks.join(" ")}` : ""}`;
+    button.textContent = `${numberFromId(element.id)} · ${label}`;
+    for (const text of marks) {
+      const mark = document.createElement("span");
+      mark.className = "target-mark";
+      mark.textContent = text;
+      button.append(" ", mark);
+    }
     if (isActive) button.setAttribute("aria-current", "true");
     button.addEventListener("click", () => highlightElementId(element.id));
     list.append(button);
@@ -255,32 +326,33 @@ function selectedTargetId() {
  * to a chip that truthfully says the panel is ready for the next
  * command. There is no error pill. */
 function renderState() {
+  const view = currentView();
   const chip = $("stateChip");
   if (chip) {
-    const execText = $("execResult") ? $("execResult").textContent : "";
     let cls = "";
     let label = "Ready";
     if (state.confirmation) { label = "\u25B2 Held \u2014 nothing sent"; cls = "is-held"; }
-    else if (state.pending || commandPending) { label = "\u25CF Acting"; cls = "is-acting"; }
-    else if (pendingPlan) { label = "Review \u2014 nothing changed"; cls = "is-review"; }
+    else if (state.pending || commandPending) { label = state.pending || planProgress ? "\u25CF Acting" : "\u25CF Working"; cls = "is-acting"; }
+    else if (pendingPlan) { label = "Review"; cls = "is-review"; }
+    else if (view === "edit") { label = "Editing"; cls = "is-review"; }
+    else if (view === "repair") { label = "Your choice"; cls = "is-review"; }
     else if (state.acquiring) { label = "\u25CF Working"; cls = "is-acting"; }
     else if (voicePhase === "listening") { label = "Listening"; cls = "is-listening"; }
     else if (voicePhase === "starting") { label = "Starting"; cls = "is-listening"; }
     else if (voicePhase === "finishing") { label = "Finishing"; cls = "is-listening"; }
     else if (gateClosed) { label = "Stopped"; cls = "is-error"; }
-    else if (/^Completed and verified/.test(execText)) { label = "\u25A0 Done"; cls = "is-success"; }
+    else if (pageUnavailable) { label = "Unavailable"; }
+    else if (view === "done" || lastExecVerified) { label = "\u25A0 Done"; cls = "is-success"; }
     chip.className = "chip" + (cls ? " " + cls : "");
     chip.textContent = label;
   }
   document.body.dataset.voice = voicePhase === "listening" ? "listening"
     : voicePhase === "starting" || voicePhase === "finishing" ? "finishing" : "idle";
   document.body.dataset.voiceError = voiceErrorUnresolved ? "true" : "false";
-  const voiceEl = $("voiceState");
-  document.body.dataset.voiceMsg = voiceEl && voiceEl.textContent === "Voice: idle." ? "quiet" : "shown";
-  const transcriptEl = $("voiceTranscript");
-  document.body.dataset.transcript = !transcriptEl || /^Transcript:/.test(transcriptEl.textContent) ? "empty" : "shown";
-  const view = currentView();
+  document.body.dataset.voiceMsg = voiceMessageQuiet ? "quiet" : "shown";
+  document.body.dataset.transcript = transcriptEmpty ? "empty" : "shown";
   document.body.dataset.view = view;
+  document.body.dataset.statusQuiet = statusRepeatsPlan ? "true" : "false";
   document.body.dataset.gate = gateClosed ? "closed" : "open";
   const mode = $("modeLabel");
   if (mode) mode.textContent = VIEW_MODES[view] || "~ready";
@@ -288,13 +360,30 @@ function renderState() {
   if (heroHeading) heroHeading.textContent = voicePhase === "listening" ? "Listening"
     : voicePhase === "finishing" ? "Finishing"
     : view === "stopped" ? "Stopped."
-    : view === "working" ? "Working\u2026" : "Ready when you are.";
+    : view === "working" ? "Working\u2026"
+    : view === "unavailable" ? UNAVAILABLE_COPY[pageUnavailable.kind].title
+    : "Ready when you are.";
   const heroCopy = $("heroCopy");
-  if (heroCopy) heroCopy.textContent = view === "stopped" ? STOPPED_COPY : READY_COPY;
+  if (heroCopy) heroCopy.textContent = view === "stopped" ? STOPPED_COPY
+    : view === "unavailable" ? UNAVAILABLE_COPY[pageUnavailable.kind].copy
+    : READY_COPY;
+  const recovering = plannerRecovery && view === "ready";
+  document.body.dataset.recover = recovering ? "true" : "false";
+  $("recoverBox").hidden = !recovering;
+  if (recovering) $("recoverCopy").textContent = recoverCopy();
+  $("btnReloadPage").hidden = !(view === "unavailable" && pageUnavailable.kind === "reload");
+  $("btnUndo").textContent = undoLabel(view);
+  renderExamples();
+  // The input hides while working; give it back to whoever was typing.
+  if (refocusInput && view !== "working" && view !== "acting" && voicePhase === "idle") {
+    refocusInput = false;
+    if (view === "ready" && (!document.activeElement || document.activeElement === document.body)) $("commandInput").focus();
+  }
   const gateTalk = $("gateTalk");
   if (gateTalk) gateTalk.hidden = !state.confirmation;
   renderListenHints();
   renderProgress();
+  placeSafety(view);
   if (typeof syncSafetyHeight === "function") syncSafetyHeight();
   if (typeof updateVoiceControls === "function") updateVoiceControls();
 }
@@ -305,9 +394,20 @@ function renderState() {
  * ownership, locks, plan binding, or approval authority. */
 const READY_COPY = "Say or type what you want done on this page. Plans are shown for review before anything changes, and Submit, Pay, Delete, and Send always stop for your approval.";
 const STOPPED_COPY = "Nothing new will run until you resume. Anything waiting for approval was withdrawn, and nothing that was stopped will run again.";
+const UNAVAILABLE_COPY = {
+  restricted: {
+    title: "Seeyable can\u2019t work on this page.",
+    copy: "Chrome keeps pages like this one closed to extensions. Switch to a regular web page to continue.",
+  },
+  reload: {
+    title: "This page needs a reload.",
+    copy: "Seeyable can\u2019t reach this page yet, usually because it was opened before Seeyable was installed or updated. Reloading connects it, but anything you typed into the page may be lost.",
+  },
+};
 const VIEW_MODES = {
   ready: "~ready", listening: "~listening", plan: "~plan", edit: "~edit", repair: "~you",
-  gate: "~you", acting: "~you", working: "~you", done: "~done", stopped: "~stopped",
+  gate: "~you", acting: "~working", working: "~working", done: "~done", stopped: "~stopped",
+  unavailable: "~n/a",
 };
 function currentView() {
   if (state.confirmation) return "gate";
@@ -317,15 +417,156 @@ function currentView() {
   if (pendingClarification) return "repair";
   if (state.pending || commandPending) return planProgress ? "acting" : "working";
   if (gateClosed) return "stopped";
+  if (pageUnavailable) return "unavailable";
   if (lastRun) return "done";
   return "ready";
+}
+
+/* Where Stop and Undo sit. Nothing can run in the idle views, so there they
+ * stay with the task on Assist and leave the other screens alone. Anything in
+ * progress, and any agent on the bridge (it can act at any moment), pins Stop
+ * on every screen. Undo is not offered with an agent connected, because it
+ * could reverse the agent's change, nor while Stopped, where the executor
+ * refuses it. Only the place changes: same buttons, handlers and gate. */
+function safetyPlacement(view) {
+  if (agentBridgeWanted) return { slot: "Pinned", undo: false };
+  switch (view) {
+    case "ready":
+    case "unavailable": return { slot: "Idle", undo: true };
+    case "plan": return { slot: "Plan", undo: true };
+    case "gate": return { slot: "Gate", undo: true };
+    case "done": return { slot: "Result", undo: true, undoFirst: true };
+    case "stopped": return { slot: "Hero", undo: false };
+    // While talking, "Done talking" and Cancel own the moment; Stop reads like
+    // a third way to finish and Undo would discard the speech. Hidden only if
+    // nothing is running: a command can already be in flight while the
+    // microphone winds down. Saying "undo that" still works.
+    case "listening": {
+      const running = state.pending || commandPending;
+      return { slot: "Pinned", undo: running, stop: running };
+    }
+    default: return { slot: "Pinned", undo: true }; // listening, edit, repair, working, acting
+  }
+}
+function placeSafety(view) {
+  const { slot, undo, undoFirst, stop = true } = safetyPlacement(view);
+  const controls = $("safetyControls");
+  const stopBtn = $("btnStopExec");
+  const undoBtn = $("btnUndo");
+  const target = $(`safetySlot${slot}`);
+  const first = undoFirst ? undoBtn : stopBtn;
+  document.body.dataset.safety = slot === "Pinned" ? "pinned" : "inline";
+  undoBtn.hidden = !undo;
+  stopBtn.hidden = !stop;
+  controls.hidden = !stop && !undo;
+  if (controls.parentElement === target && controls.firstElementChild === first) return;
+  // Moving an element drops its focus; keep keyboard users where they were.
+  const focused = controls.contains(document.activeElement) ? document.activeElement : null;
+  target.append(controls);
+  controls.prepend(first);
+  if (!focused) return;
+  if (!focused.hidden && !focused.disabled && !target.closest("[hidden]")) focused.focus();
+  else {
+    const current = document.querySelector('.screen-nav [aria-current="page"]');
+    if (current) current.focus();
+  }
 }
 
 /* Step progress for the Acting card and the Completed list. Labels come
  * from the validated plan and the reviewed snapshot (the same words the
  * review showed); they live only in this view and are never logged. */
 let planProgress = null; // { steps: [{ text, el, risky }], index }
-let lastRun = null;      // { steps: [{ text, el }] } after a verified plan
+let lastRun = null;      // { steps: [{ text, el, action, name, changed }] } after a verified plan
+
+/* Undo wording. The executor reverses only its last recorded change, and a
+ * verified no-op leaves the earlier record in place, so a target is named
+ * only when the plan's last step really changed that target. An agent on the
+ * bridge can act at any time, so its presence keeps the wording generic.
+ * Presentation only: the executor still decides what can be undone. */
+const UNDO_GENERIC = "Undo last change";
+const UNDO_NOTE_GENERIC = "Undo restores the last change only. Clicks, and anything the page did in response, are not reversed.";
+const REVERSIBLE_STEPS = new Set(["fill", "select", "check", "uncheck"]);
+const UNDO_NAME_MAX = 28;
+function lastStepIfReversible() {
+  const last = lastRun && !agentBridgeWanted ? lastRun.steps[lastRun.steps.length - 1] : null;
+  return last && last.changed && REVERSIBLE_STEPS.has(last.action) ? last : null;
+}
+function undoLabel(view) {
+  const last = view === "done" ? lastStepIfReversible() : null;
+  return last && last.name.length <= UNDO_NAME_MAX ? `Undo ${last.name}` : UNDO_GENERIC;
+}
+function undoNote(steps) {
+  if (agentBridgeWanted) return UNDO_NOTE_GENERIC;
+  const last = steps[steps.length - 1];
+  if (last.action === "click") {
+    return steps.length === 1
+      ? "This was a click, so it can\u2019t be undone from here."
+      : "This ended with a click, so these changes can\u2019t be undone from here.";
+  }
+  if (!lastStepIfReversible()) return UNDO_NOTE_GENERIC;
+  const others = [...new Set(steps.slice(0, -1).map((step) => step.name))].filter((name) => name !== last.name);
+  if (others.length === 0) return `Undo puts ${last.name} back as it was.`;
+  if (others.length === 1) return `Undo reverts ${last.name} only. ${others[0]} stays as it is.`;
+  if (others.length === 2) return `Undo reverts ${last.name} only. ${others[0]} and ${others[1]} stay as they are.`;
+  return `Undo reverts ${last.name} only. The other ${others.length} changes stay as they are.`;
+}
+
+/* Try chips and the input hint, built from a real field on this page. The
+ * example is offered only if the on-device resolver would pick that exact
+ * field, so it works without the planner. Page names are data: they reach
+ * the DOM through textContent and the placeholder property only. Chips fill
+ * the input and never send. */
+const DEFAULT_PLACEHOLDER = "e.g. Fill in this form";
+const EXAMPLE_NAME_MAX = 24;
+const NOT_A_NAME_FIELD = /e-?mail|phone|tel\b|date|url|website|number|zip|postcode|amount|search|\bpin\b/i;
+let exampleCache = { snapshot: undefined, command: null };
+function exampleFillCommand() {
+  const snapshot = state.snapshot;
+  if (exampleCache.snapshot === snapshot) return exampleCache.command;
+  let command = null;
+  const api = globalThis.SeeyableCommands;
+  const elements = snapshot && state.executorReady && Array.isArray(snapshot.elements) ? snapshot.elements : [];
+  if (api) {
+    for (const el of elements) {
+      const st = (el && el.state) || {};
+      if (!el || el.role !== "textbox" || st.disabled || st.readonly || st.redacted || st.value) continue;
+      const name = String(el.name || "").replace(/[\s*]+$/, "").trim();
+      if (!name || name.length > EXAMPLE_NAME_MAX || NOT_A_NAME_FIELD.test(name)) continue;
+      const candidate = `Fill ${name} with Ada`;
+      const parsed = api.parseLocalCommand(candidate);
+      if (!parsed || parsed.kind !== "fill") continue;
+      const matched = api.matchTarget(elements, parsed.target);
+      if (matched.status === "match" && matched.element.id === el.id) { command = candidate; break; }
+    }
+  }
+  exampleCache = { snapshot, command };
+  return command;
+}
+let renderedExamples = null;
+function renderExamples() {
+  const fill = exampleFillCommand();
+  const tags = $("tagsChip").getAttribute("aria-pressed") === "true" ? "Hide tags" : "Show tags";
+  const key = `${fill}|${tags}`;
+  if (key === renderedExamples) return;
+  renderedExamples = key;
+  $("commandInput").placeholder = fill || DEFAULT_PLACEHOLDER;
+  $("tryChips").replaceChildren(...[fill, tags].filter(Boolean).map((text) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "try-chip";
+    chip.textContent = text;
+    chip.addEventListener("click", () => {
+      $("commandInput").value = text;
+      $("commandInput").focus();
+    });
+    return chip;
+  }));
+}
+function recoverCopy() {
+  const fill = exampleFillCommand();
+  const example = fill ? `\u201C${fill.charAt(0).toLowerCase()}${fill.slice(1)}\u201D` : "\u201Cshow tags\u201D";
+  return `Simple commands like ${example} work now. Longer requests need the planner proxy: start it, then paste its pairing token in Developer view.`;
+}
 
 /* Step states on the page's word tags (acting / done / held), sent as one
  * complete picture to the bound tab over the trusted-panel route. "done"
@@ -342,6 +583,17 @@ function sendTagStates(next, target) {
     if (sent && typeof sent.catch === "function") sent.catch(() => {});
   } catch { /* the page may not have the content script; presentation only */ }
 }
+// The target stands out in a step's words. All of it is page or request data,
+// so it reaches the DOM as text only. In "Choose “x” in “Name”" the target is
+// the last quoted part, and a value may repeat the name.
+function fillStepText(tx, item) {
+  const quoted = item.target ? `\u201C${item.target}\u201D` : "";
+  const at = !quoted ? -1 : item.targetLast ? item.text.lastIndexOf(quoted) : item.text.indexOf(quoted);
+  if (at < 0) { tx.textContent = item.text; return; }
+  const strong = document.createElement("strong");
+  strong.textContent = quoted;
+  tx.append(item.text.slice(0, at), strong, item.text.slice(at + quoted.length));
+}
 function stepItem(item, status) {
   const li = document.createElement("li");
   const gl = document.createElement("span");
@@ -350,7 +602,13 @@ function stepItem(item, status) {
   gl.textContent = status === "done" ? "\u25A0" : status === "now" ? "\u25CF" : item.risky ? "\u25B2" : "\u25CB";
   const tx = document.createElement("span");
   tx.className = "tx";
-  tx.textContent = item.text;
+  fillStepText(tx, item);
+  if (item.note) {
+    const planNote = document.createElement("span");
+    planNote.className = "step-note";
+    planNote.textContent = item.note;
+    tx.append(planNote);
+  }
   if (status === "next") {
     const note = document.createElement("span");
     note.className = "step-note";
@@ -389,6 +647,7 @@ function renderProgress() {
     const n = lastRun.steps.length;
     $("resultTitle").textContent = `${n} change${n === 1 ? "" : "s"} made.`;
     $("resultSteps").replaceChildren(...lastRun.steps.map((item) => stepItem(item, "done")));
+    $("resultUndoNote").textContent = undoNote(lastRun.steps);
   }
 }
 
@@ -486,7 +745,7 @@ function renderPageLine() {
       return;
     } catch { /* fall through to the empty state */ }
   }
-  meta.textContent = "No snapshot yet";
+  meta.textContent = pageUnavailable ? "Seeyable can\u2019t reach this page" : "No snapshot yet";
 }
 
 function invalidateExecution(reason) {
@@ -499,6 +758,7 @@ function invalidateExecution(reason) {
   setTagsChip("unknown");
   planProgress = null;
   lastRun = null;
+  plannerRecovery = false;
   if (state.confirmation) {
     const held = state.confirmation;
     try {
@@ -507,6 +767,7 @@ function invalidateExecution(reason) {
     } catch { /* the document is gone; its challenges died with it */ }
     clearConfirmation("The pending confirmation was discarded because the tab or document changed. If its action had already been dispatched to the page, it may still have taken effect; verify page state before continuing.", true, { restoreFocus: false });
   }
+  pageUnavailable = null;
   state.opTabId = null;
   state.snapshot = null;
   state.executorReady = false;
@@ -534,7 +795,7 @@ let autoAcquireIntent = null; // { tabId, gen } awaiting automatic acquisition
 
 function requestAutoSnapshot(tabId) {
   if (!Number.isInteger(tabId)) return;
-  if (state.boundTabId === tabId && state.snapshot) { autoAcquireIntent = null; return; }
+  if (state.boundTabId === tabId && state.snapshot && state.executorReady) { autoAcquireIntent = null; return; }
   // The intent is stamped with the generation that submitted it; a
   // later activation/navigation supersedes it, and the drain refuses
   // to act on a stale stamp.
@@ -546,12 +807,39 @@ function drainAutoAcquire() {
   if (autoAcquireIntent === null) return;
   if (autoAcquireIntent.gen !== state.generation) { autoAcquireIntent = null; return; } // superseded intent never acquires
   const tabId = autoAcquireIntent.tabId;
-  if (state.boundTabId === tabId && state.snapshot) { autoAcquireIntent = null; return; }
+  if (state.boundTabId === tabId && state.snapshot && state.executorReady) { autoAcquireIntent = null; return; }
   if (state.pending || state.acquiring || commandPending || pendingPlan) return; // latest intent retained
   autoAcquireIntent = null;
   // Floating by design; a panel closing mid-acquisition must not turn
   // teardown races into unhandled rejections.
   void takeSnapshot("Loading this page", { auto: true, tabId }).catch(() => {});
+}
+
+/* Why this page cannot be operated, from the tab itself. A tab still loading
+ * is never called unavailable: the "complete" update acquires again. Only
+ * changes what is shown; the executor's own checks are untouched. */
+const CLOSED_SCHEMES = /^(chrome|chrome-extension|chrome-search|chrome-untrusted|devtools|edge|about|view-source|file|data):/i;
+function isClosedUrl(url) {
+  if (CLOSED_SCHEMES.test(url)) return true;
+  try {
+    const u = new URL(url);
+    return u.hostname === "chromewebstore.google.com"
+      || (u.hostname === "chrome.google.com" && u.pathname.startsWith("/webstore"));
+  } catch { return false; }
+}
+async function classifyUnavailable(tabId) {
+  let tab = null;
+  try { tab = await chrome.tabs.get(tabId); } catch { return null; }
+  if (!tab) return null;
+  const url = tab.url || tab.pendingUrl || "";
+  if (url && isClosedUrl(url)) return { kind: "restricted", tabId };
+  return tab.status === "complete" ? { kind: "reload", tabId } : null;
+}
+function applyUnavailable(found) {
+  pageUnavailable = found;
+  if (found) setTagsChip("off");
+  renderPageLine();
+  renderState();
 }
 
 async function takeSnapshot(originLabel, opts = {}) {
@@ -566,6 +854,8 @@ async function takeSnapshot(originLabel, opts = {}) {
   // and ownership is retained until the whole acquisition settles.
   const gen = state.generation;
   const myOp = ++state.opSeq;
+  let progressWrite = -1; // the status write holding this acquisition's progress text
+  let snapshotTabId = Number.isInteger(opts.tabId) ? opts.tabId : null;
   state.acquiring = true;
   if (Number.isInteger(opts.tabId)) state.opTabId = opts.tabId;
   updateExecuteEnabled();
@@ -574,28 +864,33 @@ async function takeSnapshot(originLabel, opts = {}) {
     if (!tab || tab.id === undefined) { setStatus("No active tab.", true); return; }
     if (gen !== state.generation || myOp !== state.opSeq) return;
     state.opTabId = tab.id;
+    snapshotTabId = tab.id;
     // Automatic acquisitions are status-quiet about outcomes another
     // operation produced: when an error/discard status already stands,
     // the auto acquisition writes nothing at all (binding state is
     // visible in the targets, chips, and page line); otherwise it
     // writes its progress text and reports only if nothing else has
     // written since. Manual acquisition always reports.
-    const quietAuto = Boolean(opts.auto) && $("status").classList.contains("error");
-    if (!quietAuto) setStatus(`${originLabel}…`);
-    const statusUntouched = () => !opts.auto || (!quietAuto && $("status").textContent === `${originLabel}…`);
+    const quietAuto = Boolean(opts.auto) && statusIsError && !statusFromOtherTab;
+    if (!quietAuto) { setStatus(`${originLabel}…`); progressWrite = statusWrites; }
+    const statusUntouched = () => !opts.auto || statusWrites === progressWrite;
     const { snapshot, viaContentScript } = await fetchSnapshot(tab.id);
     if (gen !== state.generation || myOp !== state.opSeq) return; // invalidated or superseded
     try {
       bindSnapshot(tab.id, snapshot, viaContentScript);
+      if (viaContentScript) applyUnavailable(null);
       lastKind = "dom-aria";
       const fresh = snapshot.fresh === false ? " · STALE" : "";
-      showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${snapshot.url || ""}`);
+      showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${(snapshot.semanticHash || "").slice(0, 8)}${fresh} · ${pageLocation(snapshot.url)}`);
       if (!statusUntouched()) {
         // outcome of another operation stands
       } else if (viaContentScript) {
         setStatus(`Found ${snapshot.elementCount} controls on this page.`);
       } else {
-        setStatus("Snapshot obtained through the scripting fallback. Execution is disabled: reload the tab and reopen the panel so the full content script is available.", true);
+        setExecStatus("Snapshot obtained through the scripting fallback; execution is disabled until the tab is reloaded.", true);
+        setStatus("Seeyable can see this page but can\u2019t act on it yet. Reload the tab to connect it.", true);
+        const found = await classifyUnavailable(tab.id);
+        if (gen === state.generation && myOp === state.opSeq) applyUnavailable(found);
       }
     } catch (bindErr) {
       // Automatic acquisition runs unattended: if the panel is closing
@@ -607,8 +902,14 @@ async function takeSnapshot(originLabel, opts = {}) {
     // A failed refresh must not leave the previous snapshot execution-ready.
     if (state.snapshot) state.executorReady = false;
     console.error(err);
-    if (!opts.auto || $("status").textContent === `${originLabel}…`) {
-      try { setStatus(`DOM snapshot failed: ${err.message || err}`, true); } catch { if (!opts.auto) throw err; }
+    const found = snapshotTabId === null ? null : await classifyUnavailable(snapshotTabId);
+    if (gen !== state.generation || myOp !== state.opSeq) return;
+    applyUnavailable(found);
+    if (!opts.auto || statusWrites === progressWrite) {
+      try {
+        setExecStatus(`DOM snapshot failed: ${err.message || err}`, true);
+        setStatus("Could not read this page.", true);
+      } catch { if (!opts.auto) throw err; }
     }
   } finally {
     try {
@@ -829,7 +1130,7 @@ async function runShowTags(opts = {}) {
           const { snapshot, viaContentScript } = await fetchSnapshot(tab.id);
           if (gen !== state.generation || myOp !== state.opSeq) return { ok: false, discarded: true, message: "" };
           bindSnapshot(tab.id, snapshot, viaContentScript);
-          showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${snapshot.url || ""}`);
+          showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${pageLocation(snapshot.url)}`);
           lastKind = "dom-aria";
         } catch { /* tags still shown; execution binding stays unset */ }
       }
@@ -843,9 +1144,9 @@ async function runShowTags(opts = {}) {
       setTagsChip("on");
       renderTargets(); // refresh "Shown in panel" marks from this show's report
       if (unplacedIds.size > 0) {
-        return { ok: true, message: `Tags shown (${res.total} controls, revision ${res.revision}). Some word tags stay in the panel \u2014 see Targets.` };
+        return { ok: true, message: "Tags shown. Some word tags stay in the panel \u2014 see Targets." };
       }
-      return { ok: true, message: `Tags shown (${res.total} controls, revision ${res.revision}).` };
+      return { ok: true, message: "Tags shown." };
     }
     return { ok: false, message: `Show tags failed: ${(res && res.error) || "no response"}` };
   } catch (err) {
@@ -1014,7 +1315,13 @@ function setVoiceState(text, isError) {
   if (!el) return;
   el.textContent = text;
   el.classList.toggle("error", Boolean(isError));
+  voiceMessageQuiet = text === VOICE_IDLE;
   renderState();
+}
+function setTranscript(text) {
+  const el = $("voiceTranscript");
+  if (el) el.textContent = text === null ? TRANSCRIPT_EMPTY : text;
+  transcriptEmpty = text === null;
 }
 
 function updateVoiceControls() {
@@ -1027,7 +1334,7 @@ function updateVoiceControls() {
   $("btnSendCommand").disabled = commandPending || panelBusy;
   $("commandInput").disabled = commandPending;
   // The tags toggle and Undo dispatch through the same typed flow and lock.
-  if ($("tagsChip")) $("tagsChip").disabled = commandPending || panelBusy;
+  if ($("tagsChip")) $("tagsChip").disabled = commandPending || panelBusy || Boolean(pageUnavailable);
   if ($("btnUndo")) $("btnUndo").disabled = commandPending || panelBusy;
   // Speak prompts are the same Start control, offered where an answer fits.
   for (const id of ["btnTalkPlan", "btnTalkGate", "btnTalkDone"]) {
@@ -1097,18 +1404,18 @@ const recognitionHandlers = {
           } else if (!commandPending) {
             voiceTabId = null;
             voicePhase = "idle";
-            setVoiceState("Voice: idle.");
+            setVoiceState(VOICE_IDLE);
           }
           updateVoiceControls();
           flushPendingSpoken(); // session ended: microphone is closed
         },
-        onInterim: ({ text }) => { $("voiceTranscript").textContent = `Heard so far: ${text}`; },
+        onInterim: ({ text }) => { setTranscript(`Heard so far: ${text}`); },
         onFinal: ({ text, sessionId }) => {
           if (voiceStopMarkMs !== null) {
             lastFinalTiming = { ms: performance.now() - voiceStopMarkMs };
             voiceStopMarkMs = null;
           }
-          $("voiceTranscript").textContent = text ? `Heard: ${text}` : "Heard: (no speech)";
+          setTranscript(text ? `Heard: ${text}` : "Heard: (no speech)");
           voicePhase = "finishing";
           // The one accepted utterance ends the session's purpose:
           // wind recognition down now; feedback waits for its end.
@@ -1142,8 +1449,7 @@ function cancelVoiceInteraction(reason) {
   voiceTabId = null;
   listenContext = null;
   pendingCorrection = null; // cached alternatives die with the interaction
-  const transcript = $("voiceTranscript");
-  if (transcript) transcript.textContent = "Transcript: —";
+  setTranscript(null);
   // A plan waiting for review is a pending command: it dies here too.
   if (discardPlanReview() && !commandPending && reason) {
     setStatus(`Plan discarded — ${reason} Nothing was executed.`, true);
@@ -1156,7 +1462,9 @@ function presentCommandHelp(prefix) {
   // One authoritative command-error message, announced once: the
   // status surface carries it. The voice area keeps only microphone
   // truth, so typed failures are never duplicated as voice failures.
-  const message = `${prefix}Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>".`;
+  const fill = exampleFillCommand();
+  const example = fill ? `\u201C${fill.charAt(0).toLowerCase()}${fill.slice(1)}\u201D, ` : "";
+  const message = `${prefix}Try \u201Cshow tags\u201D, ${example}or a request.`;
   setStatus(message, true);
   settleVoiceAfterCommand();
 }
@@ -1171,7 +1479,7 @@ function settleVoiceAfterCommand() {
     setVoiceState("Voice: finishing — waiting for the microphone to close…");
   } else {
     voicePhase = "idle";
-    setVoiceState("Voice: idle.");
+    setVoiceState(VOICE_IDLE);
   }
 }
 
@@ -1216,15 +1524,16 @@ async function ensureCommandSnapshot(tabId, gen, seq, opts = {}) {
       return { discarded: true };
     }
     bindSnapshot(tabId, snapshot, viaContentScript);
-    showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${snapshot.url || ""}`);
+    showJson(snapshot, `${snapshot.elementCount} elements · rev ${snapshot.revision} · ${pageLocation(snapshot.url)}`);
     lastKind = "dom-aria";
     if (!viaContentScript) {
-      return { error: "The page is not ready for commands. Reload the tab and send the command again." };
+      return { error: "This page isn\u2019t ready for commands. Reload the tab and send the command again." };
     }
     return { snapshot };
   } catch (err) {
     if (gen !== state.generation || seq !== interactionSeq || myOp !== state.opSeq) return { discarded: true };
-    return { error: `Could not read the page: ${err.message || err}` };
+    setExecStatus(`Could not read the page: ${err.message || err}`, true);
+    return { error: "Could not read this page. Reload the tab and send the command again." };
   } finally {
     if (myOp === state.opSeq) state.opTabId = null;
   }
@@ -1232,6 +1541,37 @@ async function ensureCommandSnapshot(tabId, gen, seq, opts = {}) {
 
 function commandTargetName(element) {
   return (element && (element.name || element.role || element.id)) || "that control";
+}
+
+/* Plain words for executor refusals. Raw codes and diffs stay in the
+ * Developer view; an unlisted code gets the honest fallback. */
+const FAILURE_WORDS = {
+  TARGET_DISABLED: "it\u2019s disabled right now",
+  TARGET_READONLY: "it\u2019s read-only",
+  TARGET_HIDDEN: "it\u2019s hidden right now",
+  STALE_TARGET: "it\u2019s no longer on the page",
+  UNKNOWN_ID: "it\u2019s no longer on the page",
+  STALE_SNAPSHOT: "the page changed first, so I left it alone",
+  STALE_REVISION: "the page changed first, so I left it alone",
+  SNAPSHOT_BASELINE_REQUIRED: "the page changed first, so I left it alone",
+  WRONG_SESSION: "the page changed first, so I left it alone",
+  SENSITIVE_FIELD: "passwords and payment details are yours to enter",
+  INCOMPATIBLE_TARGET: "that kind of control can\u2019t do this",
+  OPTION_NOT_FOUND: "that choice isn\u2019t in the list",
+  OPTION_DISABLED: "that choice is disabled",
+  VALUE_REQUIRED: "no value was given",
+  UNSUPPORTED_MULTISELECT: "lists with several choices aren\u2019t supported yet",
+  UNSUPPORTED_RADIO_UNCHECK: "a radio button can\u2019t be cleared on its own",
+  EXECUTION_STOPPED: "Seeyable is stopped, so press Resume first",
+  EXECUTION_PAUSED: "Seeyable is stopped, so press Resume first",
+  EXECUTION_BUSY: "another action is still running",
+  EXECUTION_CANCELLED: "it was cancelled",
+  DEADLINE_EXPIRED: "the page took too long to respond, so please check it",
+  ACTION_FAILED: "something went wrong on the page, so please check it",
+  ACTION_NOT_VERIFIED: "I can\u2019t confirm the page responded, so please check it",
+};
+function failureWords(error) {
+  return FAILURE_WORDS[error && error.code] || "something went wrong, so please check the page (details in the Developer view)";
 }
 
 function presentPipelineOutcome(action, name, result) {
@@ -1259,18 +1599,20 @@ function presentPipelineOutcome(action, name, result) {
   if (result.outcome === "completed") {
     const response = result.response;
     if (!response.ok) {
-      return { ok: false, message: `Could not ${action} ${name}: ${response.error.code} — ${response.error.message}`, contextOutcome: `failed: ${response.error.code}` };
+      return { ok: false, message: `Could not ${action} ${name}: ${failureWords(response.error)}.`, contextOutcome: `failed: ${response.error.code}` };
     }
-    const detail = describeOutcome(response);
-    if (detail.startsWith("Completed and verified") || detail.startsWith("Already in the desired state")) {
-      return { ok: true, message: `${past} ${name}. ${detail} ${executionDiffLine(response)}`, spoken: `${past} ${name}.`, contextOutcome: "completed" };
+    if (isConfirmedOutcome(response)) {
+      const said = response.result && response.result.alreadyInDesiredState
+        ? `${name} was already set that way, so nothing needed changing.`
+        : `${past} ${name}. Checked on the page.`;
+      return { ok: true, message: said, spoken: `${past} ${name}.`, contextOutcome: "completed" };
     }
-    return { ok: true, message: `${past} ${name}, but ${detail} ${executionDiffLine(response)}`, spoken: "That may not have finished. Check the page.", contextOutcome: "completed unverified" };
+    return { ok: true, message: `${past} ${name}. I can\u2019t confirm the page responded, so please check it.`, spoken: "That may not have finished. Check the page.", contextOutcome: "completed unverified" };
   }
   if (result.outcome === "transport") {
-    return { ok: false, message: `Transport failure — outcome unknown. Nothing about ${name} is implied.`, contextOutcome: "transport failure" };
+    return { ok: false, message: `I lost contact with the page, so I can\u2019t tell whether ${name} changed. Please check it.`, contextOutcome: "transport failure" };
   }
-  return { ok: false, message: "The executor gave no usable answer. Nothing was confirmed.", contextOutcome: "malformed response" };
+  return { ok: false, message: "The page gave no usable answer, so nothing is confirmed. Please check it.", contextOutcome: "malformed response" };
 }
 
 async function runPageActionCommand(local, source, gen, seq) {
@@ -1595,15 +1937,11 @@ async function runCorrectionCommand(correction, source, gen, seq) {
   };
 }
 
-function plannerFailureMessage(err, localReason) {
+function plannerFailureMessage(err) {
   const code = err && err.code;
   if (code === "NO_TOKEN" || code === "UNREACHABLE") {
-    const prefix = localReason ? `Unsupported command — ${localReason}. ` : "Unsupported command. ";
-    return {
-      ok: false,
-      message: `${prefix}Supported commands: "show tags", "hide tags", "click <target>", and "fill <target> with <value>". `
-        + "Anything beyond that needs the planner proxy: start it with `node apps/planner-proxy/server.mjs` and paste its token into the Developer view.",
-    };
+    // The recovery card carries the instructions; status says what happened.
+    return { ok: false, recover: true, message: "Unsupported command. That request needs the planner proxy." };
   }
   if (code === "NO_API_KEY") return { ok: false, message: `Planner unavailable: ${err.message}` };
   if (code === "PLAN_INVALID") {
@@ -1700,10 +2038,14 @@ async function runPlanSteps(plan, opts) {
       const element = elements.find((e) => e && e.id === step.elementId)
         || opts.pruned.elements.find((e) => e.id === step.elementId);
       const described = describePlanStep(step, element, elements);
-      return { text: described.text, el: step.elementId, risky: Boolean(described.note) };
+      return {
+        text: described.text, target: described.target, targetLast: described.targetLast, el: step.elementId, risky: Boolean(described.note),
+        action: step.action, name: commandTargetName(element).replace(/[\s*]+$/, ""), changed: false,
+      };
     }),
   };
   lastRun = null;
+  plannerRecovery = false;
   renderState();
   try {
     const outcome = await runPlanStepsInner(plan, opts);
@@ -1744,7 +2086,7 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
     if (!target) {
       return {
         ok: false,
-        message: planStopMessage(done, total, `step ${i + 1} targets ${step.elementId}, which is no longer on the page`),
+        message: planStopMessage(done, total, `step ${i + 1}\u2019s target is no longer on the page`),
         contextSummary: planSummary,
         contextOutcome: `stopped: target gone at step ${i + 1}/${total}`,
       };
@@ -1805,7 +2147,7 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
     if (result.outcome === "transport" || result.outcome === "malformed") {
       return {
         ok: false,
-        message: planStopMessage(done, total, `step ${i + 1} could not reach the executor`),
+        message: planStopMessage(done, total, `I lost contact with the page at step ${i + 1}`),
         contextSummary: planSummary,
         contextOutcome: `stopped: transport at step ${i + 1}/${total}`,
       };
@@ -1814,19 +2156,19 @@ async function runPlanStepsInner(plan, { tabId, source, gen, seq, pruned }) {
     if (!response.ok) {
       return {
         ok: false,
-        message: planStopMessage(done, total, `step ${i + 1} failed: ${response.error.code} — ${response.error.message}`),
+        message: planStopMessage(done, total, `step ${i + 1} failed on ${commandTargetName(target)}: ${failureWords(response.error)}`),
         contextSummary: planSummary,
         contextOutcome: `stopped: ${response.error.code} at step ${i + 1}/${total}`,
       };
     }
-    const detail = describeOutcome(response);
-    if (detail.startsWith("Completed and verified") || detail.startsWith("Already in the desired state")) {
+    if (isConfirmedOutcome(response)) {
       done.push(commandTargetName(target));
+      if (planProgress) planProgress.steps[i].changed = isVerifiedResult(response);
       continue;
     }
     return {
       ok: false,
-      message: planStopMessage(done, total, `step ${i + 1} could not be verified: ${detail}`),
+      message: planStopMessage(done, total, `step ${i + 1} could not be verified on the page`),
       contextSummary: planSummary,
       contextOutcome: `stopped: unverified at step ${i + 1}/${total}`,
     };
@@ -1861,7 +2203,7 @@ function startTiming(source) {
   };
 }
 
-async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = {}) {
+async function runPlannerCommand(rawText, source, gen, seq, opts = {}) {
   const plannerApi = globalThis.SeeyablePlanner;
   const planApi = globalThis.SeeyablePlan;
   if (!plannerApi || !planApi) {
@@ -1874,7 +2216,7 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
   // help as the old unsupported branch plus the pairing hint.
   const creds = await plannerCredentials();
   if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
-  if (!creds.token) return plannerFailureMessage({ code: "NO_TOKEN" }, localReason);
+  if (!creds.token) return plannerFailureMessage({ code: "NO_TOKEN" });
   voiceTabId = tab.id;
   setStatus("Planning…");
   const timing = opts.timing || null;
@@ -1918,7 +2260,7 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
     if (timing) timing.log("proxy-error", performance.now() - requestStarted, ` code=${err && err.code ? err.code : "ERROR"}`);
     plannerAbortController = null;
     if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
-    return plannerFailureMessage(err, localReason);
+    return plannerFailureMessage(err);
   }
   plannerAbortController = null;
   if (gen !== state.generation || seq !== interactionSeq) return { ok: false, discarded: true, message: "" };
@@ -1985,6 +2327,7 @@ async function runPlannerCommand(rawText, source, gen, seq, localReason, opts = 
   const n = plan.steps.length;
   return {
     ok: true, preview: true,
+    plainPlanReady: !opts.edited,
     message: `${opts.edited ? "Replacement plan" : "Plan"} ready for review: ${n} step${n === 1 ? "" : "s"}. Nothing has changed on the page yet — approve, edit, or cancel it.${opts.edited ? " The earlier plan was discarded and can no longer run." : ""}`,
     spoken: "Plan ready for review.",
     contextSummary: planSummaryOf(plan, pruned),
@@ -2068,6 +2411,13 @@ function quotedValue(value) {
 // reviewed snapshot. Page labels are untrusted data and are only ever
 // set through textContent.
 function describePlanStep(step, element, elements) {
+  return {
+    ...describePlanStepWords(step, element, elements),
+    target: element ? fullLabel(element, elements) : step.elementId,
+    targetLast: step.action === "select",
+  };
+}
+function describePlanStepWords(step, element, elements) {
   const name = element ? fullLabel(element, elements) : step.elementId;
   const isProtected = Boolean(element && element.state && element.state.redacted);
   if (step.action === "fill") {
@@ -2095,6 +2445,8 @@ function clearPlanPreview() {
   const focusWasInside = box.contains(document.activeElement);
   box.hidden = true;
   $("planSteps").replaceChildren();
+  $("planFrom").hidden = true;
+  $("planFromText").textContent = "";
   for (const id of ["btnApprovePlan", "btnEditPlan", "btnCancelPlan"]) $(id).onclick = null;
   if (focusWasInside && planFocusReturn && document.contains(planFocusReturn) && typeof planFocusReturn.focus === "function") {
     planFocusReturn.focus();
@@ -2146,22 +2498,21 @@ function presentPlanPreview(plan, binding) {
   const elements = state.snapshot && Array.isArray(state.snapshot.elements) ? state.snapshot.elements : preview.pruned.elements;
   const list = $("planSteps");
   list.replaceChildren();
+  let hasProtectedStep = false;
   for (const step of preview.plan.steps) {
     const element = elements.find((e) => e && e.id === step.elementId)
       || preview.pruned.elements.find((e) => e.id === step.elementId);
     const described = describePlanStep(step, element, elements);
-    const item = document.createElement("li");
-    item.textContent = described.text;
-    if (described.note) {
-      const note = document.createElement("span");
-      note.className = "step-note";
-      note.textContent = ` ${described.note}`;
-      item.append(note);
-    }
-    list.append(item);
+    if (element && element.state && element.state.redacted) hasProtectedStep = true;
+    list.append(stepItem({ ...described, el: step.elementId, risky: Boolean(described.note) }, ""));
   }
   const n = preview.plan.steps.length;
-  $("planIntro").textContent = `${n} step${n === 1 ? "" : "s"}, in order. Nothing has changed on the page yet.`;
+  $("planIntro").textContent = `${n} step${n === 1 ? "" : "s"}, in order`;
+  // "From" shows the person's own words back. A protected step hides its value
+  // in the list, so the words that may contain it are not shown either.
+  const showFrom = Boolean(preview.requestText) && !hasProtectedStep;
+  $("planFrom").hidden = !showFrom;
+  $("planFromText").textContent = showFrom ? `\u201C${preview.requestText}\u201D` : "";
   // Each control acts on THIS preview only; a later preview reassigns them.
   $("btnApprovePlan").onclick = () => { void approvePendingPlan(preview, "manual"); };
   $("btnEditPlan").onclick = () => openPlanEdit(preview);
@@ -2197,7 +2548,7 @@ function presentClarifiedPlan(choice, elementId, snapshot) {
       chosenId: elementId,
     },
   });
-  setStatus("Plan ready for review: 1 step. Nothing has changed on the page yet — approve, edit, or cancel it.");
+  setStatus("Plan ready for review: 1 step. Nothing has changed on the page yet — approve, edit, or cancel it.", false, { repeatsPlan: true });
 }
 
 function previewStillBound(preview) {
@@ -2418,11 +2769,11 @@ async function runUndoCommand(source, gen, seq) {
   const base = { contextSummary: "undo last change" };
   if (transportError) {
     state.executorReady = false;
-    return { ...base, ok: false, message: "Undo transport failure — outcome unknown. Check the page before continuing.", contextOutcome: "transport failure" };
+    return { ...base, ok: false, message: "I lost contact with the page during undo, so I can\u2019t tell what changed. Please check it.", contextOutcome: "transport failure" };
   }
   if (!response || typeof response.ok !== "boolean") {
     state.executorReady = false;
-    return { ...base, ok: false, message: "The executor gave no usable answer to undo. Nothing was confirmed.", contextOutcome: "malformed response" };
+    return { ...base, ok: false, message: "The page gave no usable answer to undo, so nothing is confirmed. Please check it.", contextOutcome: "malformed response" };
   }
   const code = response.error && response.error.code;
   if (response.ok || code === "UNDO_NOT_VERIFIED" || code === "ACTION_FAILED") {
@@ -2489,7 +2840,8 @@ function finishCommandOutcome(outcome, { gen, seq, acting, fallbackSummary, fall
       outcome.contextSummary || fallbackSummary,
       outcome.contextOutcome || (outcome.clarify ? "clarification requested" : outcome.ok ? "completed" : "failed"));
   }
-  setStatus(`${notePrefix || ""}${outcome.message}`, !outcome.ok);
+  if (outcome.recover) plannerRecovery = true;
+  setStatus(`${notePrefix || ""}${outcome.message}`, !outcome.ok, { repeatsPlan: Boolean(outcome.plainPlanReady) && !notePrefix });
   if (outcome.ok) {
     // A completed command is recovery from any prior recognition error.
     voiceErrorUnresolved = false;
@@ -2565,8 +2917,10 @@ async function dispatchCommand(rawText, source, meta = {}) {
   // A new command invalidates any pending clarification choices and any
   // plan waiting for review (Issue #15: a superseding request).
   interactionSeq += 1;
+  if (!state.confirmation) setConfirmStatus("");
   clearClarification();
   lastRun = null;
+  plannerRecovery = false;
   const supersededPlan = discardPlanReview() && !edited;
   // Typed submission safely resolves any live recognition first:
   // the speech session is cancelled and its utterance discarded.
@@ -2597,7 +2951,8 @@ async function dispatchCommand(rawText, source, meta = {}) {
   commandPending = true;
   updateExecuteEnabled(); // command dispatch holds the shared panel lock
   updateVoiceControls();
-  setVoiceState(isUndo ? "Voice: acting — undoing the last change…"
+  if (source !== "voice") setVoiceState(VOICE_IDLE);
+  else setVoiceState(isUndo ? "Voice: acting — undoing the last change…"
     : !isPageAction && !isPlanner && !isCorrection
       ? (resolved.kind === "show-tags" ? "Voice: acting — showing tags…" : "Voice: acting — hiding tags…")
       : isPlanner ? (edited ? "Voice: acting — planning your edit…" : "Voice: acting — planning…")
@@ -2623,7 +2978,7 @@ async function dispatchCommand(rawText, source, meta = {}) {
     } else if (isCorrection) {
       outcome = await runCorrectionCommand(correction, source, gen, seq);
     } else if (isPlanner) {
-      outcome = await runPlannerCommand(text, source, gen, seq, local && local.reason, { edited, timing });
+      outcome = await runPlannerCommand(text, source, gen, seq, { edited, timing });
     } else {
       outcome = await runPageActionCommand(local, source, gen, seq);
     }
@@ -2670,7 +3025,7 @@ async function startListening() {
   try { tab = await activeTab(); } catch { /* start is refused below if ownership changed */ }
   if (gen !== state.generation || seq !== interactionSeq) return;
   voiceTabId = tab && tab.id !== undefined ? tab.id : null;
-  $("voiceTranscript").textContent = "Transcript: —";
+  setTranscript(null);
   voicePhase = "starting";
   voiceErrorUnresolved = false; // a new attempt supersedes the prior error presentation
   setVoiceState("Voice: starting the microphone…");
@@ -2699,7 +3054,7 @@ async function startListening() {
     // starting/finishing text behind. A recognition error keeps its own
     // message (voiceErrorUnresolved) and is not overwritten here.
     voicePhase = "idle";
-    setVoiceState("Voice: idle.");
+    setVoiceState(VOICE_IDLE);
   }
   updateVoiceControls();
 }
@@ -2716,7 +3071,7 @@ document.addEventListener("keydown", (event) => {
   if (!event.altKey || event.ctrlKey || event.metaKey || event.code !== "KeyS" || event.repeat) return;
   const target = event.target;
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
-  if ($("btnListen").disabled) return;
+  if ($("btnListen").disabled || currentView() === "unavailable") return;
   event.preventDefault();
   showScreen("Assist");
   void startListening();
@@ -2741,6 +3096,7 @@ $("btnCancelListen").addEventListener("click", () => {
 });
 
 $("btnSendCommand").addEventListener("click", async () => {
+  refocusInput = true;
   const text = $("commandInput").value;
   $("commandInput").value = "";
   await dispatchCommand(text, "typed");
@@ -2750,14 +3106,44 @@ $("btnSendCommand").addEventListener("click", async () => {
 $("btnUndo").addEventListener("click", async () => {
   await dispatchCommand("undo last change", "typed");
 });
+$("btnRecoverDeveloper").addEventListener("click", () => {
+  plannerRecovery = false;
+  setStatus("");
+  $("developerView").open = true;
+  showScreen("Settings");
+  renderState();
+  $("plannerHeading").focus();
+});
+// The extension's own Reload: a click on this button only, on the tab the
+// panel found unreachable. Nothing is approved or replayed afterwards.
+$("btnReloadPage").addEventListener("click", () => {
+  if (!pageUnavailable || pageUnavailable.kind !== "reload") return;
+  void chrome.tabs.reload(pageUnavailable.tabId);
+});
+void (async () => {
+  try {
+    const stored = await chrome.storage.session.get(["bridgeWanted"]);
+    agentBridgeWanted = Boolean(stored && stored.bridgeWanted);
+    renderState();
+  } catch { /* stays generic */ }
+})();
+if (chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "session" || !("bridgeWanted" in changes)) return;
+    agentBridgeWanted = Boolean(changes.bridgeWanted.newValue);
+    renderState();
+  });
+}
 $("btnNewRequest").addEventListener("click", () => {
   lastRun = null;
+  plannerRecovery = false;
   renderState();
   $("commandInput").focus();
 });
 $("commandInput").addEventListener("keydown", async (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
+  refocusInput = true;
   const text = $("commandInput").value;
   $("commandInput").value = "";
   await dispatchCommand(text, "typed");
@@ -2809,7 +3195,8 @@ updateVoiceControls();
  * captured tab; the execution result is preserved independently. Nothing
  * is retried automatically, and entered values are never persisted or
  * logged. */
-function renderExecution(lines, response) {
+function renderExecution(lines, response, verified = false) {
+  lastExecVerified = verified;
   const parts = [...lines];
   if (response) parts.push("", JSON.stringify(response, null, 2));
   $("execResult").textContent = parts.join("\n");
@@ -2817,6 +3204,14 @@ function renderExecution(lines, response) {
   if (latest) latest.textContent = lines.length ? `Latest result: ${lines[0]}` : "";
 }
 
+function isVerifiedResult(response) {
+  const r = (response && response.ok && response.result) || {};
+  return r.verified === true && !r.alreadyInDesiredState;
+}
+function isConfirmedOutcome(response) {
+  const r = (response && response.ok && response.result) || {};
+  return Boolean(r.alreadyInDesiredState) || r.verified === true;
+}
 function describeOutcome(response) {
   if (!response.ok) return `Failed: ${response.error.code} — ${response.error.message}`;
   const r = response.result || {};
@@ -2921,6 +3316,8 @@ async function runExecutionPipeline(tabId, request, gen, ownerSeq = null) {
   // caller's lock covers it; failures mark execution disabled.
   await refreshAfterExecution(tabId, gen, request.documentSessionId);
   void fetchActionLog(tabId);
+  // Raw codes and diffs live here; the status line stays in plain words.
+  $("execResult").textContent = [describeOutcome(response), executionDiffLine(response), "", JSON.stringify(response, null, 2)].join("\n");
   return { outcome: "completed", response };
 }
 
@@ -2977,7 +3374,7 @@ $("btnExecute").addEventListener("click", async () => {
       ], result.response);
       setExecStatus("Confirmation required. Nothing was executed.", false);
     } else {
-      renderExecution([describeOutcome(result.response), executionDiffLine(result.response)], result.response);
+      renderExecution([describeOutcome(result.response), executionDiffLine(result.response)], result.response, isVerifiedResult(result.response));
       setExecStatus(describeOutcome(result.response), !result.response.ok);
     }
   } finally {
@@ -3016,6 +3413,36 @@ function setConfirmStatus(text, isError) {
   renderState();
 }
 
+const CONFIRM_COUNTDOWN_MAX_MS = 10 * 60 * 1000;
+let confirmCountdownTimer = null;
+function stopCountdownTimer() {
+  if (confirmCountdownTimer !== null) clearInterval(confirmCountdownTimer);
+  confirmCountdownTimer = null;
+}
+function stopConfirmCountdown() {
+  stopCountdownTimer();
+  const el = $("confirmCountdown");
+  if (el) el.hidden = true;
+}
+function renderConfirmCountdown(expiresAt) {
+  const el = $("confirmCountdown");
+  const left = Math.ceil((expiresAt - Date.now()) / 1000);
+  if (left <= 0) {
+    el.textContent = "This approval has expired. Cancel and ask again.";
+    stopCountdownTimer();
+    return;
+  }
+  el.textContent = `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+}
+function startConfirmCountdown(expiresAt) {
+  stopCountdownTimer();
+  const el = $("confirmCountdown");
+  if (!el) return;
+  el.hidden = false;
+  confirmCountdownTimer = setInterval(() => renderConfirmCountdown(expiresAt), 1000);
+  renderConfirmCountdown(expiresAt);
+}
+
 let confirmFocusReturn = null;
 let confirmFocusMoved = false;
 
@@ -3042,7 +3469,21 @@ function showConfirmation(confirmation, tabId) {
   $("confirmPage").textContent = confirmationPageLine(confirmation.pageUrl);
   const expires = new Date(confirmation.expiresAt);
   const expiresText = Number.isNaN(expires.getTime()) ? "" : ` The approval expires at ${expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`;
-  $("confirmCopy").textContent = `Nothing has run yet. Approving runs this one action once.${expiresText}`;
+  const copy = $("confirmCopy");
+  const expiresAt = expires.getTime();
+  if (expiresAt - Date.now() <= CONFIRM_COUNTDOWN_MAX_MS) {
+    // A live countdown for sight; one description for screen readers, so
+    // nothing is announced every second. The executor enforces the expiry.
+    copy.textContent = "Nothing has run yet. Approving runs this one action once. ";
+    const spoken = document.createElement("span");
+    spoken.className = "sr-only";
+    spoken.textContent = "The approval expires in about a minute.";
+    copy.append(spoken);
+    startConfirmCountdown(expiresAt);
+  } else {
+    stopConfirmCountdown();
+    copy.textContent = `Nothing has run yet. Approving runs this one action once.${expiresText}`;
+  }
   // Full, unshortened facts for anyone who wants them.
   const lines = [
     `Page: ${confirmation.pageUrl || "(current page)"}`,
@@ -3057,6 +3498,7 @@ function showConfirmation(confirmation, tabId) {
   // action: the latest-result line belongs to the earlier action.
   $("latestResult").textContent = "";
   lastRun = null;
+  plannerRecovery = false;
   $("confirmBox").hidden = false;
   renderTargets(); // mark the held target in the list from authoritative state
   const title = $("confirmTitle");
@@ -3081,6 +3523,10 @@ function confirmationPageLine(pageUrl) {
 
 function clearConfirmation(statusText, isError, opts) {
   state.confirmation = null;
+  stopConfirmCountdown();
+  // "Held: waiting…" stops being true the moment the hold ends. The outcome
+  // is reported once, in confirmStatus.
+  if (statusAboutHold) setStatus("");
   if (Object.values(tagStates).includes("held")) {
     sendTagStates(Object.fromEntries(Object.entries(tagStates).filter(([, st]) => st !== "held")));
   }
@@ -3212,7 +3658,7 @@ async function approveHeldChallenge(expectedChallengeId) {
   const diffLine = response.newSnapshotDiff
     ? `Diff: +${response.newSnapshotDiff.added.length} added, -${response.newSnapshotDiff.removed.length} removed, ${response.newSnapshotDiff.updated.length} updated.`
     : `Diff unavailable: ${response.diffUnavailableReason || "not provided"}.`;
-  renderExecution([describeOutcome(response), diffLine], response);
+  renderExecution([describeOutcome(response), diffLine], response, isVerifiedResult(response));
   setExecStatus(describeOutcome(response), !response.ok);
   if (!response.ok && response.error && APPROVAL_STAGE_CODES.has(response.error.code)) {
     // The approval itself failed; nothing was dispatched.
@@ -3272,7 +3718,7 @@ async function sendGateCommand(command) {
       return;
     }
     gateClosed = Boolean(res.gate.paused || res.gate.stopped);
-    $("btnStopExec").textContent = gateClosed ? "Resume" : "Stop";
+    $("btnStopExec").textContent = gateClosed ? "Resume" : "Stop actions";
     setGateStatus(gateClosed
       ? "Gate: stopped. New actions and approvals are blocked, and pending approvals were withdrawn. Resume replays nothing."
       : "Gate: open.");
@@ -3298,6 +3744,7 @@ async function sendGateCommand(command) {
  * nothing. The executor's separate `pause` command is kept, unused here. */
 const STOP_REASON = "execution was stopped; pending page commands, choices, and listening were discarded.";
 $("btnStopExec").addEventListener("click", async () => {
+  if (!state.confirmation) setConfirmStatus("");
   if (gateClosed) {
     await sendGateCommand("resume");
     return;
@@ -3308,6 +3755,7 @@ $("btnStopExec").addEventListener("click", async () => {
   pendingCorrection = null;
   clearClarification();
   lastRun = null;
+  plannerRecovery = false;
   sendTagStates({});
   if (hadPlan && !commandPending) {
     setStatus("Plan discarded — execution was stopped. Nothing was executed, and Resume does not bring it back.", true);
@@ -3329,7 +3777,36 @@ const DECISION_WORDS = {
   "approval-revoked-stop": "approval withdrawn by Stop",
   "approval-revoked-pause": "approval withdrawn by Pause",
   stopped: "stopped", paused: "paused", resumed: "resumed",
+  EXECUTION_STOPPED: "not run, Seeyable was stopped",
+  EXECUTION_PAUSED: "not run, Seeyable was paused",
+  EXECUTION_CANCELLED: "cancelled before it ran",
+  NOTHING_TO_UNDO: "nothing to undo",
+  UNDO_NOT_REVERSIBLE: "cannot be undone",
+  UNDO_CONFLICT: "not undone, it changed since",
+  UNDO_STALE: "not undone, it changed since",
+  UNDO_UNSUPPORTED: "cannot be undone",
+  UNDO_NOT_VERIFIED: "undo sent, not verified",
+  APPROVAL_EXPIRED: "approval expired",
+  APPROVAL_NOT_FOUND: "approval no longer available",
+  APPROVAL_CONSUMED: "approval already used",
+  STALE_SNAPSHOT: "not run, the page changed",
 };
+const ACTION_WORDS = { "gate-stop": "Stop", "gate-resume": "Resume", "gate-pause": "Pause", undo: "Undo", scroll_to: "scroll to" };
+// Unknown error codes read as "did not complete", never as success.
+function decisionWords(decision) {
+  if (DECISION_WORDS[decision]) return DECISION_WORDS[decision];
+  return /^[A-Z_]+$/.test(decision || "") ? "did not complete" : decision;
+}
+function activityTime(timestamp) {
+  const when = new Date(timestamp);
+  return Number.isNaN(when.getTime()) ? "" : when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function activityTarget(entry) {
+  if (entry.targetName) return ` \u201C${entry.targetName}\u201D`;
+  if (!entry.elementId) return "";
+  const known = state.snapshot && state.snapshot.elements.find((el) => el.id === entry.elementId);
+  return known && known.name ? ` \u201C${known.name}\u201D` : ` target ${numberFromId(entry.elementId)}`;
+}
 function renderActivity(entries) {
   const list = $("activityList");
   if (!list) return;
@@ -3345,14 +3822,13 @@ function renderActivity(entries) {
     row.className = "activity-row";
     const when = document.createElement("span");
     when.className = "when";
-    when.textContent = typeof e.timestamp === "string" ? e.timestamp.slice(11, 19) : "";
+    when.textContent = activityTime(e.timestamp);
     const what = document.createElement("span");
     what.className = "what";
-    const target = e.targetName ? ` “${e.targetName}”` : e.elementId ? ` ${numberFromId(e.elementId)}` : "";
-    what.textContent = `${e.action}${target} · ${e.source === "voice" ? "by voice" : e.source === "mcp" ? "by an assistant" : "by you"}`;
+    what.textContent = `${ACTION_WORDS[e.action] || e.action}${activityTarget(e)} · ${e.source === "voice" ? "by voice" : e.source === "mcp" ? "by an assistant" : "by you"}`;
     const decision = document.createElement("span");
     decision.className = "decision";
-    decision.textContent = DECISION_WORDS[e.decision] || e.decision;
+    decision.textContent = decisionWords(e.decision);
     row.append(when, what, decision);
     return row;
   }));
@@ -3402,8 +3878,12 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage
 }
 chrome.tabs.onActivated.addListener((info) => {
   refreshTabInfo();
-  if ((recognizer && recognizer.isActive()) || commandPending || (speechOutput && speechOutput.isSpeaking())) {
+  // Speech that is only playing discards nothing: it just stops. Anything
+  // else on the old tab is reported by the invalidation below.
+  if ((recognizer && recognizer.isActive()) || commandPending) {
     cancelVoiceInteraction("listening and pending command results were discarded because the active tab changed.");
+  } else if (speechOutput && speechOutput.isSpeaking()) {
+    speechOutput.stop();
   }
   // Invalidate even when nothing is bound yet: an in-flight initial
   // snapshot for another tab must never populate or authorize. The
@@ -3413,9 +3893,14 @@ chrome.tabs.onActivated.addListener((info) => {
   // shown when there was state to discard.
   const ownedTab = state.boundTabId !== null ? state.boundTabId : state.opTabId;
   if (info.tabId !== ownedTab) {
+    // Work the switch throws away must stay reported; a plain error from the
+    // other tab says nothing about this one, so a good snapshot may replace it.
+    const discardedWork = Boolean(pendingPlan || pendingClarification || state.confirmation
+      || commandPending || !$("planEditBox").hidden);
     invalidateExecution(ownedTab !== null || state.snapshot
-      ? "Active tab changed. The previous execution selection was discarded."
+      ? "Active tab changed. Anything waiting on the previous tab was discarded."
       : null);
+    statusFromOtherTab = statusIsError && !discardedWork;
   }
   // Automatically bind a fresh snapshot for the newly active tab
   // (read-only; discovers any pending confirmation via the bind path).
@@ -3423,13 +3908,28 @@ chrome.tabs.onActivated.addListener((info) => {
   requestAutoSnapshot(info.tabId);
 });
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.title || info.url) refreshTabInfo();
+  if (info.title || info.url || info.favIconUrl) refreshTabInfo();
   if ((info.status === "loading" || info.url) && voiceTabId !== null && tabId === voiceTabId) {
     cancelVoiceInteraction("listening was discarded because the tab navigated or reloaded.");
   }
   const ownedTab = state.boundTabId !== null ? state.boundTabId : state.opTabId;
+  if (pageUnavailable && pageUnavailable.tabId === tabId && (info.status === "loading" || info.url)) {
+    applyUnavailable(null);
+  }
   if (ownedTab !== null && tabId === ownedTab && (info.status === "loading" || info.url)) {
-    invalidateExecution("The tab navigated or reloaded. The previous execution selection was discarded; take a fresh snapshot.");
+    const discardedWork = Boolean(pendingPlan || pendingClarification || state.confirmation
+      || commandPending || !$("planEditBox").hidden);
+    invalidateExecution("The page navigated or reloaded, so anything waiting on it was discarded.");
+    statusFromOtherTab = statusIsError && !discardedWork;
+  }
+  // A finished load in the tab being shown binds it (the same read-only
+  // automatic path as switching tabs), so the panel never stays on an
+  // unavailable or stale view after a navigation.
+  if (info.status === "complete") {
+    const gen = state.generation;
+    void activeTab().then((tab) => {
+      if (tab && tab.id === tabId && gen === state.generation) requestAutoSnapshot(tabId);
+    }).catch(() => {});
   }
 });
 renderTargets(); // empty state until the first snapshot binds

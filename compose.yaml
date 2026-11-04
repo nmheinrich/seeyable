@@ -1,0 +1,23 @@
+name: seeyable
+services:
+  seeyable:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    init: true
+    secrets:
+      - planner-env
+    ports:
+      - "127.0.0.1:6124:16124"
+      - "127.0.0.1:6123:16123"
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - bridge-state:/home/node/.seeyable
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+volumes:
+  bridge-state:
+secrets:
+  planner-env:
+    file: docker/.env

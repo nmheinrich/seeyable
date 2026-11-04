@@ -1,0 +1,1145 @@
+<title>Seeyable Panel Mockup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: reviewer bar on top; a browser window with the host page left and
+   the Seeyable side panel right. Panel = D · Plain Words tokens exactly. */
+:root {
+  --bg-canvas: #E3E5E0; --bg-panel: #F2F2EE; --surface: #FFFFFF; --surface-hover: #ECEEE9;
+  --text: #141414; --text-2: #3A3A38; --muted: #55574F;
+  --border: #E3E5E0; --control: #7B7D74;
+  --action: #141414; --action-label: #F2F2EE;
+  --focus: #141414; --focus-halo: #F2F2EE;
+  --acting: #F2B33D; --acting-soft: #FFF8E8; --on-acting: #141414;
+  --gate: #B3401F; --gate-text: #7E2C14; --gate-soft: #FBEDE6; --gate-chip: #F3D9CF;
+  --listening: #2F5F8A; --on-listening: #FFFFFF;
+  --success: #2E4E37; --success-soft: #D9E6D8;
+  --warning: #6E4A08;
+  --error: #9A1B3C; --error-soft: #F7E1E7;
+  --hero-dark: #161616; --hero-dark-text: #F2F2EE; --hero-dark-muted: #BDBBB4; --hero-accent: #E7BE68;
+  --dot: #E3E5E0; --dot-text: #3A3A38;
+  /* Host website + overlay: theme-independent (they sit on other people's pages). */
+  --host-bg: #EEF1F0; --host-card: #FFFFFF; --host-text: #202124; --host-muted: #5F6368; --host-line: #DADCE0; --host-accent: #0B6E67;
+  --chrome: #DEE1E6; --chrome-bar: #FFFFFF;
+  --tag-ink: #141414; --tag-ring: #F2F2EE; --tag-dot: #3A3A38; --tag-dot-text: #D5D8D1;
+  --review-bg: #2B2C29; --review-text: #F2F2EE; --review-muted: #C9CBC4;
+  --font: Jost, "Century Gothic", system-ui, sans-serif;
+  --mono: "DM Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg-canvas: #111111; --bg-panel: #1A1A19; --surface: #242423; --surface-hover: #2E2E2C;
+  --text: #F2F2EE; --text-2: #D5D8D1; --muted: #A8AAA2; --border: #2E2E2C; --control: #7C7C78;
+  --action: #F2F2EE; --action-label: #141414; --focus: #F2F2EE; --focus-halo: #141414;
+  --acting-soft: #3A3220; --gate-text: #F3B49C; --gate-soft: #3A2018; --gate-chip: #4A2418;
+  --listening: #8EC5F2; --on-listening: #111111; --success: #9FD4AE; --success-soft: #1F3326;
+  --warning: #E7BE68; --error: #F49AB0; --error-soft: #3A1A22;
+  --hero-dark: #2A2A28; --dot: #2E2E2C; --dot-text: #D5D8D1; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg-canvas: #111111; --bg-panel: #1A1A19; --surface: #242423; --surface-hover: #2E2E2C;
+  --text: #F2F2EE; --text-2: #D5D8D1; --muted: #A8AAA2; --border: #2E2E2C; --control: #7C7C78;
+  --action: #F2F2EE; --action-label: #141414; --focus: #F2F2EE; --focus-halo: #141414;
+  --acting-soft: #3A3220; --gate-text: #F3B49C; --gate-soft: #3A2018; --gate-chip: #4A2418;
+  --listening: #8EC5F2; --on-listening: #111111; --success: #9FD4AE; --success-soft: #1F3326;
+  --warning: #E7BE68; --error: #F49AB0; --error-soft: #3A1A22;
+  --hero-dark: #2A2A28; --dot: #2E2E2C; --dot-text: #D5D8D1; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg-canvas); color: var(--text); font-family: var(--font); font-size: 16px; margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; box-shadow: 0 0 0 5px var(--focus-halo); }
+.mono { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; color: var(--muted); margin: 0; text-transform: uppercase; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* --- Reviewer bar (mockup only) --- */
+.review { background: var(--review-bg); color: var(--review-text); padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 14px; }
+.review strong { font-weight: 500; }
+.review .note { color: var(--review-muted); flex: 1 1 260px; min-width: 0; }
+.review label { display: inline-flex; align-items: center; gap: 6px; color: var(--review-muted); }
+.review select, .review button { background: #3A3B37; color: var(--review-text); border: 1px solid #6A6C66; border-radius: 999px; min-height: 36px; padding: 0 12px; }
+.review button:hover { background: #474843; }
+
+/* --- Browser window --- */
+.stage { padding-block: 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.window { max-width: 1440px; margin: 0 auto; border-radius: 12px; overflow: hidden; background: var(--chrome); box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 8px 30px rgba(0,0,0,.12); }
+.tabs { height: 38px; display: flex; align-items: flex-end; padding: 0 12px; }
+.tab { height: 32px; padding: 0 12px; background: var(--chrome-bar); border-radius: 10px 10px 0 0; display: flex; align-items: center; gap: 8px; font: 12px Arial, sans-serif; color: var(--host-text); max-width: 260px; }
+.tab i { width: 14px; height: 14px; border-radius: 3px; background: var(--host-accent); }
+.omni { height: 46px; background: var(--chrome-bar); display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--host-line); }
+.url { flex: 1; min-width: 0; height: 32px; border-radius: 16px; background: #F1F3F4; display: flex; align-items: center; padding: 0 14px; font: 14px Arial, sans-serif; color: var(--host-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ext { width: 32px; height: 32px; border-radius: 50%; background: #E8EAED; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.split { display: flex; min-height: 760px; }
+
+/* --- Host page: the pre-existing demo survey (test target) --- */
+.host { flex: 1; min-width: 0; background: var(--host-bg); padding: 20px; overflow: auto; font-family: Arial, sans-serif; color: var(--host-text); }
+.host-inner { max-width: 620px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.hcard { background: var(--host-card); border: 1px solid var(--host-line); border-radius: 8px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+.hcard h1 { margin: 0; font-weight: 400; font-size: 24px; }
+.hcard h2 { margin: 0; font-weight: 400; font-size: 16px; }
+.hcard p { margin: 0; font-size: 13px; color: var(--host-muted); }
+.fld { display: flex; flex-direction: column; gap: 4px; position: relative; }
+.fld > label, .fld > .lbl { font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fld input[type=text], .fld input[type=email], .fld input[type=password], .fld select, .fld textarea { border: 1px solid #BDC1C6; border-radius: 4px; padding: 7px 8px; font: 14px Arial, sans-serif; background: #FFFFFF; color: var(--host-text); width: 100%; }
+.opt { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; flex-wrap: wrap; }
+.hbtns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hbtn { height: 36px; padding: 0 18px; border-radius: 4px; border: 1px solid var(--host-line); background: #FFFFFF; color: var(--host-text); font: 14px Arial, sans-serif; }
+.hbtn.primary { background: var(--host-accent); color: #FFFFFF; border-color: var(--host-accent); }
+.fixture { font-size: 12px; color: var(--host-muted); text-align: center; }
+.ring { outline: 3px solid var(--tag-ink); outline-offset: 3px; border-radius: 4px; }
+.ring-acting { outline: 3px solid var(--acting); outline-offset: 3px; }
+.ring-gate { outline: 3px solid #B3401F; outline-offset: 3px; }
+
+/* Word tags on the host page (overlay, theme-independent) */
+.wt { display: none; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 10px; background: var(--tag-ink); color: var(--tag-ring); font: 500 13px var(--font); border-radius: 999px; box-shadow: 0 0 0 2px var(--tag-ring), 0 0 0 3px var(--tag-ink); white-space: nowrap; }
+.tags-on .wt, .wt.force { display: inline-flex; }
+.wt .no { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--tag-dot); color: var(--tag-dot-text); font: 500 11px var(--mono); }
+.wt.acting { background: #F2B33D; color: #141414; box-shadow: 0 0 0 2px #141414, 0 0 0 4px var(--tag-ring); }
+.wt.acting .no { background: #141414; color: #F2B33D; }
+.wt.done { background: #D9E6D8; color: #2E4E37; box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 3px #2E4E37; }
+.wt.done .no { background: #2E4E37; color: #D9E6D8; }
+.wt.held { background: #B3401F; color: #FFFFFF; box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 3px #141414; }
+.wt.held .no { background: #FFFFFF; color: #B3401F; }
+
+/* --- Side panel --- */
+.panel { width: var(--panel-w, 400px); flex: none; background: var(--surface); border-left: 1px solid #C4C7C5; display: flex; flex-direction: column; }
+.panel-chrome { height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid #E3E3E3; background: #FFFFFF; font: 13px Arial, sans-serif; color: #3C4043; }
+.sy { flex: 1; background: var(--bg-canvas); padding: 10px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.sy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px; flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand b { font: 400 17px var(--mono); }
+.brand span { font: 12px var(--mono); color: var(--muted); }
+.pill-btn { min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--control); background: var(--surface); font-size: 14px; cursor: pointer; }
+.pill-btn[aria-pressed="true"] { background: var(--action); color: var(--action-label); border-color: var(--action); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 500 12px var(--mono); padding: 5px 10px; border-radius: 999px; background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--border); letter-spacing: .03em; }
+.chip.acting { background: var(--acting); color: var(--on-acting); box-shadow: none; }
+.chip.gate { background: var(--gate-chip); color: var(--gate-text); box-shadow: none; }
+.chip.listening { background: var(--listening); color: var(--on-listening); box-shadow: none; }
+.chip.success { background: var(--success-soft); color: var(--success); box-shadow: none; }
+.chip.paused { background: var(--surface); color: var(--gate-text); box-shadow: 0 0 0 1.5px var(--gate-text); }
+.pagecard { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--bg-panel); border-radius: 22px; }
+.pagecard i { width: 22px; height: 22px; border-radius: 6px; background: var(--host-accent); flex: none; }
+.pagecard div { display: flex; flex-direction: column; min-width: 0; }
+.pagecard strong { font-weight: 500; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pagecard small { font-size: 13px; color: var(--muted); }
+.statusline { display: flex; flex-direction: column; gap: 6px; padding: 2px 6px; }
+.statusline .msg { margin: 0; font-size: 15px; line-height: 1.4; color: var(--text-2); }
+.statusline .msg.err { color: var(--error); }
+.statusline .spoken { margin: 0; font-size: 13px; color: var(--muted); }
+
+.main { flex: 1; background: var(--bg-panel); border-radius: 28px; padding: 22px 18px 18px; display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow: auto; }
+.hero-title { margin: 0; font-weight: 300; font-size: 2.1rem; line-height: 1.05; text-wrap: balance; }
+.hero-copy { margin: 0; font-size: 16px; line-height: 1.45; color: var(--text-2); }
+.mic { min-height: 96px; border-radius: 999px; border: 0; background: var(--action); color: var(--action-label); display: flex; align-items: center; gap: 16px; padding: 0 20px 0 16px; cursor: pointer; text-align: left; width: 100%; }
+.mic .disc { display: inline-flex; width: 60px; height: 60px; border-radius: 50%; background: var(--action-label); color: var(--action); align-items: center; justify-content: center; flex: none; }
+.mic .lbl { display: flex; flex-direction: column; gap: 2px; }
+.mic .lbl b { font-size: 22px; font-weight: 500; }
+.mic .lbl span { font: 13px var(--mono); opacity: .85; }
+.mic.live { background: var(--listening); color: var(--on-listening); }
+.mic.live .disc { background: var(--on-listening); color: var(--listening); }
+.mic:disabled { opacity: .45; cursor: not-allowed; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn { min-height: 48px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--control); background: var(--surface); font-size: 16px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+.btn:hover:not(:disabled) { background: var(--surface-hover); }
+.btn.primary { background: var(--action); color: var(--action-label); border-color: var(--action); font-weight: 500; }
+.btn.primary:hover:not(:disabled) { background: var(--action); }
+.btn.wide { width: 100%; justify-content: space-between; min-height: 56px; }
+.btn .hint { font: 13px var(--mono); opacity: .8; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.request { display: flex; flex-direction: column; gap: 6px; }
+.request label { font-size: 15px; font-weight: 500; }
+.request-row { display: flex; gap: 8px; background: var(--surface); border-radius: 999px; padding: 4px; box-shadow: inset 0 0 0 1px var(--control); }
+.request-row input { flex: 1; min-width: 0; min-height: 48px; border: 0; background: transparent; padding: 0 14px; font-size: 16px; }
+.request-row input:focus-visible { box-shadow: none; outline-offset: -3px; }
+.request-row button { min-width: 76px; min-height: 48px; border-radius: 999px; border: 0; background: var(--action); color: var(--action-label); font-weight: 500; cursor: pointer; }
+.sugg { min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--control); background: var(--surface); font-size: 15px; cursor: pointer; }
+
+/* Compact speak prompt: the mic, scaled down, wherever a spoken answer fits */
+.talk { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 22px; background: var(--surface); box-shadow: 0 0 0 1px var(--border); }
+.talk-btn { min-height: 56px; border-radius: 999px; border: 0; background: var(--action); color: var(--action-label); display: flex; align-items: center; gap: 12px; padding: 0 16px 0 8px; cursor: pointer; text-align: left; width: 100%; }
+.talk-btn .disc { display: inline-flex; width: 40px; height: 40px; border-radius: 50%; background: var(--action-label); color: var(--action); align-items: center; justify-content: center; flex: none; }
+.talk-btn b { font-size: 17px; font-weight: 500; flex: 1; }
+.talk-btn kbd, .mic kbd { font: 12px var(--mono); padding: 3px 7px; border-radius: 6px; border: 1px solid currentColor; opacity: .85; }
+.talk-btn:disabled { opacity: .45; cursor: not-allowed; }
+.say-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.say-list li { font-size: 15px; padding: 4px 10px; border-radius: 999px; background: var(--bg-panel); color: var(--text); }
+.say-list li.main { background: var(--action); color: var(--action-label); font-weight: 500; }
+
+/* Plan / step rows */
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.st { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 8px 6px 14px; border-radius: 16px; background: var(--surface); box-shadow: 0 0 0 1px var(--border); font-size: 16px; line-height: 1.3; }
+.st .gl { font: 13px var(--mono); width: 14px; text-align: center; flex: none; color: var(--muted); }
+.st .tx { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.st .tx strong { font-weight: 500; }
+.st .tx small { display: block; color: var(--muted); font-size: 13px; }
+.no { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--dot); color: var(--dot-text); font: 12px var(--mono); flex: none; }
+.st.done { color: var(--muted); }
+.st.done .gl { color: var(--success); }
+.st.now { background: var(--acting-soft); box-shadow: 0 0 0 2px var(--text); min-height: 56px; }
+.st.now .gl { color: var(--text); }
+.st.now .no { background: var(--acting); color: #141414; }
+.st.risky { background: var(--gate-soft); box-shadow: 0 0 0 1.5px var(--gate); color: var(--gate-text); }
+.st.risky .no { background: var(--gate); color: #FFFFFF; }
+.dark-hero { background: var(--hero-dark); color: var(--hero-dark-text); border-radius: 22px; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.dark-hero .big { font-weight: 300; font-size: 1.75rem; line-height: 1.1; margin: 0; text-wrap: balance; }
+.dark-hero .big em { font-style: normal; color: var(--hero-accent); }
+.dark-hero .sub { font-size: 14px; color: var(--hero-dark-muted); margin: 0; }
+.said { display: flex; flex-direction: column; gap: 4px; }
+.said p { margin: 0; font-size: 17px; line-height: 1.4; }
+.note { margin: 0; font-size: 14px; line-height: 1.4; color: var(--muted); }
+
+/* Gate */
+.gate-card { background: var(--gate); color: #FFFFFF; border-radius: 26px; padding: 22px 20px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 0 0 4px var(--bg-panel), 0 0 0 6px var(--gate); }
+.gate-card h2 { margin: 0; font-weight: 400; font-size: 2rem; line-height: 1.08; }
+.gate-card .what { background: #FFFFFF; color: #141414; border-radius: 18px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; line-height: 1.4; }
+.gate-card .what dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; }
+.gate-card .what dt { color: #55574F; }
+.gate-card .what dd { margin: 0; overflow-wrap: anywhere; }
+.gate-card .warn { font-weight: 600; color: #7E2C14; }
+.gate-card .gbtn { min-height: 60px; border-radius: 999px; font-size: 18px; font-weight: 500; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; cursor: pointer; }
+.gate-card .gbtn.ok { background: #FFFFFF; color: #141414; border: 0; }
+.gate-card .gbtn.no { background: transparent; color: #FFFFFF; border: 2px solid #FFFFFF; }
+.gate-card .gbtn span { font: 13px var(--mono); }
+.gate-card .glyph { font: 500 12px var(--mono); align-self: flex-start; background: #FFFFFF; color: #B3401F; padding: 5px 10px; border-radius: 999px; }
+.timer { font: 13px var(--mono); }
+
+/* Repair / recovery */
+.choice { min-height: 64px; border-radius: 18px; border: 1px solid var(--control); background: var(--surface); text-align: left; padding: 10px 14px; display: flex; gap: 12px; align-items: center; cursor: pointer; font-size: 17px; width: 100%; }
+.choice .no { min-width: 30px; height: 30px; font-size: 14px; }
+.choice small { display: block; color: var(--muted); font-size: 14px; }
+.ask { font: 500 13px var(--mono); color: var(--warning); margin: 0; }
+.recover { background: var(--surface); border-radius: 22px; box-shadow: 0 0 0 1.5px var(--error); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.recover h3 { margin: 0; font-size: 20px; font-weight: 500; color: var(--error); display: flex; gap: 8px; align-items: baseline; }
+.donecard { background: var(--success-soft); color: var(--success); border-radius: 22px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+.donecard h2 { margin: 0; font-weight: 400; font-size: 1.8rem; color: var(--text); }
+.donecard p { margin: 0; color: var(--text-2); }
+
+/* Footer: consolidated safety + navigation */
+.safety { display: flex; gap: 8px; }
+.safety .btn { flex: 1; min-height: 52px; }
+.safety .stop { background: var(--action); color: var(--action-label); border-color: var(--action); font-weight: 500; }
+.safety .stop.resume { background: var(--surface); color: var(--text); border: 2px solid var(--gate); }
+.nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; background: var(--bg-panel); border-radius: 999px; padding: 4px; }
+.nav button { min-height: 44px; border-radius: 999px; border: 0; background: transparent; font-size: 14px; cursor: pointer; }
+.nav button[aria-current="page"] { background: var(--action); color: var(--action-label); }
+
+/* Sub-screens */
+.sub-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.sub-head h2 { margin: 0; font-weight: 300; font-size: 1.7rem; }
+details.sec { background: var(--surface); border-radius: 18px; box-shadow: 0 0 0 1px var(--border); padding: 0 14px; }
+details.sec > summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; font-weight: 500; list-style: none; }
+details.sec > summary::-webkit-details-marker { display: none; }
+details.sec > summary::after { content: "+"; margin-left: auto; font-family: var(--mono); color: var(--muted); }
+details.sec[open] > summary::after { content: "–"; }
+details.sec > div { padding-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--text-2); }
+.field input, .field select { min-height: 44px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--control); background: var(--surface); font-size: 16px; }
+pre.out { margin: 0; background: var(--bg-panel); border-radius: 14px; padding: 10px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; color: var(--text-2); }
+.tlist { display: flex; flex-direction: column; gap: 6px; }
+.tlist button { min-height: 44px; border-radius: 14px; border: 0; box-shadow: 0 0 0 1px var(--border); background: var(--surface); text-align: left; padding: 0 12px; display: flex; gap: 10px; align-items: center; cursor: pointer; font-size: 15px; }
+.tlist button[aria-current="true"] { box-shadow: 0 0 0 2px var(--text); }
+.tlist .mark { margin-left: auto; font-size: 12px; color: var(--muted); }
+.switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+.switch input { width: 44px; height: 24px; accent-color: var(--text); }
+.logrow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.logrow:first-child { border-top: 0; }
+.logrow time, .logrow .src { font: 12px var(--mono); color: var(--muted); }
+.logrow .dec { font: 12px var(--mono); }
+
+/* Narrow: stack the panel above the page */
+@media (max-width: 860px) {
+  .split { flex-direction: column-reverse; min-height: 0; }
+  .panel { width: 100%; border-left: 0; border-bottom: 1px solid #C4C7C5; }
+  .host { min-height: 420px; }
+}
+@media (max-width: 360px) { .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); border-radius: 22px; } }
+</style>
+
+<div class="review" role="region" aria-label="Mockup controls">
+  <strong>Mockup controls</strong>
+  <span class="note">Not part of the product. Simulated: no real page, model, or microphone. Data is fictional; the page is the pre-existing demo survey test target.</span>
+  <label for="jump">Jump to state
+    <select id="jump">
+      <option value="">Choose…</option>
+      <option value="ready">1 · Ready</option>
+      <option value="listening">2 · Listening</option>
+      <option value="plan">3 · Plan preview</option>
+      <option value="edit">3b · Edit plan</option>
+      <option value="acting">4 · Acting</option>
+      <option value="gate">5 · Safety confirmation</option>
+      <option value="done">6 · Completed (with undo)</option>
+      <option value="repair">7 · Which one? (repair)</option>
+      <option value="paused">8 · Stopped</option>
+      <option value="err-planner">9 · Error · planner not paired</option>
+      <option value="err-mic">9 · Error · microphone blocked</option>
+      <option value="err-page">9 · Error · page changed after review</option>
+      <option value="dev">10 · Developer view</option>
+    </select>
+  </label>
+  <label for="utter">Next spoken sentence (left on the first, it picks the answer that fits)
+    <select id="utter">
+      <option>Put Grace Hopper in Full name and Pilot in Short bio.</option>
+      <option>Edit plan: put Grace Hopper in Full name and Scientist in Short bio.</option>
+      <option>Approved plan.</option>
+      <option>approve later</option>
+      <option>Undo last change.</option>
+      <option>Put Pilot in the name field.</option>
+      <option>No, the other one.</option>
+      <option>Please submit this survey.</option>
+      <option>Approve this action.</option>
+      <option>Choose Designer for Your role and turn on SMS updates.</option>
+      <option>Show tags</option>
+    </select>
+  </label>
+  <label for="width">Panel width
+    <select id="width"><option value="320">320 px</option><option value="400" selected>400 px</option><option value="480">480 px</option></select>
+  </label>
+  <label for="theme">Theme
+    <select id="theme"><option value="">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+  </label>
+  <button type="button" id="reset">Reset</button>
+</div>
+
+<div class="stage">
+<div class="window">
+  <div class="tabs" aria-hidden="true"><div class="tab"><i></i>Demo Survey — Seeyable test target</div></div>
+  <div class="omni" aria-hidden="true">
+    <div class="url">localhost:8080/demo-survey/index.html</div>
+    <span class="ext"><svg width="22" height="14" viewBox="0 0 64 40"><rect x="2" y="4" width="60" height="32" rx="16" fill="#141414"></rect><rect x="12" y="17" width="24" height="6" rx="3" fill="#F2F2EE"></rect><circle cx="48" cy="20" r="8" fill="#E7BE68"></circle></svg></span>
+  </div>
+  <div class="split">
+    <main class="host" id="host" aria-label="Web page (demo survey)">
+      <div class="host-inner">
+        <div class="hcard" style="border-top: 8px solid var(--host-accent);">
+          <h1>Demo Survey</h1>
+          <p>Pre-existing test fixture used to exercise Seeyable. Fictional data only.</p>
+        </div>
+        <div class="hcard">
+          <h2>About you</h2>
+          <div class="fld" data-el="1"><label for="f-name">Full name <span class="wt"><span>Full name</span><span class="no">1</span></span></label><input id="f-name" type="text"></div>
+          <div class="fld" data-el="2"><label for="f-email">Work email <span class="wt"><span>Work email</span><span class="no">2</span></span></label><input id="f-email" type="email"></div>
+          <div class="fld" data-el="3"><label for="f-nick" class="lbl">Nickname <span class="wt"><span>Nickname</span><span class="no">3</span></span></label><input id="f-nick" type="text" placeholder="Nickname (placeholder only)"></div>
+          <div class="fld" data-el="5"><label for="f-pin">Account PIN <span class="wt"><span>Account PIN</span><span class="no">5</span></span></label><input id="f-pin" type="password" value="1234"></div>
+          <div class="fld" data-el="6"><label for="f-role">Your role <span class="wt"><span>Your role</span><span class="no">6</span></span></label>
+            <select id="f-role"><option value="">Choose…</option><option value="designer">Designer</option><option value="engineer" selected>Engineer</option><option value="pm">Product manager</option></select></div>
+          <div class="fld" data-el="7"><label for="f-bio">Short bio <span class="wt"><span>Short bio</span><span class="no">7</span></span></label><textarea id="f-bio" rows="3" placeholder="Tell us a little about yourself"></textarea></div>
+        </div>
+        <div class="hcard">
+          <h2>Contact preferences</h2>
+          <div class="fld" data-el="8"><label class="opt"><input id="f-pemail" type="checkbox" checked> Email updates <span class="wt"><span>Email updates</span><span class="no">8</span></span></label></div>
+          <div class="fld" data-el="9"><label class="opt"><input id="f-psms" type="checkbox"> SMS updates <span class="wt"><span>SMS updates</span><span class="no">9</span></span></label></div>
+          <div class="fld" data-el="10"><label class="opt"><input id="f-weekly" type="radio" name="freq" checked> Weekly digest <span class="wt"><span>Weekly digest</span><span class="no">10</span></span></label></div>
+          <div class="fld" data-el="11"><label class="opt"><input id="f-monthly" type="radio" name="freq"> Monthly digest <span class="wt"><span>Monthly digest</span><span class="no">11</span></span></label></div>
+        </div>
+        <div class="hcard">
+          <div class="hbtns">
+            <span class="fld" data-el="19"><button type="button" class="hbtn" id="f-save">Save draft</button> <span class="wt"><span>Save draft</span><span class="no">19</span></span></span>
+            <span class="fld" data-el="20"><button type="button" class="hbtn primary" id="f-submit">Submit survey</button> <span class="wt"><span>Submit survey</span><span class="no">20</span></span></span>
+          </div>
+        </div>
+        <p class="fixture">Typing in these fields is real, so you can test “undo refuses a manual edit”.</p>
+      </div>
+    </main>
+
+    <aside class="panel" id="panel" aria-label="Seeyable side panel">
+      <div class="panel-chrome" aria-hidden="true"><span>Seeyable ▾</span><span>✕</span></div>
+      <div class="sy">
+        <header class="sy-head">
+          <div class="brand"><b>SEEYABLE</b><span id="mode">~ready</span></div>
+          <div class="row" style="gap:6px">
+            <span id="chip" class="chip" hidden></span>
+            <button type="button" class="pill-btn" id="tagsBtn" aria-pressed="false">Tags: off</button>
+          </div>
+        </header>
+        <div class="pagecard">
+          <i aria-hidden="true"></i>
+          <div><strong>Demo Survey — Seeyable test target</strong><small id="pageMeta">localhost · 20 controls I can use</small></div>
+        </div>
+        <div class="statusline">
+          <p id="status" class="msg" role="status">Open the page you want to work with.</p>
+          <p id="spoken" class="spoken" aria-live="off"></p>
+        </div>
+        <section class="main" id="main" aria-live="off"></section>
+        <div class="safety" id="safety">
+          <button type="button" class="btn stop" id="stopBtn">Stop</button>
+          <button type="button" class="btn" id="undoBtn">Undo last change</button>
+        </div>
+        <nav class="nav" aria-label="Seeyable">
+          <button type="button" data-screen="assist" aria-current="page">Assist</button>
+          <button type="button" data-screen="targets">Targets</button>
+          <button type="button" data-screen="activity">Activity</button>
+          <button type="button" data-screen="settings">Settings</button>
+        </nav>
+      </div>
+    </aside>
+  </div>
+</div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const T = (ms) => (reduce ? Math.min(ms, 120) : ms);
+
+  // The demo survey's controls (ids match the real snapshot numbering).
+  const FIELDS = {
+    "full name": { el: 1, name: "Full name", input: "f-name", kind: "text" },
+    "work email": { el: 2, name: "Work email", input: "f-email", kind: "text" },
+    "nickname": { el: 3, name: "Nickname", input: "f-nick", kind: "text" },
+    "account pin": { el: 5, name: "Account PIN", input: "f-pin", kind: "protected" },
+    "your role": { el: 6, name: "Your role", input: "f-role", kind: "select" },
+    "short bio": { el: 7, name: "Short bio", input: "f-bio", kind: "text" },
+    "email updates": { el: 8, name: "Email updates", input: "f-pemail", kind: "check" },
+    "sms updates": { el: 9, name: "SMS updates", input: "f-psms", kind: "check" },
+    "weekly digest": { el: 10, name: "Weekly digest", input: "f-weekly", kind: "radio" },
+    "monthly digest": { el: 11, name: "Monthly digest", input: "f-monthly", kind: "radio" },
+    "save draft": { el: 19, name: "Save draft", input: "f-save", kind: "button" },
+    "submit survey": { el: 20, name: "Submit survey", input: "f-submit", kind: "risky" },
+  };
+  const TARGETS = [
+    [1, "Full name"], [2, "Work email"], [3, "Nickname"], [4, "How did you hear about us?"], [5, "Account PIN"],
+    [6, "Your role"], [7, "Short bio"], [8, "Email updates"], [9, "SMS updates"], [10, "Weekly digest"],
+    [11, "Monthly digest"], [12, "Rate this demo 1 (poor) to 5 (great)"], [13, "Search the help centre"], [14, "Notifications"],
+    [15, "Close dialog"], [16, "Unavailable action"], [17, "More options"], [18, "Read the help article"], [19, "Save draft"], [20, "Submit survey"],
+  ];
+  const ROLE_LABEL = { designer: "Designer", engineer: "Engineer", pm: "Product manager", "": "Choose…" };
+
+  const S = {
+    screen: "assist", view: "ready", tags: false, gateClosed: false, speak: true,
+    transcript: "", plan: null, planSeq: 0, edited: false, request: "",
+    step: 0, done: [], challenge: null, clarify: null, correction: null,
+    lastChange: null, log: [], timers: [], activeTarget: null, listenBound: null,
+    msg: "Open the page you want to work with.", msgErr: false, spokenText: "",
+    dev: { bridge: "Bridge: not connected.", planner: "Planner: paired on 127.0.0.1:6124.", snapshot: "20 elements · rev 1", exec: "No execution yet.", out: "{}" },
+  };
+
+  /* ---------- helpers ---------- */
+  function clearTimers() { S.timers.forEach(clearTimeout); S.timers = []; }
+  function later(fn, ms) { S.timers.push(setTimeout(fn, T(ms))); }
+  function status(text, err) { S.msg = text; S.msgErr = Boolean(err); }
+  function say(text) { S.spokenText = S.speak && text ? `Spoken: “${text}”` : ""; }
+  function now() { return new Date().toTimeString().slice(0, 8); }
+  function log(source, action, el, name, decision) { S.log.unshift({ t: now(), source, action, el, name, decision }); }
+  function fieldEl(n) { return document.querySelector(`.fld[data-el="${n}"]`); }
+  function input(f) { return $(f.input); }
+  function readValue(f) {
+    const node = input(f);
+    if (f.kind === "check" || f.kind === "radio") return node.checked;
+    return node.value;
+  }
+  function describe(step) {
+    const f = step.f;
+    if (step.action === "fill") return `Fill <strong>${esc(f.name)}</strong> with “${esc(step.value)}”`;
+    if (step.action === "select") return `Choose “${esc(ROLE_LABEL[step.value] || step.value)}” in <strong>${esc(f.name)}</strong>`;
+    if (step.action === "check") return f.kind === "radio" ? `Select <strong>${esc(f.name)}</strong>` : `Turn on <strong>${esc(f.name)}</strong>`;
+    if (step.action === "uncheck") return `Turn off <strong>${esc(f.name)}</strong>`;
+    return `Click <strong>${esc(f.name)}</strong>`;
+  }
+  function decorate() {
+    document.querySelectorAll(".fld").forEach((n) => n.classList.remove("ring", "ring-acting", "ring-gate"));
+    document.querySelectorAll(".wt").forEach((w) => { w.classList.remove("acting", "done", "held", "force"); });
+    $("host").classList.toggle("tags-on", S.tags);
+    if (S.activeTarget) { const n = fieldEl(S.activeTarget); if (n) n.classList.add("ring"); }
+    if (S.view === "acting" && S.plan) {
+      const st = S.plan.steps[S.step];
+      if (st) { const n = fieldEl(st.f.el); n.classList.add("ring-acting"); const w = n.querySelector(".wt"); w.classList.add("acting", "force"); }
+      S.done.forEach((d) => { const w = fieldEl(d.f.el).querySelector(".wt"); w.classList.add("done", "force"); });
+    }
+    if (S.view === "gate") { const n = fieldEl(20); n.classList.add("ring-gate"); n.querySelector(".wt").classList.add("held", "force"); }
+  }
+
+  /* ---------- the simulated planner (stands in for the model) ---------- */
+  function planFor(text) {
+    const t = text.replace(/[.!?]+$/, "").trim();
+    if (/submit/i.test(t)) return { steps: [{ action: "click", f: FIELDS["submit survey"] }] };
+    if (/the name field/i.test(t)) {
+      const v = /put (.+?) in the name field/i.exec(t);
+      return { clarify: { question: "Which name field?", action: "fill", value: v ? v[1] : "Pilot", choices: [FIELDS["full name"], FIELDS["nickname"]] } };
+    }
+    const steps = [];
+    for (const part of t.split(/\s*(?:,|\band\b|\bthen\b)\s*/i).filter(Boolean)) {
+      let m = /^(?:put\s+)?(.+?)\s+in\s+(full name|short bio|nickname|work email)$/i.exec(part);
+      if (m) { steps.push({ action: "fill", f: FIELDS[m[2].toLowerCase()], value: m[1] }); continue; }
+      m = /^choose\s+(designer|engineer|product manager)\s+for\s+your role$/i.exec(part);
+      if (m) { steps.push({ action: "select", f: FIELDS["your role"], value: { designer: "designer", engineer: "engineer", "product manager": "pm" }[m[1].toLowerCase()] }); continue; }
+      m = /^turn (on|off)\s+(sms updates|email updates)$/i.exec(part);
+      if (m) { steps.push({ action: m[1].toLowerCase() === "on" ? "check" : "uncheck", f: FIELDS[m[2].toLowerCase()] }); continue; }
+      m = /^(?:choose|select)\s+(weekly|monthly) digest$/i.exec(part);
+      if (m) { steps.push({ action: "check", f: FIELDS[`${m[1].toLowerCase()} digest`] }); continue; }
+    }
+    return steps.length ? { steps } : { unsupported: true };
+  }
+
+  /* ---------- review phrases (exact, as in the product) ---------- */
+  const APPROVE = new Set(["approve plan", "approve the plan", "approved plan", "approved the plan", "approve", "approved", "go ahead"]);
+  function norm(t) { return String(t).toLowerCase().trim().replace(/\s+/g, " ").replace(/[.!?,;:]+$/, "").trim(); }
+
+  /* ---------- command dispatch (typed or "spoken") ---------- */
+  function dispatch(raw, source) {
+    const n = norm(raw);
+    if (!n) { status("No command was entered. Try “show tags”, “fill Full name with Ada”, or a request.", true); return render(); }
+    if (APPROVE.has(n)) {
+      if (S.plan && S.view === "plan") return approvePlan(source);
+      status("No plan is waiting for review. Nothing was approved.", true); return render();
+    }
+    if (n === "cancel plan" || n === "cancel the plan") {
+      if (S.plan && S.view === "plan") return cancelPlan();
+      status("No plan is waiting for review. Nothing was cancelled.", true); return render();
+    }
+    if (n === "approve this action") {
+      if (source !== "voice") { status("Use the Approve once button, or say “Approve this action” while listening. Nothing was approved.", true); return render(); }
+      if (S.view === "gate") return approveChallenge();
+      status("No action is waiting for approval. Nothing was approved.", true); return render();
+    }
+    if (n === "undo last change" || n === "undo the last change") return undo();
+    const edit = /^edit (?:the )?plan\s*[:,.\-]?\s*(.*)$/i.exec(raw.trim());
+    if (edit) {
+      if (!(S.plan && S.view === "plan")) { status("No plan is waiting to edit. Say or type the request on its own. Nothing was executed.", true); return render(); }
+      if (!edit[1]) { status("Say the complete replacement request after “Edit plan”. The current plan is still waiting for review.", true); return render(); }
+      return startPlanning(edit[1], true);
+    }
+    if (S.plan && S.view === "plan" && /\b(approv\w*|go ahead)\b/.test(n)) {
+      status("Not approved — that wording is not a supported approval, so nothing ran and the plan is still waiting. Say “Approve plan” (or “Approve”, “Go ahead”), “Cancel plan”, or “Edit plan: …”.", true);
+      return render();
+    }
+    if (/^(no, )?the other one$/.test(n)) {
+      if (S.correction) return correctTo();
+      return startPlanning(raw, false);
+    }
+    if (n === "show tags" || n === "hide tags") { S.tags = n === "show tags"; status(S.tags ? "Tags shown (20 controls, revision 1)." : "Tags hidden. Highlighting by number still works."); say(S.tags ? "Tags shown" : "Tags hidden"); dropPlan(); return render(); }
+    // Local fast path: runs at once, no preview (product behaviour for #13 grammar).
+    let m = /^fill (.+?) with (.+)$/i.exec(raw.trim());
+    if (m && FIELDS[norm(m[1])]) { dropPlan(); return runLocal({ action: "fill", f: FIELDS[norm(m[1])], value: m[2] }); }
+    m = /^click (.+)$/i.exec(raw.trim());
+    if (m && FIELDS[norm(m[1])]) { dropPlan(); return runLocal({ action: "click", f: FIELDS[norm(m[1])] }); }
+    return startPlanning(raw, false);
+  }
+
+  function dropPlan() { if (S.plan && S.view === "plan") { S.plan = null; S.view = "ready"; } }
+
+  function runLocal(step) {
+    clearTimers();
+    if (step.f.kind === "risky") return hold(step, "local");
+    applyStep(step, "manual");
+    S.view = "ready";
+    status(`${step.action === "click" ? "Clicked" : "Filled"} ${step.f.name}. ${step.action === "click" ? "Activation dispatched; no observable change was detected, so completion is not claimed." : "Completed and verified against live page state."}`);
+    say(`${step.action === "click" ? "Clicked" : "Filled"} ${step.f.name}.`);
+    render();
+  }
+
+  function startPlanning(text, edited) {
+    clearTimers();
+    if (S.gateClosed) { status("Execution is stopped. Resume first; nothing was planned or run.", true); return render(); }
+    S.request = text; S.edited = edited; S.plan = null; S.clarify = null;
+    S.view = "planning"; status("Planning…"); S.spokenText = "";
+    render();
+    later(() => {
+      const r = planFor(text);
+      if (r.clarify) {
+        S.clarify = { ...r.clarify, request: text }; S.view = "repair";
+        status(`“${r.clarify.question}” — choose one of ${r.clarify.choices.length}. Nothing was executed.`);
+        say(`${r.clarify.choices.length} matches. Choose one.`);
+      } else if (r.unsupported) {
+        S.view = "ready"; status("No safe plan: I could not turn that into steps on this page. Nothing was executed. Try rephrasing.", true);
+      } else {
+        S.plan = { id: ++S.planSeq, steps: r.steps };
+        S.view = "plan";
+        status(`${edited ? "Replacement plan" : "Plan"} ready for review: ${r.steps.length} step${r.steps.length === 1 ? "" : "s"}. Nothing has changed on the page yet.${edited ? " The earlier plan was discarded and can no longer run." : ""}`);
+        say("Plan ready for review.");
+      }
+      render(); focusMain();
+    }, 900);
+  }
+
+  function approvePlan(source) {
+    if (!S.plan) return;
+    if (S.pageChangedAfterReview) {
+      S.pageChangedAfterReview = false; S.plan = null; S.view = "ready";
+      status("The page changed after you reviewed this plan. Nothing was executed — send the request again for a fresh review.", true);
+      return render();
+    }
+    S.view = "acting"; S.step = 0; S.done = [];
+    status(`Step 1 of ${S.plan.steps.length}: ${S.plan.steps[0].action} ${S.plan.steps[0].f.name}…`);
+    S.spokenText = ""; render(); runStep(source);
+  }
+  function runStep(source) {
+    const st = S.plan.steps[S.step];
+    if (!st) return;
+    if (st.f.kind === "risky") { hold(st, source, S.step); return; }
+    later(() => {
+      applyStep(st, source);
+      S.done.push(st); S.step += 1;
+      if (S.step >= S.plan.steps.length) {
+        const names = S.done.map((d) => d.f.name).join("; ");
+        S.view = "done"; S.finished = S.done.slice();
+        status(`Completed ${S.done.length} step${S.done.length === 1 ? "" : "s"}, all verified: ${names}.`);
+        say(`Done. ${S.done.length} step${S.done.length === 1 ? "" : "s"} completed.`);
+        if (S.pendingCorrectionRound) { S.correction = S.pendingCorrectionRound; S.pendingCorrectionRound = null; }
+        S.plan = null;
+      } else {
+        const nx = S.plan.steps[S.step];
+        status(`Step ${S.step + 1} of ${S.plan.steps.length}: ${nx.action} ${nx.f.name}…`);
+      }
+      render();
+      if (S.view === "acting") runStep(source);
+    }, 900);
+  }
+  function applyStep(st, source) {
+    const node = input(st.f);
+    if (st.f.kind === "protected") { log(source, st.action, st.f.el, st.f.name, "SENSITIVE_FIELD"); return; }
+    if (st.action === "click") { log(source, "click", st.f.el, st.f.name, "dispatched-unverified"); S.lastChange = { barrier: true, name: st.f.name }; return; }
+    const prior = readValue(st.f);
+    let priorRadio = null;
+    if (st.f.kind === "radio") priorRadio = document.querySelector('input[name="freq"]:checked');
+    if (st.action === "fill" || st.action === "select") node.value = st.value;
+    else node.checked = st.action === "check";
+    const post = readValue(st.f);
+    if (prior !== post) S.lastChange = { f: st.f, prior, post, priorRadio, action: st.action };
+    log(source, st.action, st.f.el, st.f.name, "verified");
+  }
+
+  function hold(step, source, index) {
+    S.view = "gate";
+    S.challenge = { step, source, expiresAt: Date.now() + 60000, index };
+    const rest = S.plan ? S.plan.steps.length - (index || 0) - 1 : 0;
+    status(`Click on “${step.f.name}” is waiting for your approval. Nothing was executed.${S.plan ? ` Step ${(index || 0) + 1} of ${S.plan.steps.length} is held; ${rest === 0 ? "it was the last step." : `${rest} later step(s) were not run.`}` : ""}`);
+    say("Waiting for your approval.");
+    log(source, "click", step.f.el, step.f.name, "confirmation-required");
+    S.plan = null;
+    render(); tickGate(); focusMain();
+  }
+  function tickGate() {
+    if (S.view !== "gate" || !S.challenge) return;
+    const left = Math.max(0, Math.ceil((S.challenge.expiresAt - Date.now()) / 1000));
+    const el = $("gateTimer"); if (el) el.textContent = `Approval expires in ${left} s`;
+    if (left <= 0) { log("manual", "click", 20, "Submit survey", "APPROVAL_EXPIRED"); S.challenge = null; S.view = "ready"; status("The confirmation expired. Nothing was submitted; ask again to get a new confirmation.", true); render(); return; }
+    S.timers.push(setTimeout(tickGate, 1000));
+  }
+  function approveChallenge() {
+    if (!S.challenge) return;
+    clearTimers();
+    log("manual", "approve", 20, "Submit survey", "approved");
+    log(S.challenge.source, "click", 20, "Submit survey", "dispatched-unverified");
+    S.lastChange = { barrier: true, name: "Submit survey" };
+    S.challenge = null; S.view = "done"; S.finished = [];
+    S.submitted = true;
+    status("Approved once. Submit was dispatched to the page; Seeyable cannot confirm what happened after that, so completion is not claimed.");
+    say("Submitted. Check the page.");
+    render();
+  }
+  function cancelChallenge() {
+    clearTimers();
+    log("manual", "click", 20, "Submit survey", "approval-cancelled");
+    S.challenge = null; S.view = "ready";
+    status("Cancelled. The pending approval was revoked; nothing was submitted.");
+    render();
+  }
+  function cancelPlan() {
+    S.plan = null; S.view = "ready"; status("Plan cancelled. Nothing was executed."); say("Plan cancelled."); render();
+  }
+  function chooseClarify(i) {
+    const c = S.clarify; if (!c) return;
+    const f = c.choices[i];
+    S.pendingCorrectionRound = { others: c.choices.filter((x) => x !== f), chosen: f, action: c.action, value: c.value, request: c.request };
+    S.plan = { id: ++S.planSeq, steps: [{ action: c.action, f, value: c.value }] };
+    S.clarify = null; S.view = "plan";
+    status("Plan ready for review: 1 step. Nothing has changed on the page yet — approve, edit, or cancel it.");
+    render(); focusMain();
+  }
+  function correctTo() {
+    const r = S.correction; S.correction = null;
+    const alt = r.others[0];
+    S.plan = { id: ++S.planSeq, steps: [{ action: r.action, f: alt, value: r.value }] };
+    S.view = "plan";
+    status(`Earlier choice “${r.chosen.name}” completed and verified. Alternative “${alt.name}”: plan ready for review: 1 step. Nothing has changed on the page yet.`);
+    say("Plan ready for review.");
+    render(); focusMain();
+  }
+  function undo() {
+    clearTimers();
+    const c = S.lastChange;
+    if (S.gateClosed) { status("Execution is stopped at the safety gate. Resume before undoing; nothing was changed.", true); return render(); }
+    if (!c) { status("There is no change to undo in this page. Nothing was changed.", true); return render(); }
+    if (c.barrier) { status(`The last action — the click on “${c.name}” — cannot be undone, and earlier changes are not undone past it. Nothing was changed.`, true); return render(); }
+    if (readValue(c.f) !== c.post) {
+      S.lastChange = null;
+      status(`Undo refused: the field was edited since Seeyable changed “${c.f.name}”. Nothing was overwritten.`, true);
+      log("manual", "undo", c.f.el, c.f.name, "UNDO_CONFLICT"); return render();
+    }
+    const node = input(c.f);
+    if (c.f.kind === "radio" && c.priorRadio) c.priorRadio.checked = true;
+    else if (c.f.kind === "check") node.checked = c.prior;
+    else node.value = c.prior;
+    S.lastChange = null;
+    log("manual", "undo", c.f.el, c.f.name, "verified");
+    const what = c.f.kind === "radio" ? "its previous option is selected again" : `back to its previous ${c.action === "fill" ? "value" : c.action === "select" ? "choice" : "state"}`;
+    S.view = S.view === "plan" ? "ready" : S.view === "done" ? "done" : "ready";
+    S.plan = null;
+    status(`Undid the last change: “${c.f.name}” is ${what} (verified). Only that change was reversed — earlier changes stay as they are.`);
+    say(`Undone: ${c.f.name}.`);
+    render();
+  }
+  function stopOrResume() {
+    if (S.gateClosed) {
+      S.gateClosed = false; S.view = "ready";
+      status("Resumed. Nothing that was stopped will run again; send a new request.");
+      log("manual", "gate-resume", null, null, "resumed");
+      return render();
+    }
+    clearTimers();
+    const was = S.view;
+    S.gateClosed = true; S.plan = null; S.clarify = null; S.challenge = null; S.correction = null; S.view = "paused";
+    log("manual", "gate-stop", null, null, "stopped");
+    status(was === "acting" ? "Stopped. Steps already done stay done; nothing else will run until you resume." : was === "plan" ? "Plan discarded — execution was stopped. Nothing was executed." : "Stopped. Nothing new will run until you resume.", true);
+    render();
+  }
+
+  /* ---------- voice simulation ---------- */
+  function startListening() {
+    if (S.gateClosed) { status("Execution is stopped. Resume first.", true); return render(); }
+    clearTimers();
+    S.listenBound = { plan: S.plan ? S.plan.id : null, gate: S.view === "gate" };
+    // Mockup convenience: if the reviewer has not picked a sentence, use the
+    // answer that fits what is on screen.
+    const fit = { plan: "Approved plan.", gate: "Approve this action.", done: "Undo last change." }[S.view];
+    S.utterance = fit && $("utter").selectedIndex === 0 ? fit : $("utter").value;
+    S.prevView = S.view; S.view = "listening"; S.transcript = ""; S.spokenText = "";
+    render(); focusMain();
+    const words = S.utterance.split(" ");
+    let i = 0;
+    const step = () => {
+      if (S.view !== "listening") return;
+      if (i < words.length) { S.transcript = words.slice(0, ++i).join(" "); const t = $("heard"); if (t) t.textContent = `“${S.transcript}”`; later(step, 180); }
+      else later(finishListening, 500);
+    };
+    later(step, 500);
+  }
+  function finishListening() {
+    if (S.view !== "listening") return;
+    clearTimers();
+    const text = S.transcript || S.utterance;
+    S.view = S.prevView === "plan" || S.prevView === "gate" ? S.prevView : "ready";
+    $("voiceHeard") && ($("voiceHeard").textContent = "");
+    S.heard = text;
+    dispatch(text, "voice");
+  }
+  function cancelListening() {
+    clearTimers();
+    S.view = S.prevView === "plan" || S.prevView === "gate" ? S.prevView : "ready";
+    status("Listening was cancelled. Nothing you said was used.");
+    render();
+  }
+
+  /* ---------- rendering ---------- */
+  const MIC = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v4"></path></svg>';
+
+  function viewReady() {
+    const busy = S.gateClosed;
+    return `
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <h1 class="hero-title" id="mainTitle" tabindex="-1">Ready when you are.</h1>
+        <p class="hero-copy">Say or type what you want done on this page. Plans are shown for review before anything changes; Submit, Pay, Delete, and Send always stop for your approval.</p>
+      </div>
+      <button type="button" class="mic" id="micBtn" ${busy ? "disabled" : ""}><span class="disc">${MIC}</span><span class="lbl"><b>Start talking</b><span>one sentence, then I stop · Alt+S</span></span></button>
+      ${requestBox("e.g. Put Ada in Full name")}
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span class="mono">Try</span>
+        <div class="row">
+          <button type="button" class="sugg" data-cmd="Put Grace Hopper in Full name and Pilot in Short bio.">Fill two fields</button>
+          <button type="button" class="sugg" data-cmd="fill Nickname with Pioneer">Fill Nickname</button>
+          <button type="button" class="sugg" data-cmd="Please submit this survey.">Submit the survey</button>
+          <button type="button" class="sugg" data-cmd="${S.tags ? "hide tags" : "show tags"}">${S.tags ? "Hide tags" : "Show tags"}</button>
+        </div>
+      </div>
+      ${S.correction ? `<p class="note">Say “No, the other one” to review “${esc(S.correction.others[0].name)}” instead.</p>` : ""}`;
+  }
+  // Context-aware speak prompt. Starting here binds a spoken approval to
+  // what is on screen now — the same rule the product enforces.
+  function talkPrompt(label, phrases) {
+    return `<div class="talk" role="group" aria-label="Answer by voice">
+      <button type="button" class="talk-btn" data-talk="1" ${S.gateClosed ? "disabled" : ""}><span class="disc">${MIC}</span><b>${esc(label)}</b><kbd aria-label="shortcut Alt S">Alt+S</kbd></button>
+      <span class="mono">Then say</span>
+      <ul class="say-list">${phrases.map((p, i) => `<li class="${i === 0 ? "main" : ""}">“${esc(p)}”</li>`).join("")}</ul>
+    </div>`;
+  }
+  function phrasesFor(view) {
+    if (view === "plan") return ["Approve plan", "Cancel plan", "Edit plan: …your new request"];
+    if (view === "gate") return ["Approve this action"];
+    if (view === "done") return ["Undo last change", "…or a new request"];
+    return ["Put Ada in Full name", "Show tags", "Undo last change"];
+  }
+  function requestBox(ph) {
+    return `<div class="request"><label for="cmd">Or type a request</label>
+      <div class="request-row"><input id="cmd" type="text" autocomplete="off" placeholder="${esc(ph)}"><button type="button" id="send">Send</button></div></div>`;
+  }
+  function viewListening() {
+    return `
+      <span class="chip listening" style="align-self:flex-start">LISTENING</span>
+      <h1 class="hero-title" id="mainTitle" tabindex="-1">Listening</h1>
+      <div class="said"><span class="mono">I’m hearing</span><p id="heard" aria-live="polite">${S.transcript ? `“${esc(S.transcript)}”` : "…"}</p></div>
+      ${S.prevView === "plan" || S.prevView === "gate" || S.prevView === "done" ? `<div class="said"><span class="mono">${S.prevView === "plan" ? "For the plan, say" : S.prevView === "gate" ? "For the held action, say" : "You can say"}</span><ul class="say-list">${phrasesFor(S.prevView).map((p, i) => `<li class="${i === 0 ? "main" : ""}">“${esc(p)}”</li>`).join("")}</ul></div>` : ""}
+      <p class="note">I stop after one sentence. ${S.prevView === "plan" ? "The plan stays on screen until you approve, edit, or cancel it." : S.prevView === "gate" ? "Nothing is sent unless you approve this exact action." : "Nothing on the page changes until you see the plan."}</p>
+      <button type="button" class="mic live" id="doneTalk"><span class="disc">${MIC}</span><span class="lbl"><b>Done talking</b><span>use what I said</span></span></button>
+      <button type="button" class="btn" id="cancelTalk">Cancel — discard what I said</button>`;
+  }
+  function viewPlanning() {
+    return `<span class="chip" style="align-self:flex-start">PLANNING…</span>
+      <h1 class="hero-title" id="mainTitle" tabindex="-1">Making a plan…</h1>
+      <div class="said"><span class="mono">You asked</span><p>“${esc(S.request)}”</p></div>
+      <p class="note">Nothing on the page changes while I plan. Press Stop to discard this request.</p>`;
+  }
+  function stepRows(steps, mode) {
+    return `<ol class="steps">${steps.map((s, i) => {
+      let cls = "st", gl = "○";
+      if (s.f.kind === "risky") { cls += " risky"; gl = "▲"; }
+      if (mode === "acting") {
+        if (i < S.step) { cls = "st done"; gl = "■"; } else if (i === S.step && s.f.kind !== "risky") { cls = "st now"; gl = "●"; }
+      }
+      if (mode === "done") { cls = "st done"; gl = "■"; }
+      const extra = s.f.kind === "risky" ? "<small>I’ll stop and ask you first.</small>" : (mode === "acting" && i === S.step + 1 ? "<small>next</small>" : "");
+      return `<li class="${cls}"><span class="gl" aria-hidden="true">${gl}</span><span class="tx">${describe(s)}${extra}</span><span class="no" aria-label="target ${s.f.el}">${s.f.el}</span></li>`;
+    }).join("")}</ol>`;
+  }
+  function viewPlan() {
+    const n = S.plan.steps.length;
+    return `
+      <span class="mono">Plan ready · nothing changed yet</span>
+      <h1 class="hero-title" id="mainTitle" tabindex="-1" style="font-size:1.6rem">${n} step${n === 1 ? "" : "s"}, in order</h1>
+      <div class="said"><span class="mono">From</span><p style="font-size:15px;color:var(--text-2)">“${esc(S.request)}”</p></div>
+      ${stepRows(S.plan.steps, "plan")}
+      <p class="note">Filled fields can be undone. Submit, Pay, Delete, and Send steps still stop for their own approval.</p>
+      <button type="button" class="btn primary wide" id="approvePlan">Approve plan<span class="hint">“go ahead”</span></button>
+      <div class="row"><button type="button" class="btn" id="editPlan" style="flex:1">Edit plan</button><button type="button" class="btn" id="cancelPlan" style="flex:1">Cancel plan</button></div>
+      ${talkPrompt("Answer by voice", phrasesFor("plan"))}
+      <p class="note">“Approved plan”, “Approve”, and “Go ahead” also approve. Other wording keeps the plan waiting.</p>
+      ${requestBox("“approve plan”, or a new request")}`;
+  }
+  function viewEdit() {
+    return `
+      <span class="mono">Edit plan</span>
+      <h1 class="hero-title" id="mainTitle" tabindex="-1" style="font-size:1.6rem">What should I do instead?</h1>
+      <p class="note">The earlier plan was discarded. Write the complete request; I’ll plan it again and show a new review. Nothing runs until you approve.</p>
+      <div class="request"><label for="editInput">Replacement request</label>
+        <div class="request-row"><input id="editInput" type="text" autocomplete="off" value="${esc(S.request)}"><button type="button" id="planAgain">Plan again</button></div></div>
+      <button type="button" class="btn" id="discardEdit">Discard edit</button>`;
+  }
+  function viewActing() {
+    const st = S.plan.steps[S.step] || S.plan.steps[S.plan.steps.length - 1];
+    return `
+      <div class="dark-hero" role="group" aria-label="Now acting">
+        <span class="chip acting" style="align-self:flex-start">● ACTING · ${Math.min(S.step + 1, S.plan.steps.length)} OF ${S.plan.steps.length}</span>
+        <p class="big" id="mainTitle" tabindex="-1">${st.action === "fill" ? "Filling" : st.action === "select" ? "Choosing" : "Setting"} <em>${esc(st.f.name)}</em></p>
+        <p class="sub">Press Stop any time. Steps already done stay done.</p>
+      </div>
+      ${stepRows(S.plan.steps, "acting")}
+      <p class="note">“${esc(S.request)}”</p>`;
+  }
+  function viewGate() {
+    const c = S.challenge;
+    return `
+      <div class="gate-card" role="alertdialog" aria-labelledby="mainTitle" aria-describedby="gateWhat">
+        <span class="glyph">▲ STOPPED BEFORE SUBMIT</span>
+        <h2 id="mainTitle" tabindex="-1">Submit this survey?</h2>
+        <div class="what" id="gateWhat">
+          <dl>
+            <dt>Action</dt><dd>Click “Submit survey” (target 20)</dd>
+            <dt>Page</dt><dd>localhost:8080/demo-survey</dd>
+          </dl>
+          <span>This activates a form submission control. What it sends, to whom, and whether it can be undone cannot be determined from the page.</span>
+          <span class="warn">▲ Approving runs exactly this action once.</span>
+          <span class="timer" id="gateTimer">Approval expires in 60 s</span>
+        </div>
+        <button type="button" class="gbtn ok" id="approveOnce">Approve once<span>“approve this action”</span></button>
+        <button type="button" class="gbtn no" id="cancelOnce">Cancel</button>
+      </div>
+      ${talkPrompt("Approve by voice", phrasesFor("gate"))}
+      <p class="note">Cancel keeps your answers on the page; nothing is sent. Approving a plan never approves this step — only Approve once, or the spoken phrase in a session you start while this is shown. Typing the phrase does not approve it.</p>
+      ${requestBox("Type a request")}
+      ${c && c.index !== undefined ? "" : ""}`;
+  }
+  function viewDone() {
+    const rows = S.finished && S.finished.length ? stepRows(S.finished, "done") : "";
+    return S.submitted ? `
+      <div class="donecard"><span class="mono" style="color:var(--success)">■ Dispatched · not verified</span>
+        <h2 id="mainTitle" tabindex="-1">Submit was sent to the page.</h2>
+        <p>I can’t confirm what happened next. Check the page for a confirmation.</p></div>
+      <button type="button" class="btn primary" id="newReq">New request</button>` : `
+      <div class="donecard"><span class="mono" style="color:var(--success)">■ Done · verified</span>
+        <h2 id="mainTitle" tabindex="-1">${S.finished ? S.finished.length : 0} change${S.finished && S.finished.length === 1 ? "" : "s"} made.</h2>
+        <p>Each one was checked on the live page.</p></div>
+      <span class="mono">What I did · ${now().slice(0, 5)}</span>
+      ${rows}
+      <p class="note">Undo restores the last change only. Clicks and anything the page did in response are not reversed.</p>
+      ${talkPrompt("Speak again", phrasesFor("done"))}
+      <button type="button" class="btn primary" id="newReq">New request</button>
+      ${requestBox("“undo last change”, or a new request")}`;
+  }
+  function viewRepair() {
+    const c = S.clarify;
+    return `
+      <p class="ask">? WAITING FOR YOU</p>
+      <h1 class="hero-title" id="mainTitle" tabindex="-1" style="font-size:1.7rem">Which one did you mean?</h1>
+      <p class="hero-copy">You said “${esc(c.request)}”. ${c.choices.length} fields could match. Nothing changes until you pick, and your pick is shown for review first.</p>
+      <div style="display:flex;flex-direction:column;gap:8px">${c.choices.map((f, i) => `<button type="button" class="choice" data-choice="${i}"><span class="no">${f.el}</span><span>${esc(f.name)}<small>Fill with “${esc(c.value)}”</small></span></button>`).join("")}</div>
+      <p class="note">Click a choice. After it runs, “No, the other one” offers the remaining field.</p>
+      ${requestBox("Or ask something else")}`;
+  }
+  function viewPaused() {
+    return `
+      <span class="chip paused" style="align-self:flex-start">▲ STOPPED</span>
+      <h1 class="hero-title" id="mainTitle" tabindex="-1">Stopped.</h1>
+      <p class="hero-copy">Nothing new will run until you resume. Anything waiting for approval was withdrawn, and nothing that was stopped will run again.</p>
+      <button type="button" class="btn primary" id="resumeBig">Resume</button>
+      ${requestBox("Type a request (runs after Resume)")}`;
+  }
+  function viewError(kind) {
+    const E = {
+      "err-planner": ["✕", "I can’t plan that yet", "Simple commands like “fill Full name with Ada” work now. Longer requests need the planner proxy: start it, then paste its pairing token in Developer view.", "Open Developer view", "dev"],
+      "err-mic": ["✕", "Chrome is blocking the microphone", "Allow microphone access for Seeyable in the setup page, or type your request instead. Typed requests work the same way.", "Microphone setup", "settings"],
+      "err-page": ["✕", "The page changed after you reviewed the plan", "Nothing was executed. Send the request again and I’ll show a fresh review of the current page.", "Send it again", "replan"],
+    }[kind];
+    return `
+      <div class="recover" role="alert"><h3 id="mainTitle" tabindex="-1"><span aria-hidden="true">${E[0]}</span>${E[1]}</h3><p class="hero-copy">${E[2]}</p>
+      <button type="button" class="btn" data-recover="${E[4]}">${E[3]}</button></div>
+      ${requestBox("Type a request instead")}`;
+  }
+
+  function screenTargets() {
+    return `
+      <div class="sub-head"><h2 id="mainTitle" tabindex="-1">Page targets</h2></div>
+      <p class="note">Every control I can use on this page. Select one to outline it on the page. Tags that don’t fit on the page are marked “Shown in panel”.</p>
+      <div class="tlist">${TARGETS.map(([n, name]) => `<button type="button" data-target="${n}" ${S.activeTarget === n ? 'aria-current="true"' : ""}><span class="no">${n}</span>${esc(name)}${n === 16 ? '<span class="mark">(disabled)</span>' : n === 12 || n === 13 ? '<span class="mark">Shown in panel</span>' : n === 20 && S.view === "gate" ? '<span class="mark">▲ held</span>' : ""}</button>`).join("")}</div>`;
+  }
+  function screenActivity() {
+    return `
+      <div class="sub-head"><h2 id="mainTitle" tabindex="-1">Activity</h2><button type="button" class="pill-btn" id="clearLog">Clear</button></div>
+      <p class="note">What Seeyable did on this page in this session. Not saved, and never includes values you typed.</p>
+      <div>${S.log.length ? S.log.map((e) => `<div class="logrow"><time>${e.t}</time><span>${esc(e.action)}${e.name ? ` “${esc(e.name)}”` : ""}${e.el ? ` <span class="no">${e.el}</span>` : ""}</span><span class="dec" style="color:${/verified|resumed|approved/.test(e.decision) && !/unverified/.test(e.decision) ? "var(--success)" : /required|held|stopped/.test(e.decision) ? "var(--gate-text)" : "var(--muted)"}">${esc(e.decision)}</span><span class="src" style="grid-column:2">${esc(e.source)}</span></div>`).join("") : '<p class="note">No activity yet.</p>'}</div>`;
+  }
+  function screenSettings() {
+    return `
+      <div class="sub-head"><h2 id="mainTitle" tabindex="-1">Settings</h2></div>
+      <details class="sec" open><summary>Voice</summary><div>
+        <label class="switch" for="speakChk"><span>Speak feedback after each action</span><input id="speakChk" type="checkbox" ${S.speak ? "checked" : ""}></label>
+        <button type="button" class="btn" id="stopSpeech">Stop speech</button>
+        <p class="note">Speech also stops by itself when you start talking, so I never hear my own voice.</p>
+        <button type="button" class="btn" id="micSetup">Microphone setup</button>
+        <p class="note">Recognition uses the browser Web Speech service, which may process audio outside this device. Seeyable stores no audio or transcripts.</p>
+      </div></details>
+      <details class="sec"><summary>Advanced</summary><div>
+        <p class="note">Snapshot tools, pairing, manual execution, and the detailed log.</p>
+        <button type="button" class="btn" id="openDev">Open Developer view</button>
+      </div></details>`;
+  }
+  function screenDev() {
+    const d = S.dev;
+    return `
+      <div class="sub-head"><h2 id="mainTitle" tabindex="-1">Developer view</h2><button type="button" class="pill-btn" id="backAssist">Back to Assist</button></div>
+      <p class="note">Confirmations, Stop/Resume, and safety stay visible here too.</p>
+      <details class="sec" open><summary>Page snapshot</summary><div>
+        <div class="row"><button type="button" class="btn" data-dev="dom">Snapshot via DOM/ARIA</button><button type="button" class="btn" data-dev="refresh">Refresh snapshot</button><button type="button" class="btn" data-dev="cdp">Snapshot via CDP AXTree</button></div>
+        <label class="switch" for="ignChk"><span>CDP: include ignored nodes</span><input id="ignChk" type="checkbox"></label>
+        <div class="row"><button type="button" class="btn" data-dev="copy">Copy JSON</button><button type="button" class="btn" data-dev="download">Download JSON</button><button type="button" class="btn" data-dev="clear">Clear</button></div>
+        <p class="note" role="status">${esc(d.snapshot)}</p>
+        <pre class="out" aria-label="Snapshot output">${esc(d.out)}</pre>
+      </div></details>
+      <details class="sec"><summary>Page tags</summary><div>
+        <div class="row"><button type="button" class="btn" data-cmd="show tags">Show tags</button><button type="button" class="btn" data-cmd="hide tags">Hide tags</button></div>
+        <div class="field"><label for="hlNum">Highlight target number</label><div class="row"><input id="hlNum" inputmode="numeric" placeholder="e.g. 7" style="flex:1"><button type="button" class="btn" id="hlBtn">Highlight</button></div></div>
+      </div></details>
+      <details class="sec"><summary>MCP bridge (local)</summary><div>
+        <div class="field"><label for="brTok">Pairing token</label><input id="brTok" type="password" autocomplete="off" placeholder="64 hex characters from the server"></div>
+        <div class="field"><label for="brPort">Bridge port</label><input id="brPort" inputmode="numeric" value="6123"></div>
+        <div class="row"><button type="button" class="btn" data-dev="brConnect">Connect bridge</button><button type="button" class="btn" data-dev="brDisconnect">Disconnect</button><button type="button" class="btn" data-dev="brStatus">Bridge status</button></div>
+        <p class="note" role="status">${esc(d.bridge)}</p>
+      </div></details>
+      <details class="sec"><summary>Planner proxy (local)</summary><div>
+        <div class="field"><label for="plTok">Pairing token</label><input id="plTok" type="password" autocomplete="off" placeholder="token printed by the proxy"></div>
+        <div class="field"><label for="plPort">Planner port</label><input id="plPort" inputmode="numeric" value="6124"></div>
+        <div class="row"><button type="button" class="btn" data-dev="plPair">Pair planner</button><button type="button" class="btn" data-dev="plForget">Forget pairing</button><button type="button" class="btn" data-dev="plStatus">Planner status</button></div>
+        <p class="note" role="status">${esc(d.planner)}</p>
+      </div></details>
+      <details class="sec"><summary>Manual execution</summary><div>
+        <div class="field"><label for="mxTarget">Target</label><select id="mxTarget"><option value="">Select a target</option>${TARGETS.map(([n, name]) => `<option value="${n}">${n} · ${esc(name)}</option>`).join("")}</select></div>
+        <div class="field"><label for="mxAction">Action</label><select id="mxAction"><option>click</option><option>fill</option><option>select</option><option>check</option><option>uncheck</option><option>scroll_to</option><option>read</option></select></div>
+        <div class="field"><label for="mxValue">Value (fill/select only)</label><input id="mxValue" autocomplete="off"></div>
+        <button type="button" class="btn primary" data-dev="exec">Execute once</button>
+        <p class="note" role="status">${esc(d.exec)}</p>
+      </div></details>
+      <details class="sec"><summary>Action log</summary><div>
+        <pre class="out" aria-label="Action log">${S.log.length ? esc(S.log.map((e) => `${e.t} · ${e.source} · ${e.action} · ${e.el ? "el-" + e.el : "—"}${e.name ? ` “${e.name}”` : ""} · ${e.decision}`).join("\n")) : "No log entries yet."}</pre>
+        <div class="row"><button type="button" class="btn" data-dev="logRefresh">Refresh log</button><button type="button" class="btn" id="clearLog">Clear log</button></div>
+      </div></details>`;
+  }
+
+  function render() {
+    // header + status
+    const MODES = { ready: "~ready", listening: "~listening", planning: "~planning", plan: "~plan", edit: "~edit", acting: "~you", gate: "~you", done: "~done", repair: "~you", paused: "~stopped", "err-planner": "~you", "err-mic": "~you", "err-page": "~you" };
+    $("mode").textContent = S.screen === "assist" ? (MODES[S.view] || "~ready") : S.screen === "dev" ? "~developer" : `~${S.screen}`;
+    const chip = $("chip");
+    const CH = { gate: ["▲ HELD · NOTHING SENT", "chip gate"], acting: ["● ACTING", "chip acting"], planning: ["PLANNING…", "chip"], plan: ["REVIEW · NOTHING CHANGED", "chip"], listening: ["LISTENING", "chip listening"], paused: ["STOPPED", "chip paused"], done: ["■ DONE", "chip success"] };
+    const c = CH[S.view];
+    chip.hidden = !c || (S.view === "listening" && S.screen === "assist");
+    if (c) { chip.textContent = c[0]; chip.className = c[1]; }
+    $("tagsBtn").textContent = `Tags: ${S.tags ? "on" : "off"}`;
+    $("tagsBtn").setAttribute("aria-pressed", String(S.tags));
+    $("status").textContent = S.msg;
+    $("status").className = "msg" + (S.msgErr ? " err" : "");
+    $("spoken").textContent = S.spokenText;
+
+    // main
+    let html = "";
+    if (S.screen === "targets") html = screenTargets();
+    else if (S.screen === "activity") html = screenActivity();
+    else if (S.screen === "settings") html = screenSettings();
+    else if (S.screen === "dev") html = screenDev();
+    else {
+      html = ({
+        ready: viewReady, listening: viewListening, planning: viewPlanning, plan: viewPlan, edit: viewEdit, acting: viewActing,
+        gate: viewGate, done: viewDone, repair: viewRepair, paused: viewPaused,
+      }[S.view] || (() => viewError(S.view)))();
+    }
+    $("main").innerHTML = html;
+
+    // consolidated safety bar: Stop/Resume + Undo
+    const canAct = ["planning", "plan", "acting", "gate", "repair", "edit"].includes(S.view);
+    const stop = $("stopBtn");
+    stop.hidden = !(canAct || S.gateClosed);
+    stop.textContent = S.gateClosed ? "Resume" : "Stop";
+    stop.classList.toggle("resume", S.gateClosed);
+    stop.setAttribute("aria-label", S.gateClosed ? "Resume — nothing stopped will run again" : "Stop everything Seeyable is doing");
+    const undoBtn = $("undoBtn");
+    undoBtn.disabled = !S.lastChange || ["acting", "planning", "listening"].includes(S.view) || S.gateClosed;
+    $("safety").hidden = stop.hidden && undoBtn.disabled && !S.lastChange;
+
+    document.querySelectorAll(".nav button").forEach((b) => {
+      const cur = b.dataset.screen === S.screen || (S.screen === "dev" && b.dataset.screen === "settings");
+      if (cur) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
+    decorate();
+    if (S.view === "gate") { const t = $("gateTimer"); if (t && S.challenge) t.textContent = `Approval expires in ${Math.max(0, Math.ceil((S.challenge.expiresAt - Date.now()) / 1000))} s`; }
+  }
+  function focusMain() { const t = $("mainTitle"); if (t) t.focus({ preventScroll: false }); }
+
+  /* ---------- events ---------- */
+  $("main").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const id = b.id;
+    if (b.dataset.cmd) { S.screen = "assist"; return dispatch(b.dataset.cmd, "manual"); }
+    if (b.dataset.choice) return chooseClarify(Number(b.dataset.choice));
+    if (b.dataset.talk) return startListening();
+    if (b.dataset.target) { S.activeTarget = Number(b.dataset.target); status(`Highlighted target ${S.activeTarget} — ${TARGETS[S.activeTarget - 1][1]}.`); return render(); }
+    if (b.dataset.recover) {
+      const r = b.dataset.recover;
+      if (r === "dev") { S.screen = "dev"; return render(); }
+      if (r === "settings") { S.screen = "settings"; return render(); }
+      if (r === "replan") return startPlanning(S.request || "Put Grace Hopper in Full name and Scientist in Short bio.", false);
+    }
+    if (b.dataset.dev) return devAction(b.dataset.dev);
+    switch (id) {
+      case "micBtn": return startListening();
+      case "doneTalk": return finishListening();
+      case "cancelTalk": return cancelListening();
+      case "send": { const v = $("cmd").value; $("cmd").value = ""; return dispatch(v, "manual"); }
+      case "approvePlan": return approvePlan("manual");
+      case "cancelPlan": return cancelPlan();
+      case "editPlan": S.plan = null; S.view = "edit"; status("Editing the plan. The earlier plan was discarded; nothing was executed."); render(); return $("editInput").focus();
+      case "planAgain": { const v = $("editInput").value; if (!v.trim()) { status("Write the complete replacement request first. Nothing was executed.", true); return render(); } return startPlanning(v, true); }
+      case "discardEdit": S.view = "ready"; status("Edit discarded. Nothing was executed."); return render();
+      case "approveOnce": return approveChallenge();
+      case "cancelOnce": return cancelChallenge();
+      case "newReq": S.view = "ready"; S.submitted = false; render(); return focusMain();
+      case "resumeBig": return stopOrResume();
+      case "clearLog": S.log = []; return render();
+      case "stopSpeech": S.spokenText = ""; status("Speech stopped. The action itself is not affected."); return render();
+      case "micSetup": status("The microphone setup page would open in a new tab."); return render();
+      case "openDev": S.screen = "dev"; return render();
+      case "backAssist": S.screen = "assist"; return render();
+      case "hlBtn": { const n = Number(($("hlNum").value || "").replace(/^el-/i, "")); if (!n || n > 20) { status("Enter a target number from the snapshot (e.g. 7).", true); return render(); } S.activeTarget = n; status(`Highlighted target ${n} — ${TARGETS[n - 1][1]}.`); return render(); }
+    }
+  });
+  $("main").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    if (e.target.id === "cmd") { e.preventDefault(); const v = e.target.value; e.target.value = ""; dispatch(v, "manual"); }
+    if (e.target.id === "editInput") { e.preventDefault(); $("planAgain").click(); }
+  });
+  $("main").addEventListener("change", (e) => {
+    if (e.target.id === "speakChk") { S.speak = e.target.checked; if (!S.speak) S.spokenText = ""; render(); }
+  });
+  function devAction(a) {
+    const d = S.dev;
+    if (a === "dom" || a === "refresh") { d.snapshot = "Found 20 controls on this page. 20 elements · rev 1"; d.out = JSON.stringify({ schemaVersion: 2, kind: "dom-aria", documentSessionId: "doc-…", revision: 1, elementCount: 20, elements: TARGETS.slice(0, 3).map(([n, name]) => ({ id: `el-${n}`, name })) }, null, 2); }
+    if (a === "cdp") d.snapshot = "CDP is unavailable in the standard build: it has no debugger permission. Use the debug manifest to test the AXTree path.";
+    if (a === "copy") d.snapshot = "Copied snapshot JSON to clipboard.";
+    if (a === "download") d.snapshot = "Snapshot JSON download would start (seeyable-dom-aria-snapshot.json).";
+    if (a === "clear") { d.out = "{}"; d.snapshot = "Snapshot output cleared."; }
+    if (a === "brConnect") d.bridge = $("brTok").value ? "Bridge: pairing sent to the service worker on 127.0.0.1:6123. Ask for status to confirm." : "Bridge: paste the pairing token the server printed, then connect.";
+    if (a === "brDisconnect") d.bridge = "Bridge: disconnected; pairing token discarded.";
+    if (a === "brStatus") d.bridge = "Bridge: not connected.";
+    if (a === "plPair") d.planner = $("plTok").value ? "Planner: paired on 127.0.0.1:6124. Ask for status to confirm the model and key." : "Planner: paste the pairing token the proxy printed, then pair.";
+    if (a === "plForget") d.planner = "Planner: pairing discarded.";
+    if (a === "plStatus") d.planner = "Planner: model muse-spark-1.3; API key configured.";
+    if (a === "logRefresh") status("Action log refreshed.");
+    if (a === "exec") {
+      const n = Number($("mxTarget").value); const act = $("mxAction").value;
+      if (!n) d.exec = "Choose a target from the snapshot first.";
+      else if (n === 20 && act === "click") { S.screen = "assist"; d.exec = "Confirmation required. Nothing was executed."; return hold({ action: "click", f: FIELDS["submit survey"] }, "manual"); }
+      else d.exec = `${act} on el-${n}: Completed and verified against live page state.`;
+    }
+    render();
+  }
+  // Proposed shortcut, scoped to the panel (no page-wide key handler):
+  // Alt+S starts talking whenever a talk control is offered.
+  $("panel").addEventListener("keydown", (e) => {
+    if (!e.altKey || e.code !== "KeyS" || e.repeat) return;
+    if (S.screen !== "assist" || S.gateClosed || !["ready", "plan", "gate", "done", "err-planner", "err-page"].includes(S.view)) return;
+    e.preventDefault();
+    startListening();
+  });
+  $("stopBtn").addEventListener("click", stopOrResume);
+  $("undoBtn").addEventListener("click", undo);
+  $("tagsBtn").addEventListener("click", () => dispatch(S.tags ? "hide tags" : "show tags", "manual"));
+  document.querySelectorAll(".nav button").forEach((b) => b.addEventListener("click", () => { S.screen = b.dataset.screen; render(); focusMain(); }));
+  $("host").addEventListener("input", () => { if (S.view === "plan") S.pageChangedAfterReview = true; });
+
+  /* ---------- reviewer controls ---------- */
+  function reset() {
+    clearTimers();
+    ["f-name", "f-email", "f-nick", "f-bio"].forEach((id) => { $(id).value = ""; });
+    $("f-role").value = "engineer"; $("f-pemail").checked = true; $("f-psms").checked = false; $("f-weekly").checked = true;
+    Object.assign(S, { screen: "assist", view: "ready", tags: false, gateClosed: false, plan: null, clarify: null, correction: null, challenge: null,
+      lastChange: null, log: [], activeTarget: null, submitted: false, finished: null, request: "", transcript: "", pageChangedAfterReview: false, pendingCorrectionRound: null });
+    status("Open the page you want to work with."); S.spokenText = "";
+    render();
+  }
+  $("reset").addEventListener("click", reset);
+  $("width").addEventListener("change", (e) => { document.getElementById("panel").style.setProperty("--panel-w", `${e.target.value}px`); });
+  $("theme").addEventListener("change", (e) => { if (e.target.value) document.documentElement.dataset.theme = e.target.value; else delete document.documentElement.dataset.theme; });
+  $("jump").addEventListener("change", (e) => {
+    const v = e.target.value; e.target.value = "";
+    if (!v) return;
+    reset();
+    const req = "Put Grace Hopper in Full name and Pilot in Short bio.";
+    const mkPlan = () => { S.request = req; S.plan = { id: ++S.planSeq, steps: planFor(req).steps }; };
+    if (v === "ready") return;
+    if (v === "listening") { $("utter").selectedIndex = 0; return startListening(); }
+    if (v === "plan") { mkPlan(); S.view = "plan"; status("Plan ready for review: 2 steps. Nothing has changed on the page yet."); return render(); }
+    if (v === "edit") { S.request = req; S.view = "edit"; status("Editing the plan. The earlier plan was discarded; nothing was executed."); return render(); }
+    if (v === "acting") { mkPlan(); return approvePlan("voice"); }
+    if (v === "gate") return hold({ action: "click", f: FIELDS["submit survey"] }, "voice");
+    if (v === "done") { mkPlan(); const p = S.plan; p.steps.forEach((s) => applyStep(s, "voice")); S.finished = p.steps; S.plan = null; S.view = "done"; status("Completed 2 steps, all verified: Full name; Short bio."); return render(); }
+    if (v === "repair") { S.clarify = { ...planFor("Put Pilot in the name field.").clarify, request: "Put Pilot in the name field." }; S.view = "repair"; status("“Which name field?” — choose one of 2. Nothing was executed."); return render(); }
+    if (v === "paused") { mkPlan(); S.view = "plan"; return stopOrResume(); }
+    if (v === "dev") { S.screen = "dev"; return render(); }
+    S.view = v; S.request = req;
+    status({ "err-planner": "Unsupported command. Longer requests need the planner proxy.", "err-mic": "Voice: error — Microphone access was denied. Typed commands remain available.", "err-page": "The page changed after you reviewed this plan. Nothing was executed." }[v], true);
+    render();
+  });
+
+  render();
+})();
+</script>

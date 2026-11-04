@@ -343,6 +343,9 @@ test("labels: display annotations stripped, short tags truncated at words, full 
   assert.equal(displayName({ name: "Nickname (placeholder only)" }), "Nickname");
   assert.equal(displayName({ name: "Nickname (PLACEHOLDER ONLY)" }), "Nickname");
   assert.equal(displayName({ name: "Work email" }), "Work email");
+  assert.equal(displayName({ name: "Full name *" }), "Full name");
+  assert.equal(displayName({ name: "Full name**" }), "Full name");
+  assert.equal(displayName({ name: "5 * 3 stars" }), "5 * 3 stars", "only a trailing marker is display noise");
   const long = { id: "el-5", role: "textbox", name: "A very long descriptive field name for notes", question: null, questionCertain: false };
   const short = buildTagLabel(long, [long], { short: true });
   assert.ok(short.text.length <= 32, `floating tag is short: ${short.text}`);
@@ -473,4 +476,23 @@ test("tag states: done clears after 4 s; unknown states and ids are ignored; sta
   overlay.refresh();
   assert.ok(!overlay.getState().badges.some((b) => b.id === id("Full name")), "stale target shows no tag or state");
   overlay.destroy();
+});
+
+test("tag states: a newly held target scrolls into view only when it is not already visible", () => {
+  const { overlay, snapshot, id, doc } = stateFixture();
+  overlay.show(snapshot.elements);
+  const target = doc.getElementById("a");
+  let scrolls = 0;
+  target.scrollIntoView = () => { scrolls += 1; };
+  const place = (top) => { target.getBoundingClientRect = () => ({ x: 10, y: top, left: 10, top, right: 110, bottom: top + 20, width: 100, height: 20 }); };
+  const held = { [id("Full name")]: "held" };
+  place(5000);
+  overlay.setTargetStates(held);
+  assert.equal(scrolls, 1, "off-screen: brought into view");
+  overlay.setTargetStates(held);
+  assert.equal(scrolls, 1, "still held: the page is not scrolled again");
+  overlay.setTargetStates({});
+  place(20);
+  overlay.setTargetStates(held);
+  assert.equal(scrolls, 1, "already visible: the page is left alone");
 });

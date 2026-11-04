@@ -12,8 +12,8 @@
   src: url("fonts/Jost-400.woff2") format("woff2");
   font-weight: 400; font-style: normal; font-display: swap;
 }
-/* No Jost 300 file is bundled yet; until one is added (OFL), the light
- * display weight uses the 400 file rather than a synthetic weight. */
+/* The Jost files are one variable font, so each face below renders its
+ * declared weight from the wght axis, including this light display weight. */
 @font-face {
   font-family: "Jost";
   src: url("fonts/Jost-400.woff2") format("woff2");
@@ -145,7 +145,16 @@ p { margin: 0; }
   display: flex; align-items: center; gap: 10px;
   background: var(--bg-panel); border-radius: 22px; padding: 12px 16px;
 }
-.page-dot { width: 22px; height: 22px; border-radius: 6px; background: var(--page-accent); flex: 0 0 22px; }
+.page-dot {
+  width: 22px; height: 22px; border-radius: 6px; background: var(--page-accent); flex: 0 0 22px;
+  display: grid; place-items: center; overflow: hidden;
+  color: #FFFFFF; font-size: 13px; font-weight: 600; line-height: 1;
+}
+/* White in both themes: most site icons are drawn for a light tab strip. */
+.page-dot.has-icon { background: #FFFFFF; }
+.page-dot.has-icon #pageInitial { display: none; }
+.page-dot img { width: 16px; height: 16px; }
+.page-dot img[hidden] { display: none; }
 .page-text { min-width: 0; }
 .page-title { font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .page-meta { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
@@ -212,7 +221,19 @@ body[data-voice="idle"][data-voice-msg="quiet"] #voiceState { display: none; }
 body[data-view="plan"] #commandHeading, body[data-view="edit"] #commandHeading,
 body[data-view="gate"] #commandHeading, body[data-view="repair"] #commandHeading,
 body[data-view="acting"] #commandHeading, body[data-view="done"] #commandHeading { display: none; }
-body:not([data-view="ready"]):not([data-view="stopped"]) .hero-copy { display: none; }
+body:not([data-view="ready"]):not([data-view="stopped"]):not([data-view="unavailable"]) .hero-copy { display: none; }
+body[data-view="unavailable"] #btnListen, body[data-view="unavailable"] .request-label, body[data-view="unavailable"] #voiceState { display: none; }
+body[data-view="unavailable"] #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+body[data-recover="true"] #commandHeading, body[data-recover="true"] .hero-copy, body[data-recover="true"] #tryBox { display: none; }
+body:not([data-view="ready"]) #tryBox { display: none; }
+.recover { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 22px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--error-ink); }
+.recover[hidden] { display: none; }
+.recover-title { margin: 0; font-size: 20px; font-weight: 500; color: var(--error-ink); }
+.recover .sub { margin: 0; }
+.try { display: flex; flex-direction: column; gap: 8px; }
+.try-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.try-chip { min-height: 44px; padding: 0 16px; border-radius: 999px; overflow-wrap: anywhere; }
+#btnUndo { overflow-wrap: anywhere; }
 body[data-view="plan"] #btnListen, body[data-view="edit"] #btnListen, body[data-view="gate"] #btnListen,
 body[data-view="repair"] #btnListen, body[data-view="acting"] #btnListen, body[data-view="done"] #btnListen,
 body[data-view="working"] #btnListen { display: none; }
@@ -344,6 +365,8 @@ button.wide, #btnApprovePlan { display: flex; justify-content: space-between; al
 .gate-question[hidden] { display: none; }
 .gate-page { font-size: 14px; color: #3A3A38; overflow-wrap: anywhere; }
 .gate-copy { font-size: 15px; line-height: 1.4; }
+.gate-countdown { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.gate-countdown[hidden] { display: none; }
 .gate-details > summary {
   min-height: 44px; display: flex; align-items: center; cursor: pointer;
   font-size: 15px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px;
@@ -368,6 +391,25 @@ button.wide, #btnApprovePlan { display: flex; justify-content: space-between; al
 /* While an action is held the card names the page, so the page card steps
    aside and the main card tightens: the decision needs the room. */
 body[data-view="gate"] .page-card { display: none; }
+/* Plan review: the page card shrinks to one line so the plan comes first. */
+body[data-view="plan"] .page-card { padding: 8px 14px; border-radius: 16px; }
+body[data-view="plan"] .page-dot { width: 14px; height: 14px; flex-basis: 14px; border-radius: 4px; font-size: 9px; }
+body[data-view="plan"] .page-dot img { width: 12px; height: 12px; }
+body[data-view="plan"] .page-meta { display: none; }
+body[data-view="plan"] .page-title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Said once, in the card; screen readers still get the status. */
+body[data-view="plan"][data-status-quiet="true"] #status,
+body[data-view="stopped"] #confirmStatus {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+body[data-view="working"] .request-label, body[data-view="acting"] .request-label { display: none; }
+.said { display: flex; flex-direction: column; gap: 2px; }
+.said[hidden] { display: none; }
+.said-text { font-size: 15px; color: var(--text-secondary); margin: 0; overflow-wrap: anywhere; }
+.steps .tx strong { font-weight: 600; }
+.say-more summary { min-height: 44px; display: flex; align-items: center; font-size: 14px; color: var(--text-secondary); cursor: pointer; }
+.say-more[open] > * + * { margin-top: 6px; }
+.target-mark { display: block; font-size: 13px; color: var(--text-muted); }
 body[data-view="gate"] .commands { padding: 12px 10px; gap: 12px; }
 
 /* --- Chips: colour AND words, never colour alone ------------------------ */
@@ -408,17 +450,28 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .check input { width: 18px; height: 18px; accent-color: var(--text); }
 .switch { display: flex; justify-content: space-between; width: 100%; }
 
-/* --- Safety bar + nav: always visible --------------------------------- */
+/* --- Stop and Undo: pinned while something can run, otherwise with the task.
+   The buttons move between slots (see placeSafety); the nav never moves. --- */
+.safety-slot:empty { display: none; }
+#safetyControls[hidden] { display: none; }
+body[data-safety="inline"] .safety { padding-top: 0; }
+body[data-safety="inline"] .safety-controls button { min-height: 44px; }
+body[data-safety="inline"] .stop { background: var(--surface); color: var(--text); border-color: var(--control-edge); }
+body[data-safety="inline"] .stop:hover:not(:disabled) { background: var(--surface-hover); }
+body[data-safety="inline"][data-view="done"] .safety-controls { flex-direction: column; align-items: stretch; }
+body[data-safety="inline"][data-view="stopped"] .stop,
+body[data-safety="inline"][data-view="stopped"] .stop:hover:not(:disabled) { background: var(--action); color: var(--action-label); border-color: var(--action); min-height: 52px; }
 .safety { flex: none; padding: 8px 10px 0; display: flex; flex-direction: column; gap: 4px; background: var(--bg-canvas); }
-.safety-controls { flex-wrap: nowrap; }
+.safety-controls { flex-wrap: nowrap; align-items: stretch; }
 .safety-controls button { flex: 1; min-width: 0; min-height: 52px; white-space: normal; padding-left: 10px; padding-right: 10px; }
 .stop { background: var(--action); color: var(--action-label); border-color: var(--action); }
 .stop:hover:not(:disabled) { background: var(--action); }
 body[data-gate="closed"] .stop { background: var(--surface); color: var(--text); border: 2px solid var(--brick-ring); }
 body[data-gate="closed"] .stop:hover:not(:disabled) { background: var(--surface-hover); }
 .gate-status { font-size: 13px; color: var(--text-muted); padding: 0 6px; margin: 0; }
-/* "Gate: open." is the normal state: kept for screen readers, not shown. */
-body[data-gate="open"] .gate-status:not(.error) {
+/* The card and header chip already say this: kept for screen readers, not
+   shown. A failed Stop or Resume is an error, and that does show. */
+.gate-status:not(.error) {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
 .screen-nav {
@@ -469,11 +522,13 @@ details.sec > summary {
 .status.error { color: var(--error-ink); font-weight: 500; }
 .result-line { overflow-wrap: anywhere; }
 .result-line:empty { display: none; }
-.meta { font-size: 12px; color: var(--text-muted); }
+.meta { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; min-width: 0; }
+.toolbar .meta { flex: 1 1 100%; } /* long lines wrap instead of widening the screen */
 
 /* --- Developer view (inside Settings › Advanced) ------------------------- */
 details.developer > *:not(summary) { margin: 10px 0; }
 details.developer section, details.developer .exec { display: flex; flex-direction: column; gap: 8px; }
+details.developer section.controls, details.developer section.toolbar { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
 .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .toolbar button { min-height: 44px; padding: 6px 12px; }
 .highlight { display: block; font-size: 14px; }
@@ -498,13 +553,14 @@ details.developer section, details.developer .exec { display: flex; flex-directi
 .log-heading { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
 
 /* Short panels (small windows, browser zoom): let the whole panel flow as
-   one page so the fixed safety bar and nav can never squeeze or cover the
-   main card. Stop/Resume and the nav stay in the page, after the screens. */
+   one page so nothing squeezes or covers the main card. A pinned Stop stays
+   stuck to the bottom; inline Stop and Undo scroll with their card, and the
+   nav follows the screens. */
 @media (max-height: 700px) {
   html, body { height: auto; }
   /* Focused or scrolled-to controls never land under the sticky bar: the
      padding tracks the bar's real height (set by the panel script). */
-  html { scroll-padding-bottom: calc(max(var(--safety-h, 120px), 110px) + 12px); }
+  html { scroll-padding-bottom: calc(var(--safety-h, 120px) + 12px); }
   body { display: block; }
   .screens { overflow: visible; }
   .safety { position: sticky; bottom: 0; z-index: 1; padding-bottom: 8px; }
@@ -524,6 +580,10 @@ details.developer section, details.developer .exec { display: flex; flex-directi
   .chip.is-held, .chip.is-error { background: Canvas; color: CanvasText; border: 2px solid CanvasText; }
   button { border-color: ButtonText; }
   .btn-mic, .talk-btn, .stop, .request-row button { border: 2px solid ButtonText; }
+  /* The field's edge is a shadow in the normal themes, which forced colors drop. */
+  .request-row { border: 1px solid CanvasText; }
+  .request-row input { color: CanvasText; }
+  .request-row input::placeholder { color: GrayText; opacity: 1; }
   .screen-nav button[aria-current="page"] { outline: 2px solid Highlight; }
   .meter span { background: Highlight; }
   :focus-visible { outline-color: Highlight; box-shadow: none; }

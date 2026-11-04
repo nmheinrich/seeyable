@@ -55,7 +55,7 @@ Visual source of truth:
 | `confirmBox` (gate) + `btnApproveOnce`, `btnCancelChallenge`, `confirmStatus` | Main card as an `alertdialog`; title names the held action; voice approval prompt below it. |
 | `btnStopExec` + `btnPauseExec` | One `btnStopExec` (Stop ⇄ Resume) in the always-visible safety bar. |
 | (voice/typed "undo last change") | Also `btnUndo` in the safety bar. |
-| `gateStatus` | Safety bar; announced always, shown when stopped or on error. |
+| `gateStatus` | Safety bar; announced always, shown on error only (the Stopped card carries the message). |
 | `btnViewTargets`, `targetsHeading`, `targetList` | Ready view button opens the Targets screen. |
 | `voiceSettings` (`chkSpeak`, `btnStopSpeech`, `btnMicSetup`, `voiceNote`) | Settings screen (open by default). |
 | `developerView` and all its controls (snapshots, JSON tools, tags, MCP bridge, planner pairing, highlight, manual execution, action log) | Settings › Advanced, unchanged IDs and handlers. |
@@ -86,6 +86,24 @@ plan binding, voice-approval binding, or approval authority.
   the microphone only (#14 rule); `#latestResult` the execution outcome —
   so `#execStatus` (Developer view) is no longer a live region. Progress,
   result, and phrase lists are not live regions.
+
+## Stop and Undo placement (Product Owner decision, 2026-11-04, #31)
+
+This replaces the always-visible safety bar in the frozen mockup; the mockup
+itself stays frozen. Same buttons, IDs, and handlers, moved between slots by
+`placeSafety`. `#gateStatus` stays outside the screens and is announced from
+any of them. Older statements in this document describe the original layout.
+
+| State | Stop and Undo |
+|---|---|
+| Idle, no agent | Quieter, below the listen button on Assist; not on other screens |
+| Talking, nothing running | Stop hidden, so it cannot be mistaken for finishing: "Done talking" and Cancel cover the microphone. Undo hidden too, since pressing it would discard the speech; saying "undo that" still works |
+| Planning, acting, edit, which-one, or a command still running as the microphone closes | Stop pinned on every screen; Undo disabled while acting |
+| Plan review | Below the plan controls |
+| Held action | Below the gate card |
+| Done | Undo by the result, Stop below; not on other screens |
+| Stopped | Resume is the card's main action, no Undo (the executor refuses it); header chip says Stopped on other screens |
+| Agent bridge connected, wanted, or not yet known | Stop pinned on every screen in every state, no Undo button |
 
 ## Stop/Resume
 
@@ -175,8 +193,7 @@ zoom, a screen reader, or the Product Owner's visual acceptance.
    held tag on Submit; nothing forced over page text.
 
 ## Limitations
-- Jost 300 is not bundled yet; the light display weight renders from the
-  400 file (as before). Adding the OFL 300 woff2 needs a download approval.
+- The bundled Jost files are one variable font, so the light display weight (300) renders for real; no separate file is needed.
 - The progress list and Completed list cover planned runs; local
   fast-path commands report through the status line only.
 - Speech recognition quality is unchanged.

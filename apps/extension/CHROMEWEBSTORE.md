@@ -1,6 +1,6 @@
 # Seeyable — Extension Security & Permission Notes (internal)
 
-> Last updated: 2026-10-27 · Version: 0.1.0
+> Last updated: 2026-11-04 · Version: 0.1.0
 >
 > **Not a Chrome Web Store submission document.** Seeyable is not being
 > prepared for store publication during the hackathon. This file follows
@@ -12,12 +12,11 @@
 
 ## Single purpose
 
-Current build: capture a labelled snapshot of the current page's
-interactive controls (DOM/ARIA, with a debug-only CDP cross-check),
-show numbered word tags, execute single validated actions from a
-manual test panel, and accept push-to-talk voice or typed commands
-that only show/hide those tags. No planner, AI, or MCP server exists
-in this build, and voice/typed commands never execute page actions.
+Operate the current webpage by voice, typed request, or a local MCP
+agent, through labeled controls. Every action goes through one shared
+executor and safety gate: Submit, Pay and Delete wait for explicit human
+approval. Plans come from a local planner proxy and are reviewed before
+they run. (The manifest description says this in its 132-character form.)
 
 ## Permissions justification (standard `manifest.json`)
 
@@ -65,6 +64,9 @@ and an approved flag — never values, transcripts, or challenge IDs.
 
 ## Privacy & data use (spike behavior, from the code)
 
+- **Site icon:** the panel shows the active tab's `tab.favIconUrl` in an
+  image with no referrer, so Chrome may fetch that icon from the site.
+  It is display only and is not stored or sent anywhere else.
 - **Website content:** snapshots read interactive-element roles, names,
   state, and geometry on the current page, only when the user clicks a
   snapshot button. Results are displayed in the panel and copied/

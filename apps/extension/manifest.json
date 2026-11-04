@@ -3,7 +3,7 @@
   "minimum_chrome_version": "116",
   "name": "Seeyable",
   "version": "0.1.0",
-  "description": "Captures labelled snapshots of page controls (DOM/ARIA) for accessibility evaluation.",
+  "description": "Operate any webpage by voice or a local agent, through labeled tools. Submit, Pay and Delete always wait for your approval.",
   "permissions": ["activeTab", "scripting", "sidePanel", "storage", "tabs"],
   "host_permissions": ["http://127.0.0.1:6123/*", "http://127.0.0.1:6124/*"],
   "background": {
@@ -12,8 +12,10 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
   "action": {
-    "default_title": "Seeyable"
+    "default_title": "Seeyable",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
   },
   "content_scripts": [
     {
