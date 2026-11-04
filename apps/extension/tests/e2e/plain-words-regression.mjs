@@ -319,6 +319,20 @@ try {
   check("idle: Stop and Undo are not on Settings", !(await visible("btnStopExec")) && !(await visible("btnUndo")));
   await panel.ev(`showScreen("Assist")`);
   await panel.shot("ready");
+  // Headless Chrome has no microphone: this sets the panel's talking state
+  // directly, to check layout only. Voice behaviour is covered by the unit tests.
+  await panel.ev(`(voicePhase = "listening", renderState(), 1)`);
+  check("talking: Stop is hidden", !(await visible("btnStopExec")));
+  await panel.shot("talking");
+  await panel.ev(`(voicePhase = "idle", renderState(), 1)`);
+  for (const width of [320, 360, 560]) {
+    await panel.send("Emulation.setDeviceMetricsOverride", { width, height: 765, deviceScaleFactor: 1, mobile: false });
+    await sleep(100);
+    const fits = await panel.ev(`(() => { const b = document.getElementById("btnStopExec"); const r = document.createRange(); r.selectNodeContents(b); return Math.ceil(r.getBoundingClientRect().height) <= 24 && b.scrollWidth <= b.clientWidth; })()`);
+    check(`"Stop actions" fits on one line at ${width}px`, fits);
+    await panel.shot(`ready-${width}`);
+  }
+  await panel.send("Emulation.clearDeviceMetricsOverride");
   check("idle: the panel does not scroll sideways", await noSideScroll());
   await command("Update my profile");
   await waitView("plan");

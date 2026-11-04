@@ -97,7 +97,8 @@ any of them. Older statements in this document describe the original layout.
 | State | Stop and Undo |
 |---|---|
 | Idle, no agent | Quieter, below the listen button on Assist; not on other screens |
-| Listening, planning, acting, edit, which-one | Stop pinned on every screen; Undo disabled while acting |
+| Talking, nothing running | Stop hidden, so it cannot be mistaken for finishing: "Done talking" and Cancel cover the microphone; Undo pinned |
+| Planning, acting, edit, which-one, or a command still running as the microphone closes | Stop pinned on every screen; Undo disabled while acting |
 | Plan review | Below the plan controls |
 | Held action | Below the gate card |
 | Done | Undo by the result, Stop below; not on other screens |

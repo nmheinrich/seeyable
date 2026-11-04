@@ -1273,14 +1273,14 @@ test("gate: Stop and Resume are one control; it sends stop, never pause, and rep
   assert.equal(panel.$("btnPauseExec"), null, "Pause is merged into Stop/Resume");
   sendTyped(panel, "click Full name"); // no bound snapshot: acquisition starts
   await tick();
-  assert.equal(panel.$("btnStopExec").textContent, "Stop");
+  assert.equal(panel.$("btnStopExec").textContent, "Stop actions");
   panel.$("btnStopExec").click();
   await tick();
   assert.equal(panel.$("btnStopExec").textContent, "Resume");
   assert.equal(panel.doc.body.dataset.gate, "closed");
   panel.$("btnStopExec").click(); // Resume restores availability only
   await tick();
-  assert.equal(panel.$("btnStopExec").textContent, "Stop");
+  assert.equal(panel.$("btnStopExec").textContent, "Stop actions");
   releaseSnap();
   await tick(); await tick();
   const commands = panel.calls.send.filter((c) => c.msg.type === "SEEYABLE_GATE_CONTROL").map((c) => c.msg.command);
@@ -2037,7 +2037,7 @@ test("gate: the Stop/Resume control drives the executor gate and updates state",
   panel.$("btnStopExec").click(); // gateClosed -> resume
   await tick(); await tick();
   assert.match(panel.$("gateStatus").textContent, /Gate: open/);
-  assert.equal(panel.$("btnStopExec").textContent, "Stop");
+  assert.equal(panel.$("btnStopExec").textContent, "Stop actions");
   panel.dom.window.close();
 });
 

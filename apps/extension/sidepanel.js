@@ -384,11 +384,16 @@ function safetyPlacement(view) {
     case "gate": return { slot: "Gate", undo: true };
     case "done": return { slot: "Result", undo: true, undoFirst: true };
     case "stopped": return { slot: "Hero", undo: false };
+    // While talking, "Done talking" and Cancel own the moment and Stop reads
+    // like a third way to finish. Hidden only if nothing is running: a command
+    // can already be in flight while the microphone winds down.
+    case "listening":
+      return { slot: "Pinned", undo: true, stop: state.pending || commandPending };
     default: return { slot: "Pinned", undo: true }; // listening, edit, repair, working, acting
   }
 }
 function placeSafety(view) {
-  const { slot, undo, undoFirst } = safetyPlacement(view);
+  const { slot, undo, undoFirst, stop = true } = safetyPlacement(view);
   const controls = $("safetyControls");
   const stopBtn = $("btnStopExec");
   const undoBtn = $("btnUndo");
@@ -396,6 +401,7 @@ function placeSafety(view) {
   const first = undoFirst ? undoBtn : stopBtn;
   document.body.dataset.safety = slot === "Pinned" ? "pinned" : "inline";
   undoBtn.hidden = !undo;
+  stopBtn.hidden = !stop;
   if (controls.parentElement === target && controls.firstElementChild === first) return;
   // Moving an element drops its focus; keep keyboard users where they were.
   const focused = controls.contains(document.activeElement) ? document.activeElement : null;
@@ -3623,7 +3629,7 @@ async function sendGateCommand(command) {
       return;
     }
     gateClosed = Boolean(res.gate.paused || res.gate.stopped);
-    $("btnStopExec").textContent = gateClosed ? "Resume" : "Stop";
+    $("btnStopExec").textContent = gateClosed ? "Resume" : "Stop actions";
     setGateStatus(gateClosed
       ? "Gate: stopped. New actions and approvals are blocked, and pending approvals were withdrawn. Resume replays nothing."
       : "Gate: open.");

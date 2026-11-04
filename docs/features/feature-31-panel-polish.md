@@ -46,6 +46,11 @@ Test changes: three assertions that pinned the old bar to "outside the screens" 
 
 Evidence (stub model, headless Chrome, 2026-11-04): extension 404/404, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 72/72 including an agent's hold arriving on Settings, a reopened panel, and live Disconnect. Eight deliberate breaks each failed the expected test: agent not pinned, Undo with an agent, in-progress not pinned, Undo while stopped, unknown bridge treated as none, no live bridge updates, Tab order, focus. Off-limits files have no diff against `9e50c8e`.
 
+### Slice 3 follow-up: Stop while talking
+The Product Owner found Stop read as "done talking", and pressing it discarded the speech and closed the gate. The button is now "Stop actions" everywhere, and it is hidden while talking unless something is running or an agent bridge is connected or wanted. A command can already be in flight while the microphone winds down, which still counts as the listening view, so Stop returns in that case.
+
+Test changes: the "listening pins Stop" test now asserts the new rule, and two tests were added (mic winding down during a command, agent while talking). Four assertions moved to the new label. Evidence: extension 406/406, end-to-end 76/76; the talking checks in Chrome set the state directly because headless has no microphone. Breaking either exception fails its test.
+
 ## Evidence for Slices 0 and 1 (stub model, headless Chrome, 2026-11-04)
 - Extension 372/372, planner proxy 22/22, MCP 41/41, shared 11/11. Extension baseline before this work: 362.
 - End-to-end 37/37, including real approval after the held target scrolled.

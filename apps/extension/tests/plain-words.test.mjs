@@ -1039,18 +1039,62 @@ test("placement: idle with no agent sits below the listen button, on Assist only
   p.dom.window.close();
 });
 
-test("placement: listening pins Stop on every screen", async () => {
+test("placement: while talking with nothing running, Stop is hidden and Done talking and Cancel remain", async () => {
   const rec = makeRecognitionClass();
   const p = makePanel({ plan: twoFill, recognition: rec });
+  await tick(); await tick();
+  assert.equal(p.$("btnStopExec").textContent, "Stop actions");
+  p.$("btnListen").click();
+  await tick();
+  rec.instances[0].fireStart();
+  await tick();
+  assert.equal(p.view(), "listening");
+  assert.equal(p.$("btnStopExec").hidden, true);
+  assert.equal(p.$("btnStopListen").disabled, false, "Done talking works");
+  assert.equal(p.$("btnCancelListen").disabled, false, "Cancel works");
+  p.$("btnCancelListen").click();
+  await tick(); await tick();
+  assert.equal(p.$("btnStopExec").hidden, false, "Stop returns when talking ends");
+  p.dom.window.close();
+});
+
+test("placement: a command running while the microphone winds down shows Stop at once, and it works", async () => {
+  const rec = makeRecognitionClass();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const p = makePanel({ plan: twoFill, recognition: rec, onExecute: async () => { await gate; return verified; } });
+  await tick(); await tick();
+  p.$("btnListen").click();
+  await tick();
+  rec.instances[0].fireStart();
+  await tick();
+  rec.instances[0].fireFinal("fill Full name with Ada");
+  await tick(); await tick();
+  assert.equal(p.calls.execute, 1, "the command is running");
+  assert.equal(p.view(), "listening", "the microphone has not closed yet");
+  assert.equal(p.$("btnStopExec").hidden, false, "Stop is available during the action");
+  assert.ok(onOtherScreens(p));
+  p.$("btnStopExec").click();
+  await tick();
+  assert.ok(p.calls.send.some((m) => m.type === "SEEYABLE_GATE_CONTROL" && m.command === "stop"));
+  release();
+  rec.instances[0].fireEnd();
+  await tick(); await tick(); await tick();
+  p.dom.window.close();
+});
+
+test("placement: with an agent connected, Stop stays pinned while talking", async () => {
+  const rec = makeRecognitionClass();
+  const p = makePanel({ plan: twoFill, recognition: rec, sessionExtra: { bridgeWanted: true } });
   await tick(); await tick();
   p.$("btnListen").click();
   await tick();
   rec.instances[0].fireStart();
   await tick();
   assert.equal(p.view(), "listening");
+  assert.equal(p.$("btnStopExec").hidden, false);
   assert.ok(onOtherScreens(p));
-  assert.equal(p.doc.body.dataset.safety, "pinned");
-  rec.instances[0].abort();
+  assert.equal(p.$("btnUndo").hidden, true);
   p.dom.window.close();
 });
 
@@ -1141,7 +1185,7 @@ test("placement: Stopped makes Resume the card's main action, with no Undo and a
   p.$("btnStopExec").click();
   await tick(); await tick();
   assert.equal(p.view(), "ready");
-  assert.equal(p.$("btnStopExec").textContent, "Stop");
+  assert.equal(p.$("btnStopExec").textContent, "Stop actions");
   assert.equal(p.$("btnUndo").hidden, false);
   assert.ok(p.$("safetySlotIdle").contains(p.$("btnStopExec")));
   p.dom.window.close();
