@@ -113,7 +113,8 @@ test("plain words: screens switch via the nav; safety stays outside every screen
       assert.equal(p.$(`screen${other}`).hidden, other !== name, `${name}: ${other}`);
     }
     assert.equal(p.doc.querySelector('.screen-nav [aria-current="page"]').dataset.screen, name);
-    assert.ok(!p.$("screens").contains(p.$("btnStopExec")), "Stop is reachable on every screen");
+    assert.ok(!p.$("screens").contains(p.$("gateStatus")), "the gate status is announced from every screen");
+    assert.ok(p.$("screenAssist").contains(p.$("btnStopExec")), "idle, Stop stays with the task on Assist");
   }
   p.dom.window.close();
 });
@@ -431,7 +432,9 @@ test("#16 card: decisions come before diagnostics; voice approval prompt stays",
   assert.ok(order("btnCancelChallenge", "confirmDetails"), "Cancel precedes Details");
   assert.ok(order("confirmSummary", "btnApproveOnce"), "the action is described before the buttons");
   assert.equal(p.$("gateTalk").hidden, false, "Approve by voice remains available");
-  assert.ok(!p.$("screens").contains(p.$("btnStopExec")), "the safety bar is outside the scrolling card area");
+  assert.ok(order("btnCancelChallenge", "btnStopExec"), "Stop sits below the gate decision");
+  assert.ok(order("btnStopExec", "gateTalk"), "and above Approve by voice");
+  assert.equal(p.$("confirmBox").contains(p.$("btnStopExec")), false, "Stop is not part of the alertdialog");
   p.dom.window.close();
 });
 
@@ -1011,4 +1014,209 @@ test("navigation: a finished load binds the shown tab once, and leaves other tab
   assert.equal(count(), before + 1, "a reload binds the fresh page");
   assert.match(p.$("status").textContent, /^Found \d+ controls/, "the reload notice does not linger when nothing was lost");
   p.dom.window.close();
+});
+
+/* --- Slice 3: where Stop and Undo sit, one test per row of the decision --- */
+const before = (p, a, b) => Boolean(p.$(a).compareDocumentPosition(p.$(b)) & 4);
+const pinned = (p) => p.$("safetySlotPinned").contains(p.$("btnStopExec"));
+const onOtherScreens = (p) => pinned(p) && !p.$("screens").contains(p.$("btnStopExec"));
+
+test("placement: idle with no agent sits below the listen button, on Assist only", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  assert.equal(p.view(), "ready");
+  assert.equal(p.doc.body.dataset.safety, "inline");
+  assert.ok(p.$("safetySlotIdle").contains(p.$("btnStopExec")));
+  assert.equal(p.$("btnUndo").hidden, false);
+  assert.ok(before(p, "btnListen", "btnStopExec"), "below the listen button");
+  assert.ok(before(p, "btnStopExec", "btnUndo"), "Tab reaches Stop then Undo");
+  assert.ok(before(p, "btnUndo", "commandInput"), "and then the request input");
+  for (const name of ["Targets", "Activity", "Settings"]) {
+    p.doc.querySelector(`.screen-nav [data-screen="${name}"]`).click();
+    await tick();
+    assert.ok(p.$("screenAssist").hidden && p.$("screenAssist").contains(p.$("btnStopExec")), `${name}: not shown`);
+  }
+  p.dom.window.close();
+});
+
+test("placement: listening pins Stop on every screen", async () => {
+  const rec = makeRecognitionClass();
+  const p = makePanel({ plan: twoFill, recognition: rec });
+  await tick(); await tick();
+  p.$("btnListen").click();
+  await tick();
+  rec.instances[0].fireStart();
+  await tick();
+  assert.equal(p.view(), "listening");
+  assert.ok(onOtherScreens(p));
+  assert.equal(p.doc.body.dataset.safety, "pinned");
+  rec.instances[0].abort();
+  p.dom.window.close();
+});
+
+test("placement: planning and acting pin Stop on every screen, Undo disabled; Stop still works from there", async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const p = makePanel({ plan: fills("el-1", "el-7"), onExecute: async () => { await gate; return verified; } });
+  await tick(); await tick();
+  await typed(p, "please do these things in order");
+  p.$("btnApprovePlan").click();
+  await tick(); await tick();
+  assert.equal(p.view(), "acting");
+  assert.ok(onOtherScreens(p));
+  assert.equal(p.$("btnUndo").disabled, true);
+  p.doc.querySelector('.screen-nav [data-screen="Settings"]').click();
+  await tick();
+  assert.equal(p.$("screenSettings").hidden, false);
+  assert.ok(onOtherScreens(p), "still reachable on Settings");
+  p.$("btnStopExec").click();
+  await tick();
+  assert.ok(p.calls.send.some((m) => m.type === "SEEYABLE_GATE_CONTROL" && m.command === "stop"));
+  release();
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "stopped");
+  p.dom.window.close();
+});
+
+test("placement: plan review sits below the plan controls and above the voice prompt", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  await typed(p, "please do these things in order");
+  assert.equal(p.view(), "plan");
+  assert.ok(p.$("planBox").contains(p.$("btnStopExec")));
+  assert.ok(before(p, "btnCancelPlan", "btnStopExec"));
+  assert.ok(before(p, "btnUndo", "btnTalkPlan"));
+  p.dom.window.close();
+});
+
+test("placement: edit and which-one choices keep Stop pinned", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  await typed(p, "please do these things in order");
+  p.$("btnEditPlan").click();
+  await tick();
+  assert.equal(p.view(), "edit");
+  assert.ok(onOtherScreens(p));
+  p.dom.window.close();
+  const q = makePanel({ plan: twoFill, elements: [el("el-1", "Twin"), el("el-2", "Twin")] });
+  await tick(); await tick();
+  await typed(q, "fill Twin with x");
+  assert.equal(q.view(), "repair");
+  assert.ok(onOtherScreens(q));
+  q.dom.window.close();
+});
+
+test("placement: Done puts Undo by the result, Stop below it, on Assist only", async () => {
+  const p = makePanel({ plan: fills("el-1", "el-7") });
+  await tick(); await tick();
+  await runPlan(p);
+  assert.equal(p.view(), "done");
+  assert.ok(p.$("resultBox").contains(p.$("btnUndo")));
+  assert.ok(before(p, "resultUndoNote", "btnUndo"), "the note explains the button that follows");
+  assert.ok(before(p, "btnUndo", "btnStopExec"), "Tab reaches Undo before Stop");
+  assert.ok(before(p, "btnStopExec", "btnNewRequest"));
+  assert.equal(p.doc.body.dataset.safety, "inline");
+  p.dom.window.close();
+});
+
+test("placement: Stopped makes Resume the card's main action, with no Undo and a header chip elsewhere", async () => {
+  const p = makePanel({ plan: twoFill });
+  await tick(); await tick();
+  p.$("btnStopExec").focus();
+  p.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.equal(p.view(), "stopped");
+  assert.equal(p.$("btnStopExec").textContent, "Resume");
+  assert.ok(p.$("safetySlotHero").contains(p.$("btnStopExec")));
+  assert.ok(before(p, "heroCopy", "btnStopExec"));
+  assert.ok(before(p, "btnStopExec", "btnListen"), "Resume comes first");
+  assert.equal(p.$("btnUndo").hidden, true, "the executor refuses Undo while stopped");
+  assert.equal(p.doc.activeElement, p.$("btnStopExec"), "focus follows the moved button");
+  p.doc.querySelector('.screen-nav [data-screen="Settings"]').click();
+  await tick();
+  assert.equal(p.$("stateChip").textContent, "Stopped", "the header says so on other screens");
+  assert.ok(!p.$("screens").contains(p.$("stateChip")));
+  p.doc.querySelector('.screen-nav [data-screen="Assist"]').click();
+  await tick();
+  p.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.equal(p.view(), "ready");
+  assert.equal(p.$("btnStopExec").textContent, "Stop");
+  assert.equal(p.$("btnUndo").hidden, false);
+  assert.ok(p.$("safetySlotIdle").contains(p.$("btnStopExec")));
+  p.dom.window.close();
+});
+
+test("placement: an agent on the bridge pins Stop in every state with no Undo, and Disconnect restores it live", async () => {
+  const p = makePanel({ plan: fills("el-1", "el-7"), sessionExtra: { bridgeWanted: true } });
+  await tick(); await tick();
+  assert.ok(onOtherScreens(p), "ready");
+  assert.equal(p.$("btnUndo").hidden, true);
+  await typed(p, "please do these things in order");
+  assert.equal(p.view(), "plan");
+  assert.ok(onOtherScreens(p), "plan");
+  p.$("btnApprovePlan").click();
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(p.view(), "done");
+  assert.ok(onOtherScreens(p), "done");
+  assert.equal(p.$("btnUndo").hidden, true);
+  p.$("btnStopExec").click();
+  await tick(); await tick();
+  assert.equal(p.view(), "stopped");
+  assert.ok(onOtherScreens(p), "stopped: Resume stays pinned");
+  p.$("btnStopExec").click();
+  await tick(); await tick();
+  for (const fn of p.listeners.storage) fn({ bridgeWanted: {} }, "session");
+  await tick();
+  assert.ok(p.$("safetySlotIdle").contains(p.$("btnStopExec")), "Disconnect moves it back");
+  assert.equal(p.$("btnUndo").hidden, false);
+  for (const fn of p.listeners.storage) fn({ bridgeWanted: { newValue: true } }, "session");
+  await tick();
+  assert.ok(onOtherScreens(p), "Connect pins it at once");
+  p.dom.window.close();
+});
+
+test("placement: an agent's hold keeps Stop pinned, and it stays usable with no Undo", async () => {
+  const p = makePanel({ plan: twoFill, sessionExtra: { bridgeWanted: true } });
+  answer(p, "SEEYABLE_GET_PENDING_CONFIRMATION", () => ({ ok: true, confirmation: { ...heldResponse("2099-01-01T00:00:00.000Z").confirmation, documentSessionId: "doc-A" } }));
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "gate");
+  assert.ok(onOtherScreens(p));
+  assert.equal(p.$("btnUndo").hidden, true);
+  p.dom.window.close();
+});
+
+test("placement: until the bridge state is known, Stop is pinned", async () => {
+  const p = makePanel({ plan: twoFill });
+  assert.ok(onOtherScreens(p), "before the first read answers");
+  assert.equal(p.$("btnUndo").hidden, true);
+  await tick();
+  assert.ok(!pinned(p), "then it moves to the task");
+  p.dom.window.close();
+});
+
+test("placement: unavailable page keeps Stop and Undo with the card, and a focused button that leaves view hands focus to the nav", async () => {
+  const p = makePanel({ plan: twoFill, snapshotError: () => true, tabsGet: (id) => ({ id, url: "chrome://newtab/", status: "complete" }) });
+  await tick(); await tick(); await tick();
+  assert.equal(p.view(), "unavailable");
+  assert.ok(p.$("safetySlotIdle").contains(p.$("btnStopExec")));
+  assert.equal(p.$("btnUndo").hidden, false);
+  p.dom.window.close();
+
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const q = makePanel({ plan: fills("el-7"), onExecute: async () => { await gate; return verified; } });
+  await tick(); await tick();
+  await typed(q, "please do these things in order");
+  q.$("btnApprovePlan").click();
+  await tick(); await tick();
+  q.doc.querySelector('.screen-nav [data-screen="Settings"]').click();
+  await tick();
+  q.$("btnStopExec").focus();
+  release();
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(q.view(), "done");
+  assert.equal(q.$("screenAssist").hidden, true);
+  assert.equal(q.doc.activeElement.dataset.screen, "Settings", "focus is not lost when the button leaves this screen");
+  q.dom.window.close();
 });

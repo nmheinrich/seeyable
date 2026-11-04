@@ -9,8 +9,11 @@ panel mockup is frozen at DESIGN/plain-words-panel-mockup-2026-11-01.html
 and implemented by the Plain Words panel issue (supersedes #29; headed
 visual acceptance pending — docs/features/feature-plain-words-panel.md).
 The side panel is a Plain Words surface — identity, status, the main card,
-and an always-visible Stop/Resume + Undo safety bar outside the scrolling
-screens (Assist / Targets / Activity / Settings); diagnostics in a
+and Stop/Resume + Undo placed by state over the screens (Assist / Targets /
+Activity / Settings): with the task on Assist while idle, pinned on every
+screen while anything is in progress or an agent bridge is connected or
+wanted (Product Owner decision, 2026-11-04, #31; this supersedes the frozen
+mockup's always-visible bar); diagnostics in a
 collapsible Developer view under Settings › Advanced —
 and overlays use word-first token pills with a quiet number dot,
 placement verified clear of controls and rendered text, and omission

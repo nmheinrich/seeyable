@@ -2092,9 +2092,9 @@ test("surface: Plain Words composition — safety and nav sit outside the scroll
   const doc = panel.doc;
   assert.equal(doc.getElementById("commandHeading").textContent, "Ready when you are.");
   const screens = doc.getElementById("screens");
-  for (const id of ["btnStopExec", "btnUndo", "gateStatus"]) {
-    assert.ok(!screens.contains(panel.$(id)), `${id} stays visible on every screen (outside the scroll)`);
-  }
+  assert.ok(!screens.contains(panel.$("gateStatus")), "gateStatus is announced from every screen (outside the scroll)");
+  assert.ok(doc.querySelector(".safety").contains(panel.$("safetySlotPinned")), "the pinned slot stays outside the scroll");
+  assert.ok(!screens.contains(panel.$("safetySlotPinned")));
   assert.ok(panel.$("screenAssist").contains(panel.$("confirmBox")), "a held action is decided in the main card");
   assert.ok(panel.$("screenAssist").contains(panel.$("btnViewTargets")), "View page targets sits in the main card");
   assert.ok(panel.$("screenTargets").contains(panel.$("targetList")), "the long target list has its own screen");

@@ -250,7 +250,7 @@ must be held for explicit human confirmation in the Seeyable panel; choose
 **Cancel** and verify nothing submitted. An external agent cannot approve its
 own held action. Keep the panel open during this check.
 
-**Stop/Resume** is always visible. Stopped work does not replay when resumed.
+**Stop/Resume** stays on every screen while anything is in progress or an agent is connected, and sits with the task on Assist otherwise. Stopped work does not replay when resumed.
 **Undo** applies to the supported last change; it is not a general rollback
 for every webpage action. Password/payment values are redacted in snapshots,
 and protected writes are rejected. Never use real personal data, payments,

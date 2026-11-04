@@ -422,7 +422,16 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .check input { width: 18px; height: 18px; accent-color: var(--text); }
 .switch { display: flex; justify-content: space-between; width: 100%; }
 
-/* --- Safety bar + nav: always visible --------------------------------- */
+/* --- Stop and Undo: pinned while something can run, otherwise with the task.
+   The buttons move between slots (see placeSafety); the nav never moves. --- */
+.safety-slot:empty { display: none; }
+body[data-safety="inline"] .safety { padding-top: 0; }
+body[data-safety="inline"] .safety-controls button { min-height: 44px; }
+body[data-safety="inline"] .stop { background: var(--surface); color: var(--text); border-color: var(--control-edge); }
+body[data-safety="inline"] .stop:hover:not(:disabled) { background: var(--surface-hover); }
+body[data-safety="inline"][data-view="done"] .safety-controls { flex-direction: column; align-items: stretch; }
+body[data-safety="inline"][data-view="stopped"] .stop,
+body[data-safety="inline"][data-view="stopped"] .stop:hover:not(:disabled) { background: var(--action); color: var(--action-label); border-color: var(--action); min-height: 52px; }
 .safety { flex: none; padding: 8px 10px 0; display: flex; flex-direction: column; gap: 4px; background: var(--bg-canvas); }
 .safety-controls { flex-wrap: nowrap; }
 .safety-controls button { flex: 1; min-width: 0; min-height: 52px; white-space: normal; padding-left: 10px; padding-right: 10px; }
@@ -513,13 +522,14 @@ details.developer section, details.developer .exec { display: flex; flex-directi
 .log-heading { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
 
 /* Short panels (small windows, browser zoom): let the whole panel flow as
-   one page so the fixed safety bar and nav can never squeeze or cover the
-   main card. Stop/Resume and the nav stay in the page, after the screens. */
+   one page so nothing squeezes or covers the main card. A pinned Stop stays
+   stuck to the bottom; inline Stop and Undo scroll with their card, and the
+   nav follows the screens. */
 @media (max-height: 700px) {
   html, body { height: auto; }
   /* Focused or scrolled-to controls never land under the sticky bar: the
      padding tracks the bar's real height (set by the panel script). */
-  html { scroll-padding-bottom: calc(max(var(--safety-h, 120px), 110px) + 12px); }
+  html { scroll-padding-bottom: calc(var(--safety-h, 120px) + 12px); }
   body { display: block; }
   .screens { overflow: visible; }
   .safety { position: sticky; bottom: 0; z-index: 1; padding-bottom: 8px; }

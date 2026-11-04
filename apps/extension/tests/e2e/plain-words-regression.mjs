@@ -312,14 +312,27 @@ try {
 
   /* --- Typed flow -------------------------------------------------------- */
   check("idle panel shows the ready view", (await view()) === "ready");
+  const above = (a, b) => panel.ev(`document.getElementById(${JSON.stringify(a)}).getBoundingClientRect().bottom <= document.getElementById(${JSON.stringify(b)}).getBoundingClientRect().top + 1`);
+  const noSideScroll = () => panel.ev(`document.documentElement.scrollWidth <= document.documentElement.clientWidth && document.getElementById("screens").scrollWidth <= document.getElementById("screens").clientWidth`);
+  check("idle: Stop and Undo sit below the listen button", (await above("btnListen", "btnStopExec")) && (await visible("btnUndo")));
+  await panel.ev(`showScreen("Settings")`);
+  check("idle: Stop and Undo are not on Settings", !(await visible("btnStopExec")) && !(await visible("btnUndo")));
+  await panel.ev(`showScreen("Assist")`);
+  await panel.shot("ready");
+  check("idle: the panel does not scroll sideways", await noSideScroll());
   await command("Update my profile");
   await waitView("plan");
   await panel.shot("plan");
+  check("plan review: Stop sits below the plan controls", await above("btnCancelPlan", "btnStopExec"));
   check("plan review shows Approve", await visible("btnApprovePlan"));
   check("plan review changes nothing on the page", (await value(NAME)) === "" && (await value(ROLE)) === "engineer" && (await value(BIO)) === "");
   await click("btnApprovePlan");
   await waitView("done");
   await panel.shot("done");
+  check("done: Undo sits by the result with Stop below it", (await above("resultUndoNote", "btnUndo")) && (await above("btnUndo", "btnStopExec")));
+  await panel.ev(`showScreen("Settings")`);
+  check("done: Stop and Undo are not on Settings", !(await visible("btnStopExec")));
+  await panel.ev(`showScreen("Assist")`);
   check("approved plan fills the name", (await value(NAME)) === "Ada Example");
   check("approved plan selects the role", (await value(ROLE)) === "designer");
   check("approved plan fills the bio", (await value(BIO)) === "Fictional visitor.");
@@ -366,6 +379,8 @@ try {
   await click("btnApprovePlan");
   await waitView("gate");
   await panel.shot("gate");
+  check("held action: Stop sits below the decision", await above("btnCancelChallenge", "btnStopExec"));
+  check("held action: the panel does not scroll sideways", await noSideScroll());
   check("Submit is held for approval", await visible("btnApproveOnce"));
   check("held Submit has not fired", (await submits()) === 0);
   await waitFor(() => demo.ev(`(() => {
@@ -410,6 +425,11 @@ try {
   await click("btnStopExec");
   await waitView("stopped");
   check("Stop withdraws the held Submit", !(await visible("btnApproveOnce")));
+  await panel.shot("stopped");
+  check("stopped: Resume is in the card above the listen button, with no Undo", (await above("heroCopy", "btnStopExec")) && (await above("btnStopExec", "btnListen")) && !(await visible("btnUndo")));
+  await panel.ev(`showScreen("Settings")`);
+  check("stopped: the header says so on other screens", (await visible("stateChip")) && (await panel.ev(`document.getElementById("stateChip").textContent`)) === "Stopped" && !(await visible("btnStopExec")));
+  await panel.ev(`showScreen("Assist")`);
   await click("btnStopExec");
   await waitFor(async () => (await view()) !== "stopped", "resumed after hold");
   await sleep(500);
@@ -508,11 +528,14 @@ try {
   check("agent cannot claim approval", forged.isError === true && (await value(NICK)) === "");
   await refresh();
 
+  await panel.ev(`showScreen("Settings")`);
   const held = await tool("click", bound(element("Submit survey")));
   check("agent Submit is held, not run", held.status === "held_for_approval" && (await submits()) === 0);
   await bringDemoForward();
   await waitFor(() => visible("btnApproveOnce"), "agent hold in panel");
   await panel.shot("agent-gate");
+  check("an agent's hold brings the decision back from Settings", await visible("btnCancelChallenge"));
+  check("agent connected: Stop is pinned below the screens with no Undo", (await panel.ev(`document.getElementById("safetySlotPinned").contains(document.getElementById("btnStopExec"))`)) && !(await visible("btnUndo")));
   check("agent hold appears in the panel", true);
   await click("btnCancelChallenge");
   await waitFor(async () => (await view()) !== "gate", "agent hold cancelled");
@@ -532,6 +555,15 @@ try {
   await waitFor(async () => (await panel.ev("document.body.dataset.gate")) === "open", "gate reopened");
   await sleep(400);
   check("Resume does not replay the agent's blocked fill", (await value(NICK)) === "");
+  await reloadPanel("panel reopened with an agent");
+  await sleep(200);
+  await panel.ev(`showScreen("Settings")`);
+  check("a reopened panel still pins Stop for the agent", await visible("btnStopExec"));
+  await click("btnBridgeDisconnect");
+  await waitFor(async () => !(await visible("btnStopExec")), "Disconnect unpins Stop");
+  check("Disconnect unpins Stop while the panel is open", true);
+  await panel.ev(`showScreen("Assist")`);
+  check("after Disconnect, Stop and Undo are back below the listen button", (await above("btnListen", "btnStopExec")) && (await visible("btnUndo")));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

@@ -330,6 +330,7 @@ function renderState() {
   if (gateTalk) gateTalk.hidden = !state.confirmation;
   renderListenHints();
   renderProgress();
+  placeSafety(view);
   if (typeof syncSafetyHeight === "function") syncSafetyHeight();
   if (typeof updateVoiceControls === "function") updateVoiceControls();
 }
@@ -366,6 +367,46 @@ function currentView() {
   if (pageUnavailable) return "unavailable";
   if (lastRun) return "done";
   return "ready";
+}
+
+/* Where Stop and Undo sit. Nothing can run in the idle views, so there they
+ * stay with the task on Assist and leave the other screens alone. Anything in
+ * progress, and any agent on the bridge (it can act at any moment), pins Stop
+ * on every screen. Undo is not offered with an agent connected, because it
+ * could reverse the agent's change, nor while Stopped, where the executor
+ * refuses it. Only the place changes: same buttons, handlers and gate. */
+function safetyPlacement(view) {
+  if (agentBridgeWanted) return { slot: "Pinned", undo: false };
+  switch (view) {
+    case "ready":
+    case "unavailable": return { slot: "Idle", undo: true };
+    case "plan": return { slot: "Plan", undo: true };
+    case "gate": return { slot: "Gate", undo: true };
+    case "done": return { slot: "Result", undo: true, undoFirst: true };
+    case "stopped": return { slot: "Hero", undo: false };
+    default: return { slot: "Pinned", undo: true }; // listening, edit, repair, working, acting
+  }
+}
+function placeSafety(view) {
+  const { slot, undo, undoFirst } = safetyPlacement(view);
+  const controls = $("safetyControls");
+  const stopBtn = $("btnStopExec");
+  const undoBtn = $("btnUndo");
+  const target = $(`safetySlot${slot}`);
+  const first = undoFirst ? undoBtn : stopBtn;
+  document.body.dataset.safety = slot === "Pinned" ? "pinned" : "inline";
+  undoBtn.hidden = !undo;
+  if (controls.parentElement === target && controls.firstElementChild === first) return;
+  // Moving an element drops its focus; keep keyboard users where they were.
+  const focused = controls.contains(document.activeElement) ? document.activeElement : null;
+  target.append(controls);
+  controls.prepend(first);
+  if (!focused) return;
+  if (!focused.hidden && !focused.disabled && !target.closest("[hidden]")) focused.focus();
+  else {
+    const current = document.querySelector('.screen-nav [aria-current="page"]');
+    if (current) current.focus();
+  }
 }
 
 /* Step progress for the Acting card and the Completed list. Labels come

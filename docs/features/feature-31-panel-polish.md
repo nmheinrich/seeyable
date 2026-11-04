@@ -1,6 +1,6 @@
 # Plain Words panel polish (#31)
 
-Status: **Slices 0, 1 and 2 implemented. Product Owner passed the headed check of Slice 1; the headed check of Slice 2 (Act 1 with real microphone and Muse Spark, plus Act 2) is pending.** Slices 3 to 5 not started.
+Status: **Slices 0 to 3 implemented. Product Owner passed the headed checks of Slices 1 and 2; the headed check of Slice 3 (including an agent action while on Settings) is pending.** Slices 4 and 5 not started.
 
 Goal: make the panel feel finished without changing what Seeyable can do or who can approve an action.
 
@@ -38,6 +38,13 @@ Twelve assertions moved from old wording to the new wording, each keeping its me
 - Extension 393/393, planner proxy 22/22, MCP 41/41, shared 11/11. End-to-end 57/57, twice in a row, including a real `chrome://` page, a real tab with no content script recovered by the Reload button, and agent gate checks.
 - Thirteen deliberate breaks in a scratch copy each failed the expected test: no-op naming, bridge naming, held priority, loading verdict, chip sending, chip markup, secret field example, Alt+S on unavailable, raw code in status, missing Developer detail, missing phrase, missing rebind, background-tab rebind.
 - The off-limits files have no diff against `9e50c8e`.
+
+## Slice 3: Stop and Undo placement
+The full table is in `feature-plain-words-panel.md`. Edit and which-one were not in the approved table, so they keep Stop pinned. Stopped hides Undo because the executor refuses it there. The panel follows `bridgeWanted` live through `storage.onChanged`; `lib/bridge-client.js` already clears it on Disconnect, so no status check was needed. Keyboard: the DOM moves with the buttons, so Tab order matches what is seen, and focus follows a moved button or falls to the current nav item if the button left the screen.
+
+Test changes: three assertions that pinned the old bar to "outside the screens" (`plain-words.test.mjs` screens and gate tests, `panel.test.mjs` composition test) now assert `#gateStatus` and the pinned slot stay outside, Stop stays on Assist when idle, and Stop sits below the gate decision and outside the alertdialog. Eleven tests added, one per table row plus unknown bridge state, unavailable page, and focus. End-to-end gained 15 checks, using real layout positions.
+
+Evidence (stub model, headless Chrome, 2026-11-04): extension 404/404, planner proxy 22/22, MCP 41/41, shared 11/11, end-to-end 72/72 including an agent's hold arriving on Settings, a reopened panel, and live Disconnect. Eight deliberate breaks each failed the expected test: agent not pinned, Undo with an agent, in-progress not pinned, Undo while stopped, unknown bridge treated as none, no live bridge updates, Tab order, focus. Off-limits files have no diff against `9e50c8e`.
 
 ## Evidence for Slices 0 and 1 (stub model, headless Chrome, 2026-11-04)
 - Extension 372/372, planner proxy 22/22, MCP 41/41, shared 11/11. Extension baseline before this work: 362.

@@ -87,6 +87,23 @@ plan binding, voice-approval binding, or approval authority.
   so `#execStatus` (Developer view) is no longer a live region. Progress,
   result, and phrase lists are not live regions.
 
+## Stop and Undo placement (Product Owner decision, 2026-11-04, #31)
+
+This replaces the always-visible safety bar in the frozen mockup; the mockup
+itself stays frozen. Same buttons, IDs, and handlers, moved between slots by
+`placeSafety`. `#gateStatus` stays outside the screens and is announced from
+any of them. Older statements in this document describe the original layout.
+
+| State | Stop and Undo |
+|---|---|
+| Idle, no agent | Quieter, below the listen button on Assist; not on other screens |
+| Listening, planning, acting, edit, which-one | Stop pinned on every screen; Undo disabled while acting |
+| Plan review | Below the plan controls |
+| Held action | Below the gate card |
+| Done | Undo by the result, Stop below; not on other screens |
+| Stopped | Resume is the card's main action, no Undo (the executor refuses it); header chip says Stopped on other screens |
+| Agent bridge connected, wanted, or not yet known | Stop pinned on every screen in every state, no Undo button |
+
 ## Stop/Resume
 
 Stop: discards a plan under review (with its own status line), cancels
