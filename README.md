@@ -15,8 +15,8 @@ consequential actions. This grounds model-generated plans in actual page control
 - **Runtime Meta model:** `muse-spark-1.3` through Meta Model API. The local
   proxy provides a pruned page snapshot and request; Muse returns a structured
   plan, validated before preview and guarded execution.
-- **Bonus category to highlight:** Best Agentic Use-Case. Full external-agent
-  workflow evidence is still pending; do not claim it is complete.
+- **Bonus category to highlight:** Best Agentic Use-Case. The external-agent workflow was accepted using Codex Work chat; see
+  [Act 2 evidence](docs/evidence/act-2/headed-codex-acceptance.md).
 - **Open-weight bonus:** not currently claimed; the implemented planner uses
   hosted Muse Spark, not a demonstrated open-weight model stage.
 - **Provenance:** the survey is a pre-existing test fixture and is excluded
@@ -182,17 +182,22 @@ adding Seeyable. The client launches the stdio process; **do not also start
 `npm start` in a separate terminal** for that connection. The shared bridge
 starts automatically; do not launch `bridge-daemon.mjs` yourself.
 
-1. Enable/reload Seeyable in the client and inspect its server log. On first
-   startup it generates an MCP bridge token, prints it to the client log,
-   and stores it in `~/.seeyable/bridge-6123.token`.
-2. To read that token locally if needed, run:
+1. Enable/reload Seeyable in the client and inspect its server log. Use
+   the effective token for the setup already in use:
+   - If any client sets `SEEYABLE_BRIDGE_TOKEN`, that override takes
+     precedence. Keep the same value in every client's local Seeyable
+     configuration; do not assume the token file exists.
+   - If no client sets the override, the first startup generates an MCP
+     bridge token, prints it once to the client log, and stores it in
+     `~/.seeyable/bridge-6123.token`.
+2. For the token-file path only, read that token locally if needed:
 
    ```sh
    cat ~/.seeyable/bridge-6123.token
    ```
 
-   Treat it as a credential: paste only into Seeyable's pairing field, not
-   into an agent conversation, screenshot, or issue.
+   Treat either value as a credential: enter it only in Seeyable's
+   pairing field, not in an agent conversation, screenshot, or issue.
 3. In the extension, open **Settings → Advanced → Developer view → MCP bridge
    (local spike)**. Paste the **MCP bridge token**, keep port **6123**, and
    choose **Connect bridge**. The current heading still says “local spike”;
@@ -207,6 +212,10 @@ starts automatically; do not launch `bridge-daemon.mjs` yourself.
 Tools: `list_tabs`, `page_snapshot`, `highlight` (`highlight_target` alias),
 `click`, `fill`, `select`, and `read_section`. Every page tool needs an explicit
 tab. Reacquire a snapshot after page changes; never invent or reuse stale targets.
+
+For the accepted Codex Work chat Act 2 workflow — agent prompt,
+cancel-only Submit check, evidence, and optional unverified Claude setup — use
+the [Act 2 external-client runbook](docs/act-2-external-client.md).
 
 Multiple client sessions share one bridge and token. No additional pairing
 is required per chat while the browser-session pairing remains available.

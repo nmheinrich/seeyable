@@ -1,6 +1,6 @@
 # Project Status and Pending Verification
 
-Last updated: 2026-11-02. This file records what is built, what has
+Last updated: 2026-11-03. This file records what is built, what has
 actually been verified, and what still needs a human with a headed
 browser. It is a status note, not a roadmap; scope decisions live in
 the feature documents.
@@ -23,6 +23,7 @@ the feature documents.
 | Voice transcription spike (#12) | Timeboxed spike complete: INCONCLUSIVE / KEEP Web Speech — `docs/decision-voice-transcription.md`; zero provider takes; file-client mechanics verified offline (3/3); live comparison harness incomplete |
 | MCP bridge spike (#28) | Complete and accepted — `docs/features/feature-28-mcp-bridge-spike.md`; headed snapshot/highlight, 95-second idle/tab-switch checks, and Product Owner disconnect/re-pair/stale-target checks passed |
 | Full local MCP server (#19) | Complete and accepted, 2026-11-02: Product Owner Inspector GUI snapshot/highlight/read/fill/click/select and held Submit/cancel checks passed; final automatic binding/tab-following/confirmation discovery passed without a tag toggle. Initial direct chat MCP calls verified. Cross-chat startup conflict fixed in code via one shared authenticated bridge (automated + real headless evidence; ChatGPT desktop headed check pending); full external-agent workflow remains #20 — `docs/features/feature-19-mcp-server.md` |
+| External-client test — Act 2 (#20) | Complete and accepted using Codex Work chat, per owner-authorized substitution for Claude Desktop. Direct MCP workflow verified; Submit held once and human Cancel confirmed. English/Spanish voice checks owner-reported; numeric rating writes unsupported. Work-chat reconnection succeeded (17 tabs, 20-control snapshot); app quit itself not independently observed. Owner requested checkpoint. Evidence: `docs/evidence/act-2/headed-codex-acceptance.md`; headless supporting harness independently rerun 39/39. Claude compatibility not claimed. |
 | Plan preview, confirmation, undo (#15) | Complete and accepted for the core mouse-free workflow — Product Owner confirmed genuine-microphone/model preview, voice edit, unsupported-approval retention, approval and last-change undo on 2026-10-31. Repeated Grace Hopper → Grasshopper recognition remains a limitation; supplementary headed safety probes are not claimed — `docs/features/feature-15-plan-review-undo.md` |
 | Planner fast path (#13) | Checkpoint ready: headed typed exact/fuzzy fill, held Submit/cancel, compound rejection, clarification/expiry, five-choice access, single-error display, and live-mic click (one counter increment) passed. Voice fill remains limited by fill/feel/Phil recognition; full voice acceptance is not claimed — `docs/features/feature-13-local-command-fast-path.md` |
 
@@ -43,6 +44,38 @@ requires no `debugger` permission; CDP remains debug-only via
 `apps/extension/manifest.debug.json`.
 
 ## Verification evidence
+
+- Issue #20 accepted using Codex Work chat after explicit owner substitution
+  for Claude Desktop. Direct MCP fills/select/clicks and snapshot verification
+  passed; Submit held once, owner cancelled and confirmed no submission.
+  Owner reported supplementary English/Spanish voice success and a numeric
+  fill limitation. Work-chat reconnect calls succeeded; the app quit itself
+  was not independently observed. Owner requested checkpoint. See
+  `docs/evidence/act-2/headed-codex-acceptance.md` for evidence boundaries.
+  This supersedes the preparation-stage pending-client notes below.
+
+- Issue #20 Act 2 preparation, 2026-11-03: no production code changed.
+  Suites rerun at baseline `b1e0192`: extension 334/334, MCP 41/41,
+  shared 11/11, planner-proxy 15/15 (the proxy suite needed loopback
+  listening permitted; its sandboxed `EPERM` setup failures were
+  environmental). A custom stdio client drove the real MCP server,
+  shared bridge, real extension, and demo survey in headless Chrome
+  through the canonical Act 2 sequence: exact tab selection, redacted
+  PIN snapshot, highlight, four verified fills, exact-value Designer
+  select, state-aware SMS/Monthly clicks, protected-write rejection,
+  approval-field rejection, one Submit held with zero dispatch,
+  automatic panel-page confirmation adoption, harness-triggered Cancel
+  only, audit source `mcp`, background explicit-tab snapshot, Stop/Resume
+  no-replay, reload stale-session rejection, and closed-tab failure —
+  39/39. The earlier panel screenshot error was a harness artifact
+  (the harness had activated its own extension-page tab); the repo
+  harness now loads the panel page in the background and the replacement
+  capture shows a successfully bound demo tab. This is supporting
+  evidence only: Claude Desktop was installed
+  (4.4212.0) with an existing config file, but was not launched,
+  read, or modified by the engineer. At that preparation stage, genuine Claude Desktop and
+  headed side-panel acceptance were pending (superseded by Codex acceptance above) — see
+  `docs/act-2-external-client.md` and `docs/evidence/act-2/`.
 
 - Shared-bridge headed follow-up, 2026-11-02: fixed bridge running;
   extension paired using the existing configured token. This chat's

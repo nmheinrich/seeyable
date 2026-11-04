@@ -1,0 +1,444 @@
+{
+  "evidenceType": "headless Chrome + real extension + real MCP stdio server + custom JSON-RPC client (not Claude Desktop, not Inspector GUI)",
+  "workflow": "Issue #20 Act 2 canonical sequence, cancel-only at Submit",
+  "tab": {
+    "tabId": 346582504,
+    "title": "Demo Survey — Seeyable test target",
+    "url": "http://127.0.0.1:59741/demo-survey/index.html"
+  },
+  "snapshot": {
+    "documentSessionId": "doc-cv0vqe51mw1gexx3",
+    "revision": 8,
+    "elementCount": 20,
+    "elements": [
+      {
+        "id": "el-1",
+        "role": "textbox",
+        "name": "Full name",
+        "state": {
+          "required": true,
+          "value": "Ada Lovelace"
+        }
+      },
+      {
+        "id": "el-2",
+        "role": "textbox",
+        "name": "Work email",
+        "state": {
+          "value": "ada@example.com"
+        }
+      },
+      {
+        "id": "el-3",
+        "role": "textbox",
+        "name": "Nickname (placeholder only)",
+        "state": {
+          "value": "Pioneer"
+        }
+      },
+      {
+        "id": "el-5",
+        "role": "textbox",
+        "name": "Account PIN",
+        "state": {
+          "redacted": true,
+          "filled": true
+        }
+      },
+      {
+        "id": "el-6",
+        "role": "combobox",
+        "name": "Your role",
+        "state": {
+          "value": "Designer",
+          "options": [
+            {
+              "label": "Choose…",
+              "value": ""
+            },
+            {
+              "label": "Designer",
+              "value": "designer"
+            },
+            {
+              "label": "Engineer",
+              "value": "engineer"
+            },
+            {
+              "label": "Product manager",
+              "value": "pm"
+            }
+          ]
+        }
+      },
+      {
+        "id": "el-7",
+        "role": "textbox",
+        "name": "Short bio",
+        "state": {
+          "value": "Fictional visitor testing Seeyable."
+        }
+      },
+      {
+        "id": "el-20",
+        "role": "button",
+        "name": "Submit survey",
+        "state": {}
+      }
+    ]
+  },
+  "toolEvents": [
+    {
+      "tool": "list_tabs",
+      "status": "ok",
+      "revision": null
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 1
+    },
+    {
+      "tool": "highlight",
+      "status": "highlighted",
+      "revision": 1
+    },
+    {
+      "tool": "fill",
+      "status": "verified",
+      "revision": 2
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 2
+    },
+    {
+      "tool": "fill",
+      "status": "verified",
+      "revision": 3
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 3
+    },
+    {
+      "tool": "fill",
+      "status": "verified",
+      "revision": 4
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 4
+    },
+    {
+      "tool": "fill",
+      "status": "verified",
+      "revision": 5
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 5
+    },
+    {
+      "tool": "select",
+      "status": "verified",
+      "revision": 6
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 6
+    },
+    {
+      "tool": "click",
+      "status": "verified",
+      "revision": 7
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 7
+    },
+    {
+      "tool": "click",
+      "status": "verified",
+      "revision": 8
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 8
+    },
+    {
+      "tool": "read_section",
+      "status": "ok",
+      "revision": 8
+    },
+    {
+      "tool": "fill",
+      "status": "rejected",
+      "revision": 8
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 8
+    },
+    {
+      "tool": "fill",
+      "status": "error",
+      "revision": null
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 8
+    },
+    {
+      "tool": "click",
+      "status": "held_for_approval",
+      "revision": 8
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 8
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 8
+    },
+    {
+      "tool": "fill",
+      "status": "rejected",
+      "revision": 8
+    },
+    {
+      "tool": "fill",
+      "status": "rejected",
+      "revision": 0
+    },
+    {
+      "tool": "list_tabs",
+      "status": "ok",
+      "revision": null
+    },
+    {
+      "tool": "list_tabs",
+      "status": "ok",
+      "revision": null
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "error",
+      "revision": null
+    },
+    {
+      "tool": "page_snapshot",
+      "status": "ok",
+      "revision": 1
+    }
+  ],
+  "checks": [
+    {
+      "name": "extension loads unpacked",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "extension pairing submitted via panel UI on the chosen port",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "MCP initialize",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "eight tools exposed",
+      "ok": true,
+      "detail": "click,fill,highlight,highlight_target,list_tabs,page_snapshot,read_section,select"
+    },
+    {
+      "name": "list_tabs finds demo tab",
+      "ok": true,
+      "detail": "{\"tabId\":346582504,\"title\":\"Demo Survey — Seeyable test target\",\"url\":\"http://127.0.0.1:59741/demo-survey/index.html\"}"
+    },
+    {
+      "name": "page_snapshot real snapshot (20 controls)",
+      "ok": true,
+      "detail": "rev 1"
+    },
+    {
+      "name": "snapshot carries dropdown metadata",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Account PIN is redacted in snapshot",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "highlight Full name without activation",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "fill Full name verified",
+      "ok": true,
+      "detail": "{\"verified\":true}"
+    },
+    {
+      "name": "fill Work email verified",
+      "ok": true,
+      "detail": "{\"verified\":true}"
+    },
+    {
+      "name": "fill Nickname verified",
+      "ok": true,
+      "detail": "{\"verified\":true}"
+    },
+    {
+      "name": "fill Short bio verified",
+      "ok": true,
+      "detail": "{\"verified\":true}"
+    },
+    {
+      "name": "page observes all canonical fills",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "select Designer by exact snapshot value verified",
+      "ok": true,
+      "detail": "{\"verified\":true,\"selectedValue\":\"designer\"}"
+    },
+    {
+      "name": "page observes Designer selection",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "click SMS updates verified",
+      "ok": true,
+      "detail": "{\"dispatched\":true,\"verified\":true,\"note\":\"Activation dispatched with an observable page change.\"}"
+    },
+    {
+      "name": "click Monthly digest verified",
+      "ok": true,
+      "detail": "{\"dispatched\":true,\"verified\":true,\"note\":\"Activation dispatched with an observable page change.\"}"
+    },
+    {
+      "name": "page observes SMS and Monthly selections",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "read_section bounded section text",
+      "ok": true,
+      "detail": "chars=62 truncated=false"
+    },
+    {
+      "name": "read_section excludes PIN value",
+      "ok": true,
+      "detail": "raw PIN default value absent from prose"
+    },
+    {
+      "name": "sensitive fill rejected",
+      "ok": true,
+      "detail": "{\"code\":\"SENSITIVE_FIELD\",\"message\":\"Target el-5 is a protected field; writes are blocked in this milestone.\"}"
+    },
+    {
+      "name": "PIN unchanged after rejected write",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "approval-shaped extra field rejected",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Submit attempted once is held_for_approval",
+      "ok": true,
+      "detail": "{\"code\":\"CONFIRMATION_REQUIRED\",\"message\":\"click on \\\"Submit survey\\\" is consequential and requires human confirmation in the Seeyable panel. Nothing was executed.\"}"
+    },
+    {
+      "name": "no challenge id leaks to client",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "held Submit dispatched nothing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "MCP hold appears automatically in panel confirmation card",
+      "ok": true,
+      "detail": "Page: http://127.0.0.1:59741/demo-survey/index.html\nAction: click on “Submit survey” (el-20)\nThis activates a form submission control. What it sends, to whom, and whether it can be undone cannot be determined from the page.\nApproval expires"
+    },
+    {
+      "name": "replacement panel capture is from a successfully bound demo tab",
+      "ok": true,
+      "detail": "Found 20 controls on this page."
+    },
+    {
+      "name": "harness-triggered Cancel clears card and form stays unsubmitted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "audit log records the MCP hold",
+      "ok": true,
+      "detail": "2026-11-04T01:44:45.955Z · mcp · fill · el-5 “Account PIN” · SENSITIVE_FIELD | 2026-11-04T01:44:45.969Z · mcp · click · el-20 “Submit survey” · confirmation-required"
+    },
+    {
+      "name": "explicit background-tab snapshot does not retarget",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Stop blocks new MCP mutation",
+      "ok": true,
+      "detail": "{\"code\":\"EXECUTION_STOPPED\",\"message\":\"Execution is stopped at the safety gate. Use Resume in the panel to reopen it; nothing was executed and nothing will be replayed automatically.\"}"
+    },
+    {
+      "name": "Resume alone dispatches nothing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "old session after reload is rejected",
+      "ok": true,
+      "detail": "{\"code\":\"WRONG_SESSION\",\"message\":\"documentSessionId does not match the active document. Re-snapshot this tab.\"}"
+    },
+    {
+      "name": "stale reload attempt mutated nothing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "disposable tab is explicitly identified",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "closed tab fails without substitution",
+      "ok": true,
+      "detail": "{\"code\":\"TAB_UNAVAILABLE\",\"message\":\"Tab 346582506 is missing or closed. Pick a tab from list_tabs; nothing was substituted.\"}"
+    },
+    {
+      "name": "demo tab still serves explicit snapshots",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}
