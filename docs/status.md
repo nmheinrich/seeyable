@@ -9,6 +9,7 @@ the feature documents.
 
 | Area | State |
 |---|---|
+| MCP missing approval card investigation (2026-11-04) | Original transient cause unconfirmed. Session-storage hint covers the reproduced dropped-runtime-notification gap through the existing trusted lookup. Independently rerun: 429/429 extension tests; real-Chrome hold/cancel regression 15/15 normally and 15/15 with the runtime hint rejected. Patched headed verification passed after extension reload: two holds surfaced from Settings, both cancelled, fictional fields preserved, Stop/Resume did not replay. Agent-observed evidence, not a new owner acceptance. `docs/evidence/mcp-confirmation-delivery/README.md` |
 | Google Forms rehearsal and scope freeze (#16) | Accepted on Product Owner report, 2026-11-02: three runs worked. Detailed timings/transcripts were not supplied. Google Forms remains the primary demo; Shopify is excluded. Speech tuning and recovery/setup simplification are follow-up work — `docs/issue-16-google-forms-rehearsal.md` |
 | Snapshot spike (DOM/ARIA vs CDP decision) | Complete — `docs/decision-snapshot.md` |
 | Production snapshot engine (schema v2) | Complete — `docs/snapshot-schema.md` |

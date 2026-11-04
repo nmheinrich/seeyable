@@ -3129,9 +3129,13 @@ void (async () => {
 })();
 if (chrome.storage.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "session" || !("bridgeWanted" in changes)) return;
-    agentBridgeWanted = Boolean(changes.bridgeWanted.newValue);
-    renderState();
+    if (area !== "session") return;
+    if ("bridgeWanted" in changes) {
+      agentBridgeWanted = Boolean(changes.bridgeWanted.newValue);
+      renderState();
+    }
+    const hint = changes.mcpConfirmationHint && changes.mcpConfirmationHint.newValue;
+    if (hint && Number.isInteger(hint.tabId)) void adoptPendingConfirmation(hint.tabId);
   });
 }
 $("btnNewRequest").addEventListener("click", () => {

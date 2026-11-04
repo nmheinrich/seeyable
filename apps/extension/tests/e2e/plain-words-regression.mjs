@@ -10,6 +10,8 @@
 // and child processes it spawned itself. It never uses 6123/6124.
 //
 // Run: npm --prefix apps/extension run test:e2e
+// Hold/cancel only (never submits), with the runtime notification dropped:
+// SEEYABLE_E2E_CONFIRMATION_ONLY=1 SEEYABLE_E2E_DROP_HOLD_HINT=1 npm --prefix apps/extension run test:e2e
 // Needs Google Chrome (or CHROME_BIN) and `npm --prefix apps/mcp-server ci`.
 // Set SEEYABLE_E2E_SHOTS=<dir> to save screenshots of key states.
 import { spawn } from "node:child_process";
@@ -28,6 +30,9 @@ const SHOTS = process.env.SEEYABLE_E2E_SHOTS || "";
 // forced colors at 320/360/560px and records layout and contrast findings in
 // sweep-issues.json. It reports; it does not fail the run.
 const SWEEP = Boolean(process.env.SEEYABLE_E2E_SWEEP);
+// This mode only creates and cancels holds; it never approves or submits.
+const CONFIRMATION_ONLY = process.env.SEEYABLE_E2E_CONFIRMATION_ONLY === "1";
+const DROP_HOLD_HINT = process.env.SEEYABLE_E2E_DROP_HOLD_HINT === "1";
 const sweepIssues = [];
 const AUDIT = `(() => {
   const issues = [];
@@ -148,6 +153,14 @@ cpSync(SOURCE, EXT, {
   recursive: true,
   filter: (src) => !["node_modules", "tests", ".DS_Store"].includes(basename(src)),
 });
+if (DROP_HOLD_HINT) {
+  if (!CONFIRMATION_ONLY) throw new Error("Drop-hint injection requires confirmation-only mode.");
+  const path = join(EXT, "lib/bridge-client.js");
+  const source = readFileSync(path, "utf8");
+  const call = 'chrome.runtime.sendMessage({ type: "SEEYABLE_MCP_CONFIRMATION_HINT", tabId })';
+  if (!source.includes(call)) throw new Error("Hold hint injection point missing.");
+  writeFileSync(path, source.replace(call, 'Promise.reject(new Error("test: runtime hold hint unavailable"))'));
+}
 const manifest = JSON.parse(readFileSync(join(EXT, "manifest.json"), "utf8"));
 manifest.host_permissions.push(`http://127.0.0.1:${proxyPort}/*`);
 writeFileSync(join(EXT, "manifest.json"), JSON.stringify(manifest, null, 2));
@@ -332,6 +345,57 @@ try {
 
   await freshPage();
 
+  if (CONFIRMATION_ONLY) {
+    await panel.ev(`(() => {
+      showScreen("Settings");
+      document.getElementById("developerView").open = true;
+      document.getElementById("bridgeToken").value = ${JSON.stringify(BRIDGE_TOKEN)};
+      document.getElementById("bridgePort").value = ${JSON.stringify(String(bridgePort))};
+      document.getElementById("btnBridgeConnect").click();
+    })()`);
+    await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "plain-words-e2e", version: "0" } });
+    mcp.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    const tabs = await waitFor(async () => {
+      const out = await tool("list_tabs", {});
+      return out.tabs && out.tabs.length ? out.tabs : null;
+    }, "agent bridge", 20000);
+    const demoTab = tabs.find((t) => t.url && t.url === `http://127.0.0.1:${demoPort}/demo-survey/index.html`);
+    check("agent sees the demo tab", Boolean(demoTab));
+    let snapshot = await tool("page_snapshot", { tabId: demoTab.tabId });
+    const element = (start) => snapshot.elements.find((e) => e.name && e.name.startsWith(start));
+    const bound = (el) => ({ tabId: demoTab.tabId, elementId: el.id, documentSessionId: snapshot.documentSessionId, revision: snapshot.revision });
+    for (const [name, op, value] of [
+      ["Full name", "fill", "Alex Demo"], ["Work email", "fill", "AlexDemo@example.com"],
+      ["Your role", "select", "designer"], ["Short bio", "fill", "Fictional visitor testing Seeyable"],
+    ]) {
+      const result = await tool(op, { ...bound(element(name)), value });
+      check(`agent ${op} ${name} verifies`, result.status === "verified");
+      snapshot = await tool("page_snapshot", { tabId: demoTab.tabId });
+    }
+
+    await panel.ev(`showScreen("Settings")`);
+    const held = await tool("click", bound(element("Submit survey")));
+    check("agent Submit is held, not run", held.status === "held_for_approval" && (await submits()) === 0);
+    await waitFor(() => visible("btnApproveOnce"), "agent hold in panel");
+    check("hold switches from Settings to visible approval card", await visible("btnCancelChallenge"));
+    await panel.shot("mcp-hold");
+    await reloadPanel("panel reload discovers existing hold");
+    await waitFor(() => visible("btnApproveOnce"), "hold after panel reload");
+    check("panel reload recovers the held challenge without approval", (await submits()) === 0);
+    await click("btnCancelChallenge");
+    await waitFor(async () => (await view()) !== "gate", "hold cancelled");
+    check("cancel does not submit", (await submits()) === 0);
+    check("filled values survive hold and cancel", (await value(NAME)) === "Alex Demo"
+      && (await value('input[type="email"]')) === "AlexDemo@example.com"
+      && (await value(ROLE)) === "designer" && (await value(BIO)) === "Fictional visitor testing Seeyable");
+    const second = await tool("click", bound(element("Submit survey")));
+    check("a second hold on the same tab dispatches nothing", second.status === "held_for_approval" && (await submits()) === 0);
+    await waitFor(() => visible("btnApproveOnce"), "second hold in panel");
+    check("consecutive holds deliver distinct notifications", true);
+    await click("btnCancelChallenge");
+    await waitFor(async () => (await view()) !== "gate", "second hold cancelled");
+    check("all holds cancelled with zero submissions", (await submits()) === 0);
+  } else {
   /* --- Before the planner is paired: recovery and examples ---------------- */
   await command("Update my profile");
   check("an unpaired request shows the recovery card", await visible("recoverBox"));
@@ -661,6 +725,8 @@ try {
   check("Disconnect unpins Stop while the panel is open", true);
   await panel.ev(`showScreen("Assist")`);
   check("after Disconnect, Stop and Undo are back below the listen button", (await above("btnListen", "btnStopExec")) && (await visible("btnUndo")));
+
+  } // full panel regression
 
   if (SWEEP) {
     writeFileSync(join(SHOTS, "sweep-issues.json"), JSON.stringify(sweepIssues, null, 1));

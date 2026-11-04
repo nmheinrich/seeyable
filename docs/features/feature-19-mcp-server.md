@@ -151,7 +151,15 @@ confirmation card:
 
 1. The service worker sends an unauthoritative runtime hint
    (`SEEYABLE_MCP_CONFIRMATION_HINT`, tab id only) when an execute
-   response comes back held.
+   response comes back held. It also writes a session-storage hint
+   (`mcpConfirmationHint`: tab id and a per-notification nonce only).
+   The open panel observes that change through `storage.onChanged`, so
+   a dropped/rejected runtime send is not its only discovery signal.
+   Both deliveries are settled before returning the executor response;
+   notification failures never replay, approve, or change the held action.
+   If both fail, the worker logs notification unavailability. The last
+   session hint contains no challenge/request/value and is never approval
+   authority; panel startup still discovers holds by binding its snapshot.
 2. The panel re-fetches the authoritative pending challenge via the
    new trusted-panel content route `SEEYABLE_GET_PENDING_CONFIRMATION`
    (`executor.getPendingConfirmation()` — public descriptor only, no
@@ -175,6 +183,30 @@ The MCP client cannot approve, forge, reuse, or mint anything. After
 human approval the single stored action runs (or fails closed);
 nothing else continues automatically — further MCP actions need fresh
 client calls against a fresh snapshot.
+
+### Missing-card report and notification hardening (2026-11-04)
+
+The Product Owner reported an MCP Submit hold with no visible panel card.
+The original transient cause is **not established**: a subsequent read-only
+inspection plus a fresh held MCP click displayed the live card correctly,
+and Cancel was verified. No survey was submitted. The unmodified isolated
+extension also passed normal delivery. A controlled dropped-runtime-hint
+regression exposed the single-notification gap: the original code kept the
+action held but the already-open panel remained on Settings until a fresh
+bind. Session-storage notification now covers that failure independently.
+
+429/429 extension tests pass. The focused real-Chrome/stdio/demo-survey
+regression passes 15/15 both normally and with the runtime hint deliberately
+rejected; it fills the four fictional fields, holds/cancels twice, recovers
+a hold on panel reload, preserves field values and observes zero submissions.
+An original-code negative control fails at missing-card discovery. The
+patched extension's headed hold/cancel check passed on 2026-11-04 after
+reloading the unpacked extension from `apps/extension`: two MCP Submit holds
+each surfaced from Settings, both were cancelled, all four fictional field
+values remained unchanged, and Stop/Resume replayed nothing. This is
+agent-observed headed verification, not a new Product Owner acceptance or
+proof of the original incident's cause. Evidence
+and safe reproduction commands: [delivery investigation](../evidence/mcp-confirmation-delivery/README.md).
 
 ### Automatic snapshot acquisition and discovery
 
