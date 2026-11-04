@@ -216,7 +216,7 @@ Muse Code's provider sign-in is separate from Seeyable's pairing token.
 
 1. Ensure the client reports Seeyable connected and its tools are available.
 2. In Seeyable open **Settings → Advanced → Developer view → MCP bridge
-   (local spike)**. The current heading retains “local spike”. Paste the
+   (local)**. Paste the
    **MCP bridge token**, keep port **6123**, and choose **Connect bridge**.
 3. Keep the panel open. Ask the agent:
 
@@ -264,7 +264,7 @@ and Seeyable's human confirmation are separate checks.
   the previous in-memory bridge has exited. Do not delete the entire volume
   just to rotate one token.
 
-For native Node setup, use the repository README's MCP section instead.
+For native Node setup, use the MCP section of the repository's `docs/setup.md` instead.
 Its token lives on the host at `~/.seeyable/bridge-6123.token`, not in Docker.
 Client-specific end-to-end checks remain separate from these instructions.
 

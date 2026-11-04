@@ -93,7 +93,8 @@ If the file is missing, connect the MCP client first and inspect its server
 log. Paste this **MCP bridge token** into the extension's MCP bridge settings,
 keep port **6123**, and connect. It is different from the planner token and
 from the Meta key. Never paste tokens into an agent conversation or screenshot.
-Follow the README's MCP workflow for tab selection, pairing, and human confirmation.
+Follow the MCP workflow in the repository's `docs/setup.md` for tab selection,
+pairing, and human confirmation.
 
 ## Stop, restart, and troubleshoot
 
